@@ -1,0 +1,25 @@
+# Local tools, caches and temporary files
+/.agents/
+/.tools/
+/CMakeFiles/
+/tmp/
+__pycache__/
+*.pyc
+
+# The full MPM checkout remains a separate local Git repository.
+/mpm/
+/SANISAND_rep-main/
+
+# Keep only the slope case needed for this manuscript revision.
+/Example/*
+!/Example/slope_infiltration/
+/Example/slope_infiltration/results/
+
+# Reproducible generated sensitivity files and outputs
+/Example/slope_infiltration/sensitivity/cases/
+/Example/slope_infiltration/sensitivity/logs/
+/Example/slope_infiltration/sensitivity/figures/
+/Example/slope_infiltration/sensitivity/manifest.csv
+/Example/slope_infiltration/sensitivity/metrics.csv
+/Example/slope_infiltration/sensitivity/onset_times.csv
+/Example/slope_infiltration/sensitivity/sensitivity_summary.csv
