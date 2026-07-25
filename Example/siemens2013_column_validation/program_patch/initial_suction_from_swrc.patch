@@ -1,0 +1,49 @@
+diff --git a/include/particles/particle_threephase_new.tcc b/include/particles/particle_threephase_new.tcc
+--- a/include/particles/particle_threephase_new.tcc
++++ b/include/particles/particle_threephase_new.tcc
+@@ -513,15 +513,36 @@ bool mpm::ThreePhaseParticleNew<Tdim>::assign_initial_properties() {
+                   property<double>(std::string("para_m"));
+     this->effective_saturation_ = (this->liquid_saturation_ - this->liquid_saturation_res_) /
+                                   (1 - this->liquid_saturation_res_);
+-    const double suction = liquid_material_->template
+-                          property<double>(std::string("suction"));
+-    // this->suction_pressure_ = para_p0 * std::pow(effective_saturation_, -1. / para_m);
+-    // this->suction_pressure_ = para_p0 *
+-    //       std::pow(std::pow(this->effective_saturation_, -1. / para_m) - 1., 1. - para_m);
+-    // this->suction_pressure_ = (1 - ini_liquid_saturation_) * 1E6;
+-    this->suction_pressure_ = 137340.0; // 20 psi in Pa
+-    // this->suction_pressure_ = 392400.0; // 40 psi in Pa
+-    // this->suction_pressure_ = this->liquid_density_ * 9.81 * this->coordinates_[1];
++    // Preserve the historical 20 psi initial suction unless the input file
++    // explicitly supplies a value or requests consistency with the SWRC.
++    this->suction_pressure_ = liquid_material_->template property_or<double>(
++        std::string("initial_suction"), 137340.0);
++
++    const bool initial_suction_from_swrc =
++        liquid_material_->template property_or<bool>(
++            std::string("initial_suction_from_swrc"), false);
++    if (initial_suction_from_swrc) {
++      if (para_p0 <= 0.0 || para_m <= 0.0 || para_m >= 1.0)
++        throw std::runtime_error(
++            "Initial SWRC suction requires para_p0 > 0 and 0 < para_m < 1");
++
++      const double saturation_range =
++          1.0 - liquid_saturation_res_ - gas_saturation_res_;
++      if (saturation_range <= 0.0)
++        throw std::runtime_error(
++            "Initial SWRC suction requires positive mobile saturation range");
++
++      double initial_effective_saturation =
++          (liquid_saturation_ - liquid_saturation_res_) / saturation_range;
++      initial_effective_saturation = std::min(
++          1.0 - 1.0e-12,
++          std::max(1.0e-12, initial_effective_saturation));
++
++      this->suction_pressure_ = para_p0 * std::pow(
++          std::pow(initial_effective_saturation, -1.0 / para_m) - 1.0,
++          1.0 - para_m);
++    }
++    this->suction_pressure_ = std::abs(this->suction_pressure_);
+     this->liquid_pressure_ = this->gas_pressure_ - this->suction_pressure_;
+     this->PIC_gas_pressure_ = this->gas_pressure_;
+     this->PIC_liquid_pressure_ = this->liquid_pressure_;

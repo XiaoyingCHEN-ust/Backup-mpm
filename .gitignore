@@ -8,12 +8,17 @@ __pycache__/
 
 # The full MPM checkout remains a separate local Git repository.
 /mpm/
+/mpm_hpc/
 /SANISAND_rep-main/
 
-# Keep only the slope case needed for this manuscript revision.
+# Keep only the cases needed for this manuscript revision.
 /Example/*
 !/Example/slope_infiltration/
+!/Example/siemens2013_column_validation/
 /Example/slope_infiltration/results/
+/Example/siemens2013_column_validation/results/
+/Example/siemens2013_column_validation/validation_results/
+/Example/siemens2013_column_validation/slurm-*.out
 
 # Reproducible generated sensitivity files and outputs
 /Example/slope_infiltration/sensitivity/cases/
