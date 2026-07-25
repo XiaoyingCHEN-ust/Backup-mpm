@@ -6,27 +6,39 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
+#SBATCH --gres=gpu:1
 #SBATCH --time=24:00:00
 #SBATCH --mem=16G
 #SBATCH --output=slurm-%A_%a.out
+#SBATCH --error=slurm-%A_%a.err
 
-set -euo pipefail
+set -eo pipefail
 
-if [[ -z "${MPM_BIN:-}" ]]; then
-  echo "Set MPM_BIN to the absolute path of the compiled mpm executable."
-  exit 2
-fi
+case_dir="${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}"
+cd "${case_dir}"
 
-case_dir="${SLURM_SUBMIT_DIR:-.}"
+module load miniconda3/24.3.0-quc3pyu
+eval "$("$(command -v conda)" shell.bash hook)"
+conda activate cbgeo_tbb
+
+mpm_bin="${MPM_BIN:-/home/xchenjm/chen/MPM/mpm/build/mpm}"
 cases=(open closed)
 case_name="${cases[${SLURM_ARRAY_TASK_ID:-0}]}"
 threads="${SLURM_CPUS_PER_TASK:-32}"
 
-echo "Running Siemens et al. (2013) ${case_name} column test"
-echo "Executable: ${MPM_BIN}"
-echo "Case directory: ${case_dir}"
+if [[ ! -x "${mpm_bin}" ]]; then
+  echo "MPM executable is missing or not executable: ${mpm_bin}" >&2
+  exit 126
+fi
 
-srun "${MPM_BIN}" \
+echo "Running Siemens et al. (2013) ${case_name} column test"
+echo "Node: $(hostname)"
+echo "Executable: ${mpm_bin}"
+echo "Case directory: ${case_dir}"
+echo "Threads: ${threads}"
+nvidia-smi || true
+
+"${mpm_bin}" \
   -f "${case_dir}/" \
   -i "mpm_${case_name}.json" \
   -p "${threads}"

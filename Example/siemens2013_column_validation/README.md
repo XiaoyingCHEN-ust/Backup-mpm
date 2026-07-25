@@ -78,13 +78,16 @@ and eight bottom-boundary particles.
 
 ## Run on hpc4
 
-Apply the patch in `program_patch/`, compile `mpm_hpc`, then submit both cases
-with the absolute executable path exported as `MPM_BIN`:
+Apply the patch in `program_patch/` and compile the program. The current HPC4
+script loads `miniconda3/24.3.0-quc3pyu`, activates `cbgeo_tbb`, requests one
+GPU and 32 CPUs, and defaults to the executable at
+`/home/xchenjm/chen/MPM/mpm/build/mpm`. Submit both cases with:
 
 ```bash
-MPM_BIN=/absolute/path/to/mpm_hpc/build/mpm \
-  sbatch --export=ALL,MPM_BIN run_hpc4.sh
+sbatch run_hpc4.sh
 ```
+
+Set and export `MPM_BIN` only if the executable is stored elsewhere.
 
 The array index 0 runs the open test and index 1 runs the closed test. Results
 are written to `results/siemens2013-open/` and
