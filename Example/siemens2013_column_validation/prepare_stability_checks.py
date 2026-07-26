@@ -26,6 +26,18 @@ def main():
         "--time-steps", type=float, nargs="+", default=DEFAULT_TIME_STEPS
     )
     parser.add_argument("--revision", default=DEFAULT_REVISION)
+    parser.add_argument(
+        "--pic",
+        type=float,
+        default=None,
+        help="override analysis.PIC (omit to retain the source input value)",
+    )
+    parser.add_argument(
+        "--pressure-smoothing",
+        choices=("source", "true", "false"),
+        default="source",
+        help="override step-based liquid-pressure smoothing",
+    )
     args = parser.parse_args()
 
     if args.duration <= 0.0:
@@ -34,6 +46,8 @@ def main():
         parser.error("every time step must be positive and no larger than duration")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
+    if args.pic is not None and not 0.0 <= args.pic <= 1.0:
+        parser.error("--pic must be between 0 and 1")
 
     input_dir = CASE_DIR / "stability_inputs"
     input_dir.mkdir(exist_ok=True)
@@ -49,12 +63,26 @@ def main():
             label = f"{case_name}_{tag}"
             uuid = f"siemens2013-stability-{args.revision}-{label}"
             nsteps = round(args.duration / dt)
+            duration_tolerance = max(1.0e-12, 1.0e-10 * args.duration)
+            if not abs(nsteps * dt - args.duration) <= duration_tolerance:
+                parser.error(
+                    f"duration {args.duration:g} is not an integer multiple of dt {dt:g}"
+                )
             output_steps = max(1, nsteps // 20)
 
             config = json.loads(json.dumps(source))
+            if args.pic is not None:
+                config["analysis"]["PIC"] = args.pic
+            if args.pressure_smoothing != "source":
+                config["analysis"]["pressure_smoothing"] = (
+                    args.pressure_smoothing == "true"
+                )
+            pic = config["analysis"]["PIC"]
+            smoothing = config["analysis"]["pressure_smoothing"]
             config["title"] = (
                 f"Siemens 2013 {case_name} stability check, "
-                f"dt={dt:.0e} s, duration={args.duration:g} s"
+                f"dt={dt:.0e} s, duration={args.duration:g} s, "
+                f"PIC={pic:g}, pressure_smoothing={smoothing}"
             )
             config["analysis"]["dt"] = dt
             config["analysis"]["nsteps"] = nsteps

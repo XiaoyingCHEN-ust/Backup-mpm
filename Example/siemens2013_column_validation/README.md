@@ -108,14 +108,33 @@ python prepare_stability_checks.py
 sbatch run_stability_hpc4.sh
 ```
 
-The first-stage UUIDs contain `r3-smoke`. This window is sufficient to detect
-the immediate pressure/velocity instability without spending millions of
-steps. After these outputs are inspected, generate a longer check for only the
+The first-stage UUIDs contain `r3-smoke`. The completed r3 runs remained finite
+but failed the time-step consistency check. At the common time 0.001 s, reducing
+the step caused larger rather than converging pressure and saturation changes.
+The source input also smooths liquid pressure every 100 computational steps, so
+the three runs apply this operation 2, 20, and 100 times over 0.01 s. This is a
+time-step-dependent algorithm and cannot be used to establish convergence.
+
+Run the next, still smaller, diagnostic with pressure smoothing disabled and
+PIC phase-velocity transfer. These settings leave all physical properties and
+boundary conditions unchanged. The duration is only 0.001 s, corresponding to
+20, 200, and 1000 steps per case:
+
+```bash
+python prepare_stability_checks.py --duration 0.001 \
+  --revision r4-pic-micro --pic 1 --pressure-smoothing false
+sbatch run_stability_hpc4.sh
+```
+
+The generator options are explicit so the baseline inputs remain unchanged
+until this diagnostic has demonstrated time-step consistency. Download the six
+`r4-pic-micro` result directories before proceeding. If they converge, repeat
+the same settings over 0.01 s and then generate a longer check for only the
 largest stable time step; for example:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r4-long \
-  --time-steps <selected_dt>
+python prepare_stability_checks.py --duration 3 --revision r5-long \
+  --time-steps <selected_dt> --pic 1 --pressure-smoothing false
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
 
