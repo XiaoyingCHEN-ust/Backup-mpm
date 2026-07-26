@@ -169,6 +169,7 @@ void mpm::ThreePhaseParticleNew<Tdim>::initialise_liquid_gas_phases() {
     liquid_volumetric_strain_ = 0.;
     liquid_permeability_ = 1.;
     liquid_source_ = 0.;
+    liquid_critical_time_ = 0.;
 
   // Gas
     gas_velocity_.setZero();
@@ -185,6 +186,8 @@ void mpm::ThreePhaseParticleNew<Tdim>::initialise_liquid_gas_phases() {
     gas_volumetric_strain_ = 0.;
     gas_permeability_ = 1.;
     gas_source_ = 0.;
+    gas_critical_time_ = 0.;
+    dSw_dpw_ = 0.;
 
   // Wave
     seabed_surface_x_.assign(this->Nx_, 0.0);
@@ -511,17 +514,62 @@ bool mpm::ThreePhaseParticleNew<Tdim>::assign_initial_properties() {
                   property<double>(std::string("para_p0"));
     const double para_m = liquid_material_->template 
                   property<double>(std::string("para_m"));
-    this->effective_saturation_ = (this->liquid_saturation_ - this->liquid_saturation_res_) /
-                                  (1 - this->liquid_saturation_res_);
-    const double suction = liquid_material_->template 
-                          property<double>(std::string("suction"));
-    // this->suction_pressure_ = para_p0 * std::pow(effective_saturation_, -1. / para_m);
-    // this->suction_pressure_ = para_p0 * 
-    //       std::pow(std::pow(this->effective_saturation_, -1. / para_m) - 1., 1. - para_m);
-    // this->suction_pressure_ = (1 - ini_liquid_saturation_) * 1E6;
-    this->suction_pressure_ = 137340.0; // 20 psi in Pa
-    // this->suction_pressure_ = 392400.0; // 40 psi in Pa
-    // this->suction_pressure_ = this->liquid_density_ * 9.81 * this->coordinates_[1];
+    const double initial_mobile_saturation =
+        1.0 - liquid_saturation_res_ - gas_saturation_res_;
+    if (initial_mobile_saturation <= 0.0)
+      throw std::runtime_error(
+          "Initial state requires positive mobile saturation range");
+    this->effective_saturation_ = std::min(
+        1.0, std::max(0.0,
+            (this->liquid_saturation_ - liquid_saturation_res_) /
+            initial_mobile_saturation));
+    // Preserve the historical 20 psi initial suction unless the input file
+    // explicitly supplies a value or requests consistency with the SWRC.
+    this->suction_pressure_ = liquid_material_->template property_or<double>(
+        std::string("initial_suction"), 137340.0);
+
+    const bool initial_suction_from_swrc =
+        liquid_material_->template property_or<bool>(
+            std::string("initial_suction_from_swrc"), false);
+    if (initial_suction_from_swrc) {
+      if (para_p0 <= 0.0 || para_m <= 0.0 || para_m >= 1.0)
+        throw std::runtime_error(
+            "Initial SWRC suction requires para_p0 > 0 and 0 < para_m < 1");
+
+      const double saturation_range =
+          1.0 - liquid_saturation_res_ - gas_saturation_res_;
+      if (saturation_range <= 0.0)
+        throw std::runtime_error(
+            "Initial SWRC suction requires positive mobile saturation range");
+
+      double initial_effective_saturation =
+          (liquid_saturation_ - liquid_saturation_res_) / saturation_range;
+      initial_effective_saturation = std::min(
+          1.0 - 1.0e-12,
+          std::max(1.0e-12, initial_effective_saturation));
+
+      this->suction_pressure_ = para_p0 * std::pow(
+          std::pow(initial_effective_saturation, -1.0 / para_m) - 1.0,
+          1.0 - para_m);
+    }
+    this->suction_pressure_ = std::abs(this->suction_pressure_);
+
+    // Initialise the retention-curve tangent before the first pressure
+    // update. Leaving dSw_dpw_ undefined makes the first coupling matrix
+    // depend on uninitialised memory.
+    this->dSw_dpw_ = 0.0;
+    if (para_p0 > 0.0 && para_m > 0.0 && para_m < 1.0) {
+      const double A = this->suction_pressure_ / para_p0;
+      const double exponent = 1.0 / (1.0 - para_m);
+      const double abs_A = std::max(std::abs(A), 1.0e-12);
+      const double B = 1.0 + std::pow(abs_A, exponent);
+      const double dB_dA = exponent * std::pow(abs_A, exponent - 1.0);
+      const double dSe_dB = -para_m * std::pow(B, -para_m - 1.0);
+      const double mobile_saturation =
+          1.0 - liquid_saturation_res_ - gas_saturation_res_;
+      this->dSw_dpw_ = mobile_saturation * dSe_dB * dB_dA *
+                       (-1.0 / para_p0);
+    }
     this->liquid_pressure_ = this->gas_pressure_ - this->suction_pressure_;
     this->PIC_gas_pressure_ = this->gas_pressure_;
     this->PIC_liquid_pressure_ = this->liquid_pressure_;
@@ -1448,6 +1496,16 @@ void mpm::ThreePhaseParticleNew<Tdim>::update_liquid_gas_saturation(double dt){
 
       this->liquid_saturation_ = (Se * (1.0 - liquid_saturation_res_ -
               gas_saturation_res_) + liquid_saturation_res_);
+      const double mobile_saturation =
+          1.0 - liquid_saturation_res_ - gas_saturation_res_;
+      if (mobile_saturation > 0.0) {
+        this->effective_saturation_ = std::min(
+            1.0, std::max(0.0,
+                (this->liquid_saturation_ - liquid_saturation_res_) /
+                mobile_saturation));
+      } else {
+        this->effective_saturation_ = 0.0;
+      }
 
       // Some terms For dB_dA
       double sgnA = (A >= 0.0 ? 1.0 : -1.0);

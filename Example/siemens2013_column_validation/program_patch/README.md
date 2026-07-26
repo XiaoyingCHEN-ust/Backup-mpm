@@ -1,30 +1,43 @@
-# Program patch for `mpm_hpc`
+# Program patch used by the Siemens validation
 
-`initial_suction_from_swrc.patch` changes only
-`include/particles/particle_threephase_new.tcc`. It removes the mandatory
-20 psi initial suction for this particle type while preserving that value as
-the default for all existing inputs.
+The first HPC4 outputs proved that the executable still used the historical
+hard-coded 20 psi suction: the initial VTP value was 137340 Pa rather than the
+972.99 Pa required by the input saturation and SWRC. The complete replacement
+is therefore stored in both include locations under `server_overrides/`, and
+`install_hpc4.sh` installs both copies and rebuilds the exact executable used
+by the job script.
 
-The patch adds two optional material properties:
+The replacement adds two optional material properties:
 
 - `initial_suction`: an explicitly prescribed initial suction in Pa;
 - `initial_suction_from_swrc`: when `true`, initialise suction from the input
   liquid saturation and van Genuchten parameters (`para_p0`, `para_m`).
 
-The Siemens inputs use the second option because the published initial state
-is close to residual saturation and is incompatible with a hard-coded 20 psi
-value.
+It also initialises the SWRC tangent before the first pressure update and
+updates effective saturation after every saturation update. The latter is
+required because the liquid and gas relative permeabilities otherwise remain
+frozen at their initial values.
 
-## Apply on hpc4
+The Siemens inputs use `initial_suction_from_swrc` because the published
+initial state is close to residual saturation and is incompatible with a
+hard-coded 20 psi value. Existing inputs retain 20 psi by default.
 
-From the root of the `mpm_hpc` source checkout, run:
+## Apply on HPC4
+
+From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild
+through Slurm so that it receives the requested 32 CPUs:
 
 ```bash
-git apply --check --ignore-space-change --ignore-whitespace \
-  /absolute/path/to/Backup-mpm/Example/siemens2013_column_validation/program_patch/initial_suction_from_swrc.patch
-git apply --ignore-space-change --ignore-whitespace \
-  /absolute/path/to/Backup-mpm/Example/siemens2013_column_validation/program_patch/initial_suction_from_swrc.patch
+sbatch program_patch/rebuild_hpc4.sh
 ```
 
-Then rebuild `mpm_hpc`. If the patch has already been applied,
-`git apply --check` will stop without changing the source.
+The default source and executable are
+`/home/xchenjm/chen/MPM/mpm` and `/home/xchenjm/chen/MPM/mpm/build/mpm`.
+Set and export `MPM_SOURCE` before submission only if that source checkout
+moves. The installer creates one `.pre-siemens-validation` backup beside each
+original source file before replacement and builds with 32 parallel jobs by
+default.
+
+Do not run the full 400/900 s calculations immediately after rebuilding.
+First run the short time-step matrix described in the case README; every
+short job checks the initial suction and pressure ranges automatically.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 from pathlib import Path
 
@@ -39,6 +40,46 @@ def layer_average(y: np.ndarray, values: np.ndarray):
     return layers, averages
 
 
+def top_connected_front(
+    layers: np.ndarray,
+    layer_saturation: np.ndarray,
+    saturation_threshold: float,
+    height: float,
+):
+    """Return the deepest wet layer connected continuously to the top.
+
+    The open experiment also has a saturated constant-head layer at the base.
+    Treating the deepest wet layer anywhere in the column as the front would
+    therefore report full infiltration at the initial output.
+    """
+    order = np.argsort(layers)[::-1]
+    layers_from_top = layers[order]
+    wet_from_top = layer_saturation[order] >= saturation_threshold
+    if not wet_from_top[0]:
+        return height, 0.0
+
+    first_dry = np.flatnonzero(~wet_from_top)
+    connected_count = int(first_dry[0]) if first_dry.size else len(layers_from_top)
+    front_y = float(layers_from_top[connected_count - 1])
+    return front_y, float(np.clip(height - front_y, 0.0, height))
+
+
+def expected_initial_suction(config: dict):
+    liquid = next(
+        material for material in config["materials"] if "liquid_saturation" in material
+    )
+    if not liquid.get("initial_suction_from_swrc", False):
+        return float(liquid.get("initial_suction", 137340.0))
+
+    sw = float(liquid["liquid_saturation"])
+    swr = float(liquid["liquid_saturation_res"])
+    sgr = float(liquid["gas_saturation_res"])
+    p0 = float(liquid["para_p0"])
+    m = float(liquid["para_m"])
+    effective = np.clip((sw - swr) / (1.0 - swr - sgr), 1.0e-12, 1.0 - 1.0e-12)
+    return float(p0 * (effective ** (-1.0 / m) - 1.0) ** (1.0 - m))
+
+
 def extract_case(case_name: str, saturation_threshold: float):
     config_path = CASE_DIR / f"mpm_{case_name}.json"
     with config_path.open(encoding="utf-8") as stream:
@@ -54,6 +95,7 @@ def extract_case(case_name: str, saturation_threshold: float):
     height = 94 * float(config["mesh"]["cellsize_min"])
     cell_size = float(config["mesh"]["cellsize_min"])
     rows = []
+    initial_dry_suction_median_pa = float("nan")
 
     for path in files:
         match = STEP_PATTERN.search(path.name)
@@ -65,15 +107,20 @@ def extract_case(case_name: str, saturation_threshold: float):
         y = points[:, 1]
         saturation = read_point_array(polydata, "liquid_saturations").ravel()
         gas_pressure = read_point_array(polydata, "gas_pressures").ravel()
+        liquid_pressure = read_point_array(polydata, "liquid_pressures").ravel()
+        suction_pressure = read_point_array(polydata, "suction_pressures").ravel()
 
         layers, layer_saturation = layer_average(y, saturation)
-        wetted_layers = layers[layer_saturation >= saturation_threshold]
-        if wetted_layers.size:
-            front_y = float(np.min(wetted_layers))
-            wetting_depth = float(np.clip(height - front_y, 0.0, height))
-        else:
-            front_y = height
-            wetting_depth = 0.0
+        front_y, wetting_depth = top_connected_front(
+            layers, layer_saturation, saturation_threshold, height
+        )
+
+        if not rows:
+            initial_dry = saturation < 0.10
+            if np.any(initial_dry):
+                initial_dry_suction_median_pa = float(
+                    np.median(suction_pressure[initial_dry])
+                )
 
         dry_mask = (saturation < 0.10) & (y < front_y - 0.5 * cell_size)
         if np.any(dry_mask):
@@ -105,6 +152,14 @@ def extract_case(case_name: str, saturation_threshold: float):
                 "dry_air_pressure_p10_kpa": air_p10,
                 "dry_air_pressure_p90_kpa": air_p90,
                 "transmission_saturation": transmission_saturation,
+                "saturation_min": float(np.min(saturation)),
+                "saturation_max": float(np.max(saturation)),
+                "max_abs_gas_pressure_kpa": float(
+                    np.max(np.abs(gas_pressure)) / 1000.0
+                ),
+                "max_abs_liquid_pressure_kpa": float(
+                    np.max(np.abs(liquid_pressure)) / 1000.0
+                ),
             }
         )
 
@@ -115,7 +170,48 @@ def extract_case(case_name: str, saturation_threshold: float):
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    return rows, output_csv
+    expected_suction = expected_initial_suction(config)
+    checks = {
+        "case": case_name,
+        "output_files": len(rows),
+        "expected_initial_suction_pa": expected_suction,
+        "observed_initial_dry_suction_median_pa": initial_dry_suction_median_pa,
+        "initialization_patch_active": math.isclose(
+            initial_dry_suction_median_pa, expected_suction, rel_tol=0.02, abs_tol=1.0
+        ),
+        "finite_values": bool(
+            all(
+                np.isfinite(row[key])
+                for row in rows
+                for key in (
+                    "saturation_min",
+                    "saturation_max",
+                    "max_abs_gas_pressure_kpa",
+                    "max_abs_liquid_pressure_kpa",
+                )
+            )
+        ),
+        "saturation_in_unit_interval": bool(
+            min(row["saturation_min"] for row in rows) >= 0.0
+            and max(row["saturation_max"] for row in rows) <= 1.0
+        ),
+        # A deliberately loose guard compared with the measured 1.2--1.6 kPa.
+        # It catches numerical blow-up without being an agreement criterion.
+        "pressures_below_safety_limit": bool(
+            max(
+                max(row["max_abs_gas_pressure_kpa"] for row in rows),
+                max(row["max_abs_liquid_pressure_kpa"] for row in rows),
+            )
+            < 1000.0
+        ),
+    }
+    checks["valid_for_comparison"] = bool(
+        checks["initialization_patch_active"]
+        and checks["finite_values"]
+        and checks["saturation_in_unit_interval"]
+        and checks["pressures_below_safety_limit"]
+    )
+    return rows, output_csv, checks
 
 
 def load_reference(path: Path):
@@ -190,10 +286,31 @@ def main():
     args = parser.parse_args()
 
     summaries = {}
+    checks = {}
     for case_name in args.cases:
-        rows, output_csv = extract_case(case_name, args.saturation_threshold)
+        rows, output_csv, case_checks = extract_case(
+            case_name, args.saturation_threshold
+        )
         summaries[case_name] = rows
+        checks[case_name] = case_checks
         print(f"Wrote {output_csv}")
+
+    status_path = CASE_DIR / "validation_results" / "validation_status.json"
+    with status_path.open("w", encoding="utf-8") as stream:
+        json.dump(checks, stream, indent=2)
+    print(f"Wrote {status_path}")
+
+    invalid = [name for name, status in checks.items() if not status["valid_for_comparison"]]
+    if invalid:
+        details = ", ".join(
+            f"{name} (patch={checks[name]['initialization_patch_active']}, "
+            f"pressure_safe={checks[name]['pressures_below_safety_limit']})"
+            for name in invalid
+        )
+        raise RuntimeError(
+            "Outputs are not valid for experimental comparison: " + details
+        )
+
     print(f"Wrote {plot_comparison(summaries)}")
 
 

@@ -57,11 +57,12 @@ they are not fitted to the response curves.
 - `reference_data/` contains values read from Figures 7, 8, and 11 and the
   pressure range stated in the paper. The wetting-front points are approximate
   digitisation targets and should not be presented as exact tabulated data.
-- `run_hpc4.sh` is a two-task Slurm array script.
+- `run_stability_hpc4.sh` is an eight-task, short-duration time-step check.
+- `run_hpc4.sh` is the two-task full-duration Slurm array script.
 - `postprocess_validation.py` extracts wetting-front depth and dry-zone
   pore-air pressure from the particle VTP files.
-- `program_patch/` contains the small, backward-compatible source patch
-  required to initialise suction consistently with the published saturation.
+- `program_patch/` installs the backward-compatible source replacement,
+  rebuilds the executable, and prevents a stale executable being used again.
 - `validation_subsection_draft.md` is intentionally left with placeholders
   until the HPC results are available.
 
@@ -76,21 +77,57 @@ python preprocess.py
 Expected counts are 376 cells, 1504 particles, eight top-boundary particles,
 and eight bottom-boundary particles.
 
-## Run on hpc4
+## Rebuild and run the mandatory short check on HPC4
 
-Apply the patch in `program_patch/` and compile the program. The current HPC4
-script loads `miniconda3/24.3.0-quc3pyu`, activates `cbgeo_tbb`, requests one
-GPU and 32 CPUs, and defaults to the executable at
-`/home/xchenjm/chen/MPM/mpm/build/mpm`. Submit both cases with:
+The downloaded first run is not valid for comparison. Its initial dry-zone
+suction is 137340 Pa instead of the input-consistent 972.99 Pa, proving that
+the executable was not rebuilt with the validation patch. The pressures then
+grow far beyond the experimental scale. Install the two replacement files in
+the source tree used by the executable and rebuild:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+```
+
+Wait until this one rebuild job completes successfully. It requests the same
+`granularmech`/`comgranmech` resources and 32 CPUs as the calculation jobs.
+
+Next generate and submit eight 3 s checks (open/closed, each at
+`5e-4`, `5e-5`, `5e-6`, and `1e-6` s):
+
+```bash
+python prepare_stability_checks.py
+sbatch run_stability_hpc4.sh
+```
+
+The 3 s window covers the time by which the first run had already diverged;
+the job scripts retain only every 10000th routine step message to keep the
+Slurm logs small.
+
+Each array task requests one GPU and 32 CPUs from `granularmech` under
+`comgranmech`. It exits nonzero when the executable is stale, the initial
+suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
+exceeds the deliberately loose 1 MPa safety bound. Passing directories
+contain `RANGE_CHECK_PASSED.txt` under `stability_results/`.
+
+Download `stability_results/` after this short array. The stable step will be
+selected before the full inputs are changed; do not resubmit `run_hpc4.sh`
+with the current `dt=5e-4 s` inputs.
+
+## Full run on HPC4 (after the short check)
+
+The full script loads `miniconda3/24.3.0-quc3pyu`, activates `cbgeo_tbb`, and
+defaults to `/home/xchenjm/chen/MPM/mpm/build/mpm`. It also verifies that both
+source copies contain the patch and are not newer than the executable. Once
+the selected time step has been committed, submit with:
 
 ```bash
 sbatch run_hpc4.sh
 ```
 
-Set and export `MPM_BIN` only if the executable is stored elsewhere.
-
-The array index 0 runs the open test and index 1 runs the closed test. Results
-are written to `results/siemens2013-open/` and
+Set and export `MPM_SOURCE` or `MPM_BIN` only if those locations move. Array
+index 0 runs the open test and index 1 the closed test. Full results are
+written to `results/siemens2013-open/` and
 `results/siemens2013-closed/`.
 
 ## Post-process after both runs
@@ -102,7 +139,10 @@ python postprocess_validation.py
 ```
 
 It writes two summary CSV files and `siemens2013_validation.png` under
-`validation_results/`. The default wetting-front definition is the deepest
-horizontal layer with mean liquid saturation of at least 0.40; the threshold
-can be changed with `--saturation-threshold` for a bounded interpretation
-check.
+`validation_results/`. The wetting front is the deepest layer in the wet
+region connected continuously to the top. This excludes the separate
+saturated constant-head layer at the base of the open column. The default
+mean-saturation threshold is 0.40 and can be changed with
+`--saturation-threshold`. The script also rejects outputs when the SWRC
+initialisation is absent or pressures have blown up, so an invalid run cannot
+silently produce a manuscript figure.
