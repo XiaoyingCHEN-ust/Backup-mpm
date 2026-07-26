@@ -126,15 +126,31 @@ python prepare_stability_checks.py --duration 0.001 \
 sbatch run_stability_hpc4.sh
 ```
 
-The generator options are explicit so the baseline inputs remain unchanged
-until this diagnostic has demonstrated time-step consistency. Download the six
-`r4-pic-micro` result directories before proceeding. If they converge, repeat
-the same settings over 0.01 s and then generate a longer check for only the
-largest stable time step; for example:
+The r4 results are finite and time-step convergent: between `5e-6` and `1e-6 s`,
+the maximum open-case liquid-pressure and saturation differences are 2.75 Pa
+and `1.43e-6`; the corresponding closed-case differences are 0.97 Pa and
+`5.37e-7`, with a maximum gas-pressure difference of 0.79 Pa. However, r4 is
+only a diagnostic because pure PIC transfer introduces numerical dissipation.
+It is not adopted for the experimental validation.
+
+Isolate the effect of step-count-based pressure smoothing with a second 0.001 s
+micro test. This restores both transfer ratios to zero and changes only
+`pressure_smoothing` relative to the original numerical settings:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r5-long \
-  --time-steps <selected_dt> --pic 1 --pressure-smoothing false
+python prepare_stability_checks.py --duration 0.001 \
+  --revision r5-flip-micro --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch run_stability_hpc4.sh
+```
+
+Do not start a longer calculation until the six `r5-flip-micro` directories
+have been checked. If this FLIP test converges, first screen practical larger
+time steps over a short physical interval, then generate a longer check using
+the selected step; for example:
+
+```bash
+python prepare_stability_checks.py --duration 3 --revision r6-long \
+  --time-steps <selected_dt> --pic 0 --pic-t 0 --pressure-smoothing false
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
 

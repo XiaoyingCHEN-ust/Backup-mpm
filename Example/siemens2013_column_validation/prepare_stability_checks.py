@@ -33,6 +33,12 @@ def main():
         help="override analysis.PIC (omit to retain the source input value)",
     )
     parser.add_argument(
+        "--pic-t",
+        type=float,
+        default=None,
+        help="override analysis.PIC_T (omit to retain the source input value)",
+    )
+    parser.add_argument(
         "--pressure-smoothing",
         choices=("source", "true", "false"),
         default="source",
@@ -48,6 +54,8 @@ def main():
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
     if args.pic is not None and not 0.0 <= args.pic <= 1.0:
         parser.error("--pic must be between 0 and 1")
+    if args.pic_t is not None and not 0.0 <= args.pic_t <= 1.0:
+        parser.error("--pic-t must be between 0 and 1")
 
     input_dir = CASE_DIR / "stability_inputs"
     input_dir.mkdir(exist_ok=True)
@@ -73,16 +81,19 @@ def main():
             config = json.loads(json.dumps(source))
             if args.pic is not None:
                 config["analysis"]["PIC"] = args.pic
+            if args.pic_t is not None:
+                config["analysis"]["PIC_T"] = args.pic_t
             if args.pressure_smoothing != "source":
                 config["analysis"]["pressure_smoothing"] = (
                     args.pressure_smoothing == "true"
                 )
             pic = config["analysis"]["PIC"]
+            pic_t = config["analysis"]["PIC_T"]
             smoothing = config["analysis"]["pressure_smoothing"]
             config["title"] = (
                 f"Siemens 2013 {case_name} stability check, "
                 f"dt={dt:.0e} s, duration={args.duration:g} s, "
-                f"PIC={pic:g}, pressure_smoothing={smoothing}"
+                f"PIC={pic:g}, PIC_T={pic_t:g}, pressure_smoothing={smoothing}"
             )
             config["analysis"]["dt"] = dt
             config["analysis"]["nsteps"] = nsteps
