@@ -18,5 +18,11 @@ eval "$("$(command -v conda)" shell.bash hook)"
 conda activate cbgeo_tbb
 set -u
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "${script_dir}/install_hpc4.sh"
+case_dir="${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}"
+installer="${case_dir}/program_patch/install_hpc4.sh"
+if [[ ! -f "${installer}" ]]; then
+  echo "Installer is missing: ${installer}" >&2
+  echo "Submit rebuild_hpc4.sh from the Siemens validation case directory" >&2
+  exit 2
+fi
+bash "${installer}"
