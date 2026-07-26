@@ -1,10 +1,11 @@
 """Generate the 2-D MPM mesh and particle sets for Siemens et al. (2013).
 
 The model represents the initially unsaturated interval between the upper
-pond and the lower wet boundary in the coarse transparent-sand column.
-Four square cells are used across the 45.6 mm column width.  The resulting
-height (94 cells) is 1.0716 m, within 0.4% of the approximately 1.075 m
-experimental interval.
+pond and the lower wet boundary in the coarse transparent-sand column. Since
+the validation targets are one-dimensional, one square cell is used across a
+representative-width slice. Two particles per horizontal layer retain the
+standard 2 x 2 particles per cell, while 188 particle layers resolve the
+approximately 1.075 m experimental interval.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import numpy as np
 
 CASE_DIR = Path(__file__).resolve().parent
 CELL_SIZE = 0.0114
-NX = 4
+NX = 1
 NY = 94
 WIDTH = NX * CELL_SIZE
 HEIGHT = NY * CELL_SIZE

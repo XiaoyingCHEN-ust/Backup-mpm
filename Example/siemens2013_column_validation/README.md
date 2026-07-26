@@ -28,9 +28,14 @@ independent validation targets, not calibration inputs.
 
 The computational domain represents the approximately 1.075 m initially
 unsaturated interval from the surface of the coarse sand to the lower wet
-boundary. It is a 45.6 mm-wide plane-strain rectangle. Four 11.4 mm cells are
-used across the width and 94 along the height, giving a modeled height of
-1.0716 m. The skeleton is fixed to isolate hydraulic liquid–gas coupling.
+boundary. Because the experiment and validation observables are one-dimensional,
+the numerical domain is a representative 11.4 mm-wide plane-strain slice with
+one cell across its width and 94 cells along its height. Standard 2 x 2 particle
+integration gives two particles per horizontal layer, 188 layers, and a 5.7 mm
+vertical particle spacing. The modeled height is 1.0716 m. Side constraints
+enforce one-dimensional flow, and the skeleton is fixed to isolate hydraulic
+liquid–gas coupling. The reduced width changes total modeled volume but not
+pressure, saturation, or wetting-front quantities defined per unit area.
 
 Published inputs used directly are:
 
@@ -81,8 +86,8 @@ From this directory:
 python preprocess.py
 ```
 
-Expected counts are 376 cells, 1504 particles, eight top-boundary particles,
-and eight bottom-boundary particles.
+Expected counts are 94 cells, 376 particles, two top-boundary particles, and
+two bottom-boundary particles.
 
 ## Rebuild and run the mandatory short check on HPC4
 
@@ -126,12 +131,13 @@ python prepare_stability_checks.py --duration 0.001 \
 sbatch run_stability_hpc4.sh
 ```
 
-The r4 results are finite and time-step convergent: between `5e-6` and `1e-6 s`,
-the maximum open-case liquid-pressure and saturation differences are 2.75 Pa
-and `1.43e-6`; the corresponding closed-case differences are 0.97 Pa and
-`5.37e-7`, with a maximum gas-pressure difference of 0.79 Pa. However, r4 is
-only a diagnostic because pure PIC transfer introduces numerical dissipation.
-It is not adopted for the experimental validation.
+The r4 results for the original four-cell-wide mesh are finite and time-step
+convergent: between `5e-6` and `1e-6 s`, the maximum open-case liquid-pressure
+and saturation differences are 2.75 Pa and `1.43e-6`; the corresponding
+closed-case differences are 0.97 Pa and `5.37e-7`, with a maximum gas-pressure
+difference of 0.79 Pa. However, r4 is only a diagnostic because pure PIC
+transfer introduces numerical dissipation. It is not adopted for the
+experimental validation.
 
 Isolate the effect of step-count-based pressure smoothing with a second 0.001 s
 micro test. This restores both transfer ratios to zero and changes only
@@ -139,14 +145,14 @@ micro test. This restores both transfer ratios to zero and changes only
 
 ```bash
 python prepare_stability_checks.py --duration 0.001 \
-  --revision r5-flip-micro --pic 0 --pic-t 0 --pressure-smoothing false
+  --revision r5-flip-micro-1d --pic 0 --pic-t 0 --pressure-smoothing false
 sbatch run_stability_hpc4.sh
 ```
 
-Do not start a longer calculation until the six `r5-flip-micro` directories
-have been checked. If this FLIP test converges, first screen practical larger
-time steps over a short physical interval, then generate a longer check using
-the selected step; for example:
+Do not start a longer calculation until the six `r5-flip-micro-1d` directories
+from the reduced mesh have been checked. If this FLIP test converges, first
+screen practical larger time steps over a short physical interval, then
+generate a longer check using the selected step; for example:
 
 ```bash
 python prepare_stability_checks.py --duration 3 --revision r6-long \
