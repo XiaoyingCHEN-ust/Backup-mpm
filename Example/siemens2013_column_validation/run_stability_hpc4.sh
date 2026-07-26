@@ -2,12 +2,12 @@
 #SBATCH --job-name=siemens_dt
 #SBATCH --partition=granularmech
 #SBATCH --account=comgranmech
-#SBATCH --array=0-7
+#SBATCH --array=0-5
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
-#SBATCH --time=04:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=16G
 #SBATCH --output=stability-%A_%a.out
 #SBATCH --error=stability-%A_%a.err
@@ -25,13 +25,25 @@ set -u
 mpm_source="${MPM_SOURCE:-/home/xchenjm/chen/MPM/mpm}"
 mpm_bin="${MPM_BIN:-${mpm_source}/build/mpm}"
 threads="${SLURM_CPUS_PER_TASK:-32}"
-labels=(
-  open_5e-04 open_5e-05 open_5e-06 open_1e-06
-  closed_5e-04 closed_5e-05 closed_5e-06 closed_1e-06
-)
-label="${labels[${SLURM_ARRAY_TASK_ID:-0}]}"
-input="stability_inputs/mpm_${label}.json"
-uuid="siemens2013-stability-r2-${label}"
+task_index="${SLURM_ARRAY_TASK_ID:-0}"
+manifest="stability_inputs/manifest.csv"
+if [[ ! -f "${manifest}" ]]; then
+  echo "Missing ${manifest}; run python prepare_stability_checks.py first" >&2
+  exit 4
+fi
+manifest_row="$(awk -F, -v target="$((task_index + 2))" \
+  'NR == target {print; exit}' "${manifest}")"
+if [[ -z "${manifest_row}" ]]; then
+  echo "No manifest entry for array index ${task_index}" >&2
+  exit 4
+fi
+IFS=',' read -r manifest_index label case_name dt duration nsteps \
+  output_steps uuid input <<< "${manifest_row}"
+input="${input%$'\r'}"
+if [[ "${manifest_index}" != "${task_index}" ]]; then
+  echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
+  exit 4
+fi
 
 if [[ ! -x "${mpm_bin}" ]]; then
   echo "MPM executable is missing or not executable: ${mpm_bin}" >&2
@@ -56,6 +68,7 @@ if [[ ! -f "${input}" ]]; then
 fi
 
 echo "Running ${label} on $(hostname) with ${threads} threads"
+echo "dt=${dt} s, duration=${duration} s, nsteps=${nsteps}"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 10000 != 0) next} {print}'
 python check_vtp_ranges.py "stability_results/${uuid}"

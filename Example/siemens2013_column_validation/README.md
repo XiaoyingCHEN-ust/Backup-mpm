@@ -64,7 +64,7 @@ is not a fitted infiltration parameter.
 - `reference_data/` contains values read from Figures 7, 8, and 11 and the
   pressure range stated in the paper. The wetting-front points are approximate
   digitisation targets and should not be presented as exact tabulated data.
-- `run_stability_hpc4.sh` is an eight-task, short-duration time-step check.
+- `run_stability_hpc4.sh` is a manifest-driven, short-duration time-step check.
 - `run_hpc4.sh` is the two-task full-duration Slurm array script.
 - `postprocess_validation.py` extracts wetting-front depth and dry-zone
   pore-air pressure from the particle VTP files.
@@ -99,17 +99,29 @@ sbatch program_patch/rebuild_hpc4.sh
 Wait until this one rebuild job completes successfully. It requests the same
 `granularmech`/`comgranmech` resources and 32 CPUs as the calculation jobs.
 
-Next generate and submit eight 3 s checks (open/closed, each at
-`5e-4`, `5e-5`, `5e-6`, and `1e-6` s):
+The default first stage is deliberately small: six 0.01 s checks covering the
+open and closed cases at `5e-5`, `5e-6`, and `1e-6` s. They require only 200,
+2000, and 10000 steps per case:
 
 ```bash
 python prepare_stability_checks.py
 sbatch run_stability_hpc4.sh
 ```
 
-The 3 s window covers the time by which the first run had already diverged;
-the job scripts retain only every 10000th routine step message to keep the
-Slurm logs small.
+The first-stage UUIDs contain `r3-smoke`. This window is sufficient to detect
+the immediate pressure/velocity instability without spending millions of
+steps. After these outputs are inspected, generate a longer check for only the
+largest stable time step; for example:
+
+```bash
+python prepare_stability_checks.py --duration 3 --revision r4-long \
+  --time-steps <selected_dt>
+sbatch --array=0-1 run_stability_hpc4.sh
+```
+
+Do not run this second command until the smoke results have been reviewed.
+The job script reads the generated manifest, so its array range must match the
+number of manifest rows.
 
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
