@@ -15,7 +15,10 @@ VTK_STRUCT_TYPES = {"Float32": "f", "Float64": "d"}
 
 
 def decode_binary_array(element, byte_order: str, header_type: str, compressor: str):
-    payload = "".join(element.itertext()).strip()
+    # DataArray can contain nested InformationKey values; only element.text
+    # is the encoded payload. Including descendant text silently appends the
+    # range values to the base64 stream.
+    payload = "".join((element.text or "").split())
     endian = "<" if byte_order == "LittleEndian" else ">"
     header_code = "I" if header_type == "UInt32" else "Q"
     header_size = struct.calcsize(header_code)
@@ -34,7 +37,9 @@ def decode_binary_array(element, byte_order: str, header_type: str, compressor: 
     )
     block_size, last_block_size = fields[1], fields[2]
     compressed_sizes = fields[3:]
-    compressed = base64.b64decode(payload[header_chars:])
+    encoded = payload[header_chars:]
+    encoded += "=" * (-len(encoded) % 4)
+    compressed = base64.b64decode(encoded)
 
     raw_blocks = []
     offset = 0
@@ -89,6 +94,7 @@ def main():
     parser.add_argument("result_dir", type=Path)
     parser.add_argument("--expected-suction-pa", type=float, default=972.9920291627446)
     parser.add_argument("--pressure-limit-pa", type=float, default=1.0e6)
+    parser.add_argument("--velocity-limit-mps", type=float, default=10.0)
     args = parser.parse_args()
 
     files = sorted(args.result_dir.glob("particle*.vtp"))
@@ -99,9 +105,14 @@ def main():
     marker.unlink(missing_ok=True)
     names = (
         "liquid_saturations",
+        "gas_saturations",
         "gas_pressures",
         "liquid_pressures",
         "suction_pressures",
+        "liquid_permeabilities",
+        "gas_permeabilities",
+        "liquid_velocities",
+        "gas_velocities",
     )
     initial = point_arrays(files[0], names)
     if any(not math.isfinite(value) for value in initial["suction_pressures"]):
@@ -117,8 +128,12 @@ def main():
         )
 
     maximum_pressure = 0.0
+    maximum_velocity = 0.0
     saturation_min = math.inf
     saturation_max = -math.inf
+    gas_saturation_min = math.inf
+    gas_saturation_max = -math.inf
+    minimum_permeability = math.inf
     for path in files:
         arrays = point_arrays(path, names)
         for name, values in arrays.items():
@@ -131,24 +146,59 @@ def main():
             maximum_pressure = max(
                 maximum_pressure, max(abs(value) for value in arrays[name])
             )
+        for name in ("liquid_velocities", "gas_velocities"):
+            maximum_velocity = max(
+                maximum_velocity, max(abs(value) for value in arrays[name])
+            )
+        for name in ("liquid_permeabilities", "gas_permeabilities"):
+            minimum_permeability = min(minimum_permeability, min(arrays[name]))
         low = min(arrays["liquid_saturations"])
         high = max(arrays["liquid_saturations"])
         saturation_min = min(saturation_min, low)
         saturation_max = max(saturation_max, high)
+        gas_saturation_min = min(gas_saturation_min, min(arrays["gas_saturations"]))
+        gas_saturation_max = max(gas_saturation_max, max(arrays["gas_saturations"]))
+        maximum_saturation_sum_error = max(
+            abs(liquid + gas - 1.0)
+            for liquid, gas in zip(
+                arrays["liquid_saturations"], arrays["gas_saturations"]
+            )
+        )
+        if maximum_saturation_sum_error > 1.0e-10:
+            raise RuntimeError(
+                "Liquid and gas saturations do not sum to one in "
+                f"{path.name}: error={maximum_saturation_sum_error:.6g}"
+            )
 
     if not (0.0 <= saturation_min <= saturation_max <= 1.0):
         raise RuntimeError(
             f"Nonphysical saturation range: [{saturation_min}, {saturation_max}]"
         )
+    if not (0.0 <= gas_saturation_min <= gas_saturation_max <= 1.0):
+        raise RuntimeError(
+            "Nonphysical gas saturation range: "
+            f"[{gas_saturation_min}, {gas_saturation_max}]"
+        )
+    if minimum_permeability <= 0.0:
+        raise RuntimeError(
+            f"Nonpositive phase permeability: {minimum_permeability:.6g} m^2"
+        )
     if not math.isfinite(maximum_pressure) or maximum_pressure >= args.pressure_limit_pa:
         raise RuntimeError(
             f"Pressure stability check failed: max |p|={maximum_pressure:.6g} Pa"
+        )
+    if maximum_velocity >= args.velocity_limit_mps:
+        raise RuntimeError(
+            "Velocity stability check failed: max component="
+            f"{maximum_velocity:.6g} m/s"
         )
 
     marker.write_text(
         f"files={len(files)}\n"
         f"initial_max_suction_pa={observed_suction:.12g}\n"
         f"max_abs_pressure_pa={maximum_pressure:.12g}\n"
+        f"max_abs_velocity_component_mps={maximum_velocity:.12g}\n"
+        f"min_phase_permeability_m2={minimum_permeability:.12g}\n"
         f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n",
         encoding="utf-8",
     )

@@ -114,8 +114,10 @@ Slurm logs small.
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
-exceeds the deliberately loose 1 MPa safety bound. Passing directories
-contain `RANGE_CHECK_PASSED.txt` under `stability_results/`.
+exceeds the deliberately loose 1 MPa safety bound. It also rejects non-finite
+arrays, nonpositive phase permeability, inconsistent phase saturations, and
+velocity components above the loose 10 m/s bound. Passing directories contain
+`RANGE_CHECK_PASSED.txt` under `stability_results/`.
 
 The checker decodes the compressed VTP arrays themselves rather than trusting
 the XML `RangeMin`/`RangeMax` metadata, because VTK range metadata silently
