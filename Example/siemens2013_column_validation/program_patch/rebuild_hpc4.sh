@@ -11,11 +11,12 @@
 #SBATCH --output=rebuild-%j.out
 #SBATCH --error=rebuild-%j.err
 
-set -euo pipefail
+set -eo pipefail
 
 module load miniconda3/24.3.0-quc3pyu
 eval "$("$(command -v conda)" shell.bash hook)"
 conda activate cbgeo_tbb
+set -u
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bash "${script_dir}/install_hpc4.sh"

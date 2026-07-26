@@ -12,7 +12,7 @@
 #SBATCH --output=stability-%A_%a.out
 #SBATCH --error=stability-%A_%a.err
 
-set -euo pipefail
+set -eo pipefail
 
 case_dir="${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}"
 cd "${case_dir}"
@@ -20,6 +20,7 @@ cd "${case_dir}"
 module load miniconda3/24.3.0-quc3pyu
 eval "$("$(command -v conda)" shell.bash hook)"
 conda activate cbgeo_tbb
+set -u
 
 mpm_source="${MPM_SOURCE:-/home/xchenjm/chen/MPM/mpm}"
 mpm_bin="${MPM_BIN:-${mpm_source}/build/mpm}"
