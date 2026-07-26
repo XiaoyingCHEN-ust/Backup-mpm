@@ -107,7 +107,9 @@ def main():
         {"id": 3, "set": as_int_list(np.where(nodes[:, 0] >= WIDTH - tolerance))},
     ]
 
-    top = np.where(particles[:, 1] >= HEIGHT - 0.51 * PARTICLE_SPACING)[0]
+    # Apply the imposed surface pressures to all four material points in the
+    # top cell, rather than to only the uppermost particle row.
+    top = np.where(particles[:, 1] >= HEIGHT - CELL_SIZE + tolerance)[0]
     bottom = np.where(particles[:, 1] <= 0.51 * PARTICLE_SPACING)[0]
     nonfree = np.setdiff1d(np.arange(particles.shape[0]), top)
     particle_sets = [

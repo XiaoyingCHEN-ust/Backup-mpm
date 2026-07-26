@@ -17,6 +17,7 @@ from vtk.util.numpy_support import vtk_to_numpy
 
 CASE_DIR = Path(__file__).resolve().parent
 STEP_PATTERN = re.compile(r"particle(\d+)\.vtp$")
+EXPERIMENT_BOTTOM_ELEVATION_MM = 200.0
 
 
 def read_point_array(polydata, name: str):
@@ -44,7 +45,7 @@ def top_connected_front(
     layers: np.ndarray,
     layer_saturation: np.ndarray,
     saturation_threshold: float,
-    height: float,
+    infiltration_origin_y: float,
 ):
     """Return the deepest wet layer connected continuously to the top.
 
@@ -56,12 +57,39 @@ def top_connected_front(
     layers_from_top = layers[order]
     wet_from_top = layer_saturation[order] >= saturation_threshold
     if not wet_from_top[0]:
-        return height, 0.0
+        return infiltration_origin_y, 0.0
 
     first_dry = np.flatnonzero(~wet_from_top)
-    connected_count = int(first_dry[0]) if first_dry.size else len(layers_from_top)
-    front_y = float(layers_from_top[connected_count - 1])
-    return front_y, float(np.clip(height - front_y, 0.0, height))
+    if first_dry.size:
+        connected_count = int(first_dry[0])
+        if connected_count == 0:
+            return infiltration_origin_y, 0.0
+        front_y = float(
+            0.5
+            * (
+                layers_from_top[connected_count - 1]
+                + layers_from_top[connected_count]
+            )
+        )
+    else:
+        layer_spacing = float(np.median(np.abs(np.diff(layers_from_top))))
+        front_y = max(0.0, float(layers_from_top[-1] - 0.5 * layer_spacing))
+    return front_y, float(
+        np.clip(infiltration_origin_y - front_y, 0.0, infiltration_origin_y)
+    )
+
+
+def load_ppt_locations(height: float):
+    path = CASE_DIR / "reference_data" / "ppt_locations.csv"
+    locations = []
+    with path.open(encoding="utf-8", newline="") as stream:
+        for row in csv.DictReader(stream):
+            sensor = row["sensor"]
+            model_y = (
+                float(row["elevation_mm"]) - EXPERIMENT_BOTTOM_ELEVATION_MM
+            ) / 1000.0
+            locations.append((sensor, float(np.clip(model_y, 0.0, height))))
+    return locations
 
 
 def expected_initial_suction(config: dict):
@@ -92,10 +120,22 @@ def extract_case(case_name: str, saturation_threshold: float):
     if not files:
         raise FileNotFoundError(f"No particle VTP files found in {result_dir}")
 
-    height = 94 * float(config["mesh"]["cellsize_min"])
     cell_size = float(config["mesh"]["cellsize_min"])
+    height = float("nan")
+    ppt_locations = []
+    with (CASE_DIR / config["mesh"]["entity_sets"]).open(encoding="utf-8") as stream:
+        entity_sets = json.load(stream)
+    top_boundary_ids = np.asarray(
+        next(
+            item["set"]
+            for item in entity_sets["particle_sets"]
+            if item["id"] == 1
+        ),
+        dtype=int,
+    )
     rows = []
     initial_dry_suction_median_pa = float("nan")
+    infiltration_origin_y = float("nan")
 
     for path in files:
         match = STEP_PATTERN.search(path.name)
@@ -111,8 +151,19 @@ def extract_case(case_name: str, saturation_threshold: float):
         suction_pressure = read_point_array(polydata, "suction_pressures").ravel()
 
         layers, layer_saturation = layer_average(y, saturation)
+        _, layer_gas_pressure = layer_average(y, gas_pressure)
+        if not rows:
+            layer_spacing = float(np.min(np.diff(layers)))
+            height = float(np.max(layers) + 0.5 * layer_spacing)
+            ppt_locations = load_ppt_locations(height)
+            infiltration_origin_y = float(
+                np.min(y[top_boundary_ids]) - 0.5 * layer_spacing
+            )
         front_y, wetting_depth = top_connected_front(
-            layers, layer_saturation, saturation_threshold, height
+            layers,
+            layer_saturation,
+            saturation_threshold,
+            infiltration_origin_y,
         )
 
         if not rows:
@@ -142,26 +193,35 @@ def extract_case(case_name: str, saturation_threshold: float):
             else float("nan")
         )
 
-        rows.append(
-            {
-                "step": step,
-                "time_s": step * dt,
-                "wetting_depth_m": wetting_depth,
-                "front_y_m": front_y,
-                "dry_air_pressure_mean_kpa": air_mean,
-                "dry_air_pressure_p10_kpa": air_p10,
-                "dry_air_pressure_p90_kpa": air_p90,
-                "transmission_saturation": transmission_saturation,
-                "saturation_min": float(np.min(saturation)),
-                "saturation_max": float(np.max(saturation)),
-                "max_abs_gas_pressure_kpa": float(
-                    np.max(np.abs(gas_pressure)) / 1000.0
-                ),
-                "max_abs_liquid_pressure_kpa": float(
-                    np.max(np.abs(liquid_pressure)) / 1000.0
-                ),
-            }
-        )
+        row = {
+            "step": step,
+            "time_s": step * dt,
+            "wetting_depth_m": wetting_depth,
+            "front_y_m": front_y,
+            "dry_air_pressure_mean_kpa": air_mean,
+            "dry_air_pressure_p10_kpa": air_p10,
+            "dry_air_pressure_p90_kpa": air_p90,
+            "transmission_saturation": transmission_saturation,
+            "saturation_min": float(np.min(saturation)),
+            "saturation_max": float(np.max(saturation)),
+            "max_abs_gas_pressure_kpa": float(
+                np.max(np.abs(gas_pressure)) / 1000.0
+            ),
+            "max_abs_liquid_pressure_kpa": float(
+                np.max(np.abs(liquid_pressure)) / 1000.0
+            ),
+        }
+        for sensor, sensor_y in ppt_locations:
+            layer_index = int(np.argmin(np.abs(layers - sensor_y)))
+            sensor_saturation = float(layer_saturation[layer_index])
+            key = sensor.lower()
+            row[f"{key}_saturation"] = sensor_saturation
+            row[f"{key}_gas_pressure_kpa"] = (
+                float(layer_gas_pressure[layer_index] / 1000.0)
+                if sensor_saturation < saturation_threshold
+                else float("nan")
+            )
+        rows.append(row)
 
     output_dir = CASE_DIR / "validation_results"
     output_dir.mkdir(exist_ok=True)
@@ -195,6 +255,16 @@ def extract_case(case_name: str, saturation_threshold: float):
             min(row["saturation_min"] for row in rows) >= 0.0
             and max(row["saturation_max"] for row in rows) <= 1.0
         ),
+        "gas_sensor_samples": {
+            sensor: sum(
+                math.isfinite(row[f"{sensor.lower()}_gas_pressure_kpa"])
+                for row in rows
+            )
+            for sensor, _ in ppt_locations
+        },
+        "gas_sensor_model_y_m": {
+            sensor: sensor_y for sensor, sensor_y in ppt_locations
+        },
         # A deliberately loose guard compared with the measured 1.2--1.6 kPa.
         # It catches numerical blow-up without being an agreement criterion.
         "pressures_below_safety_limit": bool(
@@ -221,6 +291,7 @@ def load_reference(path: Path):
 def plot_comparison(summaries):
     reference_dir = CASE_DIR / "reference_data"
     output_dir = CASE_DIR / "validation_results"
+    output_dir.mkdir(exist_ok=True)
     fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.0), constrained_layout=True)
 
     styles = {"open": ("tab:blue", "o"), "closed": ("tab:red", "s")}
@@ -245,6 +316,7 @@ def plot_comparison(summaries):
 
     axes[0].set_xlabel("Time (s)")
     axes[0].set_ylabel("Wetting-front depth (m)")
+    axes[0].set_title("(a) Wetting-front migration")
     axes[0].set_xlim(left=0.0)
     axes[0].set_ylim(bottom=0.0)
     axes[0].legend(frameon=False, fontsize=8)
@@ -255,21 +327,45 @@ def plot_comparison(summaries):
         envelope["lower_kpa"],
         envelope["upper_kpa"],
         color="0.85",
-        label="Measured range (closed)",
+        label="Measured range (closed; six PPTs)",
     )
-    for case_name, rows in summaries.items():
-        color, _ = styles[case_name]
+    if "closed" in summaries:
+        closed_rows = summaries["closed"]
+        sensors = [sensor for sensor, _ in load_ppt_locations(height=1.0716)]
+        sensor_colors = plt.cm.Blues(np.linspace(0.35, 0.90, len(sensors)))
+        sensor_styles = ("-", "--", "-.", ":", (0, (5, 2)), (0, (1, 1)))
+        for sensor, color, line_style in zip(
+            sensors, sensor_colors, sensor_styles
+        ):
+            pressure = np.asarray(
+                [row[f"{sensor.lower()}_gas_pressure_kpa"] for row in closed_rows]
+            )
+            if not np.any(np.isfinite(pressure)):
+                continue
+            axes[1].plot(
+                [row["time_s"] for row in closed_rows],
+                pressure,
+                color=color,
+                linestyle=line_style,
+                linewidth=1.0,
+                label=f"MPM {sensor}",
+            )
+    if "open" in summaries:
+        open_rows = summaries["open"]
         axes[1].plot(
-            [row["time_s"] for row in rows],
-            [row["dry_air_pressure_mean_kpa"] for row in rows],
-            color=color,
-            label=f"MPM ({case_name})",
+            [row["time_s"] for row in open_rows],
+            [row["dry_air_pressure_mean_kpa"] for row in open_rows],
+            color="0.2",
+            linestyle="--",
+            linewidth=1.2,
+            label="MPM open (dry-zone mean)",
         )
     axes[1].set_xlabel("Time (s)")
-    axes[1].set_ylabel("Mean pore-air pressure ahead of front (kPa)")
+    axes[1].set_ylabel("Pore-air pressure at PPT elevations (kPa)")
+    axes[1].set_title("(b) Pore-air pressure histories")
     axes[1].set_xlim(left=0.0)
     axes[1].set_ylim(bottom=0.0)
-    axes[1].legend(frameon=False, fontsize=8)
+    axes[1].legend(frameon=False, fontsize=7, ncol=2)
 
     output = output_dir / "siemens2013_validation.png"
     fig.savefig(output, dpi=300)

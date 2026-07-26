@@ -71,8 +71,10 @@ is not a fitted infiltration parameter.
   digitisation targets and should not be presented as exact tabulated data.
 - `run_stability_hpc4.sh` is a manifest-driven, short-duration time-step check.
 - `run_hpc4.sh` is the two-task full-duration Slurm array script.
-- `postprocess_validation.py` extracts wetting-front depth and dry-zone
-  pore-air pressure from the particle VTP files.
+- `postprocess_validation.py` extracts wetting-front depth and pore-air
+  pressure at the six experimental PPT elevations from the particle VTP files.
+  A sensor curve terminates when the wetting front arrives and the instrument
+  would begin measuring pore-oil pressure.
 - `program_patch/` installs the backward-compatible source replacement,
   rebuilds the executable, and prevents a stale executable being used again.
 - `validation_subsection_draft.md` is intentionally left with placeholders
@@ -86,8 +88,8 @@ From this directory:
 python preprocess.py
 ```
 
-Expected counts are 94 cells, 376 particles, two top-boundary particles, and
-two bottom-boundary particles.
+Expected counts are 94 cells, 376 particles, four top-boundary particles (the
+complete top cell), and two bottom-boundary particles.
 
 ## Rebuild and run the mandatory short check on HPC4
 
@@ -149,13 +151,31 @@ python prepare_stability_checks.py --duration 0.001 \
 sbatch run_stability_hpc4.sh
 ```
 
-Do not start a longer calculation until the six `r5-flip-micro-1d` directories
-from the reduced mesh have been checked. If this FLIP test converges, first
-screen practical larger time steps over a short physical interval, then
-generate a longer check using the selected step; for example:
+The r5 reduced-mesh test confirms FLIP convergence when step-count-based
+pressure smoothing is disabled. At 0.001 s, reducing the step from `5e-5` to
+`5e-6 s` and then `1e-6 s` reduces the closed-case gas-pressure RMS field
+difference from 3.06 Pa to 0.177 Pa. The medium-step gas-pressure field differs
+from the fine reference by at most 2.41 Pa. The `5e-5 s` step is not selected
+at this stage.
+
+The imposed surface boundary now covers all four particles in the complete top
+cell. Regenerate the geometry and repeat the 0.001 s FLIP check under a new UUID
+before extending physical time:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r6-long \
+python preprocess.py
+python prepare_stability_checks.py --duration 0.001 \
+  --revision r6-flip-micro-1d-topcell --pic 0 --pic-t 0 \
+  --pressure-smoothing false
+sbatch run_stability_hpc4.sh
+```
+
+Do not start a longer calculation until the six `r6-flip-micro-1d-topcell`
+directories have been checked. If this test converges, repeat the selected
+steps over 0.01 s before generating a longer run; for example:
+
+```bash
+python prepare_stability_checks.py --duration 3 --revision r8-long \
   --time-steps <selected_dt> --pic 0 --pic-t 0 --pressure-smoothing false
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
