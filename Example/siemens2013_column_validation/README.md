@@ -204,12 +204,29 @@ python prepare_stability_checks.py --duration 0.01 \
 sbatch run_stability_hpc4.sh
 ```
 
-Do not generate a longer run until the six `r8-large-dt-micro` directories have
-been compared with `r7` at 0.01 s. Then generate a longer run using the largest
-acceptable step; for example:
+The r8 test rejects both `5e-4` and `1e-4 s`. They exceed the 1 MPa safety limit
+within approximately 0.0025 and 0.002 s in the open case and diverge even more
+rapidly in the closed case, reaching final pressures of order `1e23--1e30 Pa`.
+The `5e-5 s` runs remain finite. Their liquid velocity peaks near 0.002 s at
+about 0.600 m/s and decreases to 0.496 m/s by 0.01 s. The closed-case interior
+gas-pressure range at 0.01 s is 3.2--10.1 Pa, compared with approximately
+-0.7--4.8 Pa in the previous fine reference. This absolute difference is small,
+but the coarse solution has an early liquid-pressure overshoot, so extend the
+comparison by one order of magnitude before selecting it:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r10-long \
+python prepare_stability_checks.py --duration 0.1 \
+  --revision r9-flip-0p1s --time-steps 5e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-3 run_stability_hpc4.sh
+```
+
+This creates four tasks with 2000 or 20000 steps. Do not generate a longer run
+until the four `r9-flip-0p1s` directories have been checked. Then use the
+largest acceptable step for the next staged run; for example:
+
+```bash
+python prepare_stability_checks.py --duration 3 --revision r11-long \
   --time-steps <selected_dt> --pic 0 --pic-t 0 --pressure-smoothing false
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
