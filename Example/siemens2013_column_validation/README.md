@@ -221,12 +221,26 @@ python prepare_stability_checks.py --duration 0.1 \
 sbatch --array=0-3 run_stability_hpc4.sh
 ```
 
-This creates four tasks with 2000 or 20000 steps. Do not generate a longer run
-until the four `r9-flip-0p1s` directories have been checked. Then use the
-largest acceptable step for the next staged run; for example:
+The r9 test rejects `5e-5 s` as a common production step. The open case diverges
+between 0.05 and 0.07 s and reaches `7.3e16 Pa`. The closed case remains finite,
+but at 0.1 s its interior gas pressure is 39.8--44.7 Pa, versus 9.7--18.1 Pa
+with `5e-6 s`; the pointwise gas-pressure field differs by 31.8 Pa maximum and
+27.9 Pa RMS. Both `5e-6 s` cases remain stable. Test intermediate steps in one
+batch so that every comparison field is retained together:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r11-long \
+python prepare_stability_checks.py --duration 0.1 \
+  --revision r10-intermediate-dt --time-steps 2e-5 1e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch run_stability_hpc4.sh
+```
+
+This creates six tasks with 5000, 10000, or 20000 steps. Do not generate a
+longer run until the six `r10-intermediate-dt` directories have been checked.
+Then use the largest acceptable step for the next staged run; for example:
+
+```bash
+python prepare_stability_checks.py --duration 3 --revision r12-long \
   --time-steps <selected_dt> --pic 0 --pic-t 0 --pressure-smoothing false
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
