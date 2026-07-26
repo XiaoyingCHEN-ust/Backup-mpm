@@ -186,13 +186,30 @@ python prepare_stability_checks.py --duration 0.01 \
 sbatch --array=0-3 run_stability_hpc4.sh
 ```
 
-This creates only four tasks, with 2000 or 10000 steps each. Do not generate a
-longer run until the four `r7-flip-short-1d-topcell` directories have been
-checked. If the transient remains bounded and the two steps agree, generate a
-longer run using the selected step; for example:
+The r7 transient is bounded and time-step consistent. The maximum liquid
+velocity occurs near 0.002 s at 0.596 m/s and then decreases; at 0.01 s the
+top-row and first-interior-layer values are 0.483 and 0.309 m/s. The two steps'
+final interior liquid-velocity components differ by at most 0.00126 m/s. In the
+closed case, the `5e-6 s` final gas-pressure field differs from the `1e-6 s`
+reference by at most 0.863 Pa and by 0.368 Pa in RMS.
+
+Although convergent, `5e-6 s` would require approximately 175 million steps for
+an 875 s closed test. Use the existing r7 fine run as the 0.01 s reference and
+screen practical larger steps with only 20, 100, and 200 steps per case:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r8-long \
+python prepare_stability_checks.py --duration 0.01 \
+  --revision r8-large-dt-micro --time-steps 5e-4 1e-4 5e-5 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch run_stability_hpc4.sh
+```
+
+Do not generate a longer run until the six `r8-large-dt-micro` directories have
+been compared with `r7` at 0.01 s. Then generate a longer run using the largest
+acceptable step; for example:
+
+```bash
+python prepare_stability_checks.py --duration 3 --revision r10-long \
   --time-steps <selected_dt> --pic 0 --pic-t 0 --pressure-smoothing false
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
