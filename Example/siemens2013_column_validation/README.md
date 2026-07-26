@@ -235,17 +235,24 @@ python prepare_stability_checks.py --duration 0.1 \
 sbatch run_stability_hpc4.sh
 ```
 
-This creates six tasks with 5000, 10000, or 20000 steps. Do not generate a
-longer run until the six `r10-intermediate-dt` directories have been checked.
-Then use the largest acceptable step for the next staged run; for example:
+All six r10 runs remain finite. Relative to the `5e-6 s` field at 0.1 s, the
+closed-case gas-pressure maximum/RMS differences are 3.59/3.14 Pa for `1e-5 s`
+and 10.73/9.40 Pa for `2e-5 s`. The open case is more time-step sensitive: its
+saturation and liquid-pressure RMS differences are 0.00345 and 39.7 Pa for
+`1e-5 s`, versus 0.0335 and 111.9 Pa for `2e-5 s`. The closed gas-pressure
+errors approximately halve as the step halves, consistent with first-order
+convergence. Treat `1e-5 s` as the accuracy candidate and retain `2e-5 s` only
+as a performance candidate. Extend all three steps to 3 s before choosing:
 
 ```bash
-python prepare_stability_checks.py --duration 3 --revision r12-long \
-  --time-steps <selected_dt> --pic 0 --pic-t 0 --pressure-smoothing false
-sbatch --array=0-1 run_stability_hpc4.sh
+python prepare_stability_checks.py --duration 3 \
+  --revision r11-convergence-3s --time-steps 2e-5 1e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch run_stability_hpc4.sh
 ```
 
-Do not run this command until the short results have been reviewed.
+This creates six tasks with 150000, 300000, or 600000 steps. Do not proceed to
+the experimental pressure-rise interval until these results have been reviewed.
 The job script reads the generated manifest, so its array range must match the
 number of manifest rows.
 
