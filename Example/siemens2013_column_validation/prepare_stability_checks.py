@@ -29,7 +29,7 @@ def main():
         for dt in TIME_STEPS:
             tag = step_tag(dt)
             label = f"{case_name}_{tag}"
-            uuid = f"siemens2013-stability-{label}"
+            uuid = f"siemens2013-stability-r2-{label}"
             nsteps = round(CHECK_DURATION_S / dt)
             output_steps = max(1, nsteps // 20)
 

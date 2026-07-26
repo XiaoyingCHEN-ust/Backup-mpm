@@ -24,4 +24,6 @@ surface boundary.
 For the laboratory validation it additionally adds `initial_suction` and
 `initial_suction_from_swrc`, initialises the retention-curve derivative, and
 updates effective saturation consistently so that phase permeabilities can
-evolve during infiltration.
+evolve during infiltration. The optional `relative_permeability_floor`
+regularises residual phase endpoints so the drag calculation never divides
+by zero permeability.

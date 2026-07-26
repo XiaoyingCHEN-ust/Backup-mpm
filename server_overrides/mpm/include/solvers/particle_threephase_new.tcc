@@ -1370,6 +1370,13 @@ void mpm::ThreePhaseParticleNew<Tdim>::update_permeability() {
 
       const double para_m = liquid_material_->template 
                     property<double>(std::string("para_m"));
+      const double relative_permeability_floor =
+          liquid_material_->template property_or<double>(
+              std::string("relative_permeability_floor"), 1.0e-12);
+      if (relative_permeability_floor <= 0.0 ||
+          relative_permeability_floor >= 1.0)
+        throw std::runtime_error(
+            "relative_permeability_floor must be between zero and one");
 
       // Calculate porosity-dependent permeability, k_phi
       k_phi = std::pow(porosity_ / ini_porosity_, 1.5) * 
@@ -1379,6 +1386,8 @@ void mpm::ThreePhaseParticleNew<Tdim>::update_permeability() {
       k_r_liquid = std::pow(this->effective_saturation_, (2*para_m+3));
       k_r_gas = std::pow(1-this->effective_saturation_, 2) * 
                 (1 - std::pow(this->effective_saturation_, (2*para_m+1)));
+      k_r_liquid = std::max(k_r_liquid, relative_permeability_floor);
+      k_r_gas = std::max(k_r_gas, relative_permeability_floor);
 
       // Calculate absolute permeability, k_a
       k_a = this->intrinsic_permeability_ * k_phi;

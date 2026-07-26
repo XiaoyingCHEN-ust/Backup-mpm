@@ -49,6 +49,13 @@ air properties, and the low elastic modulus of the fully constrained
 skeleton are numerical/supporting properties not reported by the experiment;
 they are not fitted to the response curves.
 
+A relative-permeability floor of `1e-6` is applied only when a phase reaches
+its residual endpoint. Without this regularisation the model evaluates
+viscosity divided by zero permeability at the saturated surface (gas phase)
+and in the residual-water zone (liquid phase), which makes the nodal drag
+matrix non-finite. The floor keeps the residual phase effectively locked and
+is not a fitted infiltration parameter.
+
 ## Files
 
 - `preprocess.py` generates the mesh, particles, volumes, temperatures, and
@@ -109,6 +116,10 @@ Each array task requests one GPU and 32 CPUs from `granularmech` under
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
 exceeds the deliberately loose 1 MPa safety bound. Passing directories
 contain `RANGE_CHECK_PASSED.txt` under `stability_results/`.
+
+The checker decodes the compressed VTP arrays themselves rather than trusting
+the XML `RangeMin`/`RangeMax` metadata, because VTK range metadata silently
+ignores NaN values.
 
 Download `stability_results/` after this short array. The stable step will be
 selected before the full inputs are changed; do not resubmit `run_hpc4.sh`

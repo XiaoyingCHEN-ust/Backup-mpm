@@ -31,7 +31,7 @@ labels=(
 )
 label="${labels[${SLURM_ARRAY_TASK_ID:-0}]}"
 input="stability_inputs/mpm_${label}.json"
-uuid="siemens2013-stability-${label}"
+uuid="siemens2013-stability-r2-${label}"
 
 if [[ ! -x "${mpm_bin}" ]]; then
   echo "MPM executable is missing or not executable: ${mpm_bin}" >&2

@@ -85,6 +85,7 @@
       "gas_saturation_res": 0.02,
       "gas_saturation": 0.9699,
       "gas_viscosity": 1.81e-5,
+      "relative_permeability_floor": 1.0e-6,
       "fixed_gas_pressure": true,
       "surface_liquid_pressure": 994.734,
       "surface_gas_pressure_ratio": 1.0,
@@ -138,9 +139,14 @@
     "vtk": ["free_surfaces"],
     "liquid_vtk": [
       "liquid_saturations",
+      "gas_saturations",
       "gas_pressures",
       "liquid_pressures",
-      "suction_pressures"
+      "suction_pressures",
+      "liquid_permeabilities",
+      "gas_permeabilities",
+      "liquid_velocities",
+      "gas_velocities"
     ],
     "log_output_steps": false,
     "output_steps": 2500

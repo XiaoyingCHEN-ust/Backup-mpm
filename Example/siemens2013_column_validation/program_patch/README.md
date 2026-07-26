@@ -18,6 +18,12 @@ updates effective saturation after every saturation update. The latter is
 required because the liquid and gas relative permeabilities otherwise remain
 frozen at their initial values.
 
+The optional `relative_permeability_floor` prevents division by zero in the
+phase-drag coefficient when effective saturation is exactly zero or one. Its
+backward-compatible default is `1e-12`; the validation uses `1e-6` to keep the
+residual phase effectively immobile without producing an ill-conditioned
+drag matrix.
+
 The Siemens inputs use `initial_suction_from_swrc` because the published
 initial state is close to residual saturation and is incompatible with a
 hard-coded 20 psi value. Existing inputs retain 20 psi by default.
