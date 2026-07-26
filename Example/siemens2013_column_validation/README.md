@@ -170,9 +170,26 @@ python prepare_stability_checks.py --duration 0.001 \
 sbatch run_stability_hpc4.sh
 ```
 
-Do not start a longer calculation until the six `r6-flip-micro-1d-topcell`
-directories have been checked. If this test converges, repeat the selected
-steps over 0.01 s before generating a longer run; for example:
+The r6 gas-pressure field converges strongly. In the closed case, the `5e-6 s`
+field differs from the `1e-6 s` reference by at most 0.056 Pa and by 0.0207 Pa
+in RMS; the coarse-to-medium versus medium-to-fine RMS difference decreases by
+a factor of 24. The `5e-5 s` solution is again too coarse. Imposing pressure on
+the complete top cell also produces a convergent but still-growing local liquid
+velocity: at 0.001 s it is 0.535 m/s in the top row and 0.346 m/s immediately
+below the boundary cell. Confirm that this startup transient decays or remains
+bounded over 0.01 s before selecting a production step:
+
+```bash
+python prepare_stability_checks.py --duration 0.01 \
+  --revision r7-flip-short-1d-topcell --time-steps 5e-6 1e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-3 run_stability_hpc4.sh
+```
+
+This creates only four tasks, with 2000 or 10000 steps each. Do not generate a
+longer run until the four `r7-flip-short-1d-topcell` directories have been
+checked. If the transient remains bounded and the two steps agree, generate a
+longer run using the selected step; for example:
 
 ```bash
 python prepare_stability_checks.py --duration 3 --revision r8-long \
@@ -180,7 +197,7 @@ python prepare_stability_checks.py --duration 3 --revision r8-long \
 sbatch --array=0-1 run_stability_hpc4.sh
 ```
 
-Do not run this second command until the smoke results have been reviewed.
+Do not run this command until the short results have been reviewed.
 The job script reads the generated manifest, so its array range must match the
 number of manifest rows.
 
