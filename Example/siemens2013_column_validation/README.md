@@ -486,6 +486,28 @@ The open and closed tasks each advance 1,200,000 steps and write 21 particle
 outputs. If both pass the range, layer-symmetry, wet-connectivity, and surface
 gas-pressure checks, update the full-duration inputs to the selected step.
 
+The r19 closed task completes all 1,200,000 steps and passes every check. Its
+maximum absolute pressure and velocity component are 994.734 Pa and
+`0.06278 m/s`; layer symmetry is retained to `1.39e-17`, the wettest
+unconnected layer remains at saturation 0.0320, and the four top particles
+remain at zero gauge gas pressure. The open task remains finite and symmetric
+through step 1,140,000 (2.85 s), with maximum absolute pressure and velocity
+of 1.412 kPa and `0.06279 m/s`, but reaches the original one-hour Slurm limit
+before writing the required 3 s output and pass marker. Repeat only the open
+case under a fresh result identifier; the stability script now requests two
+hours:
+
+```bash
+python prepare_stability_checks.py --duration 3 \
+  --revision r19b-open-3s --time-steps 2.5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0 run_stability_hpc4.sh
+```
+
+Do not rerun manifest row 1: the original r19 closed directory is already the
+accepted 3 s result. The new revision also prevents the incomplete 20-file
+open directory from being mistaken for a complete rerun.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
