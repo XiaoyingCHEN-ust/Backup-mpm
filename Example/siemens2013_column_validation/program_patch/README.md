@@ -42,6 +42,12 @@ source copies now use `PIC_liquid_pressure_` directly, consistent with the
 three-dimensional implementation. Installation and run scripts explicitly
 reject the obsolete expression.
 
+For the open column's fixed-gas formulation, the replacement now solves the
+reduced liquid balance `f_w / K_ww` and sets the gas-pressure rate to zero.
+This avoids solving the coupled 2 x 2 pressure system and then discarding its
+gas-pressure increment. Installation and run scripts require this corrected
+branch explicitly.
+
 The Siemens inputs use `initial_suction_from_swrc` because the published
 initial state is close to residual saturation and is incompatible with a
 hard-coded 20 psi value. Existing inputs retain 20 psi by default.

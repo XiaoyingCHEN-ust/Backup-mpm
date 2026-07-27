@@ -89,6 +89,12 @@ for source_file in "${particle_source}" "${solver_particle_source}"; do
     echo "Validation patch is absent from ${source_file}" >&2
     exit 3
   fi
+  if ! grep -Fq \
+      "Fixed-gas formulation: solve only the liquid mass balance." \
+      "${source_file}"; then
+    echo "Corrected fixed-gas formulation is absent from ${source_file}" >&2
+    exit 3
+  fi
   if grep -Fq \
       "PIC_liquid_pressure_ - (-this->liquid_density_ * 9.81" \
       "${source_file}"; then

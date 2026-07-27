@@ -51,6 +51,12 @@ grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/solvers/particle_threephase_new.tcc"
 for relative_path in "${source_files[@]}"; do
   source_file="${mpm_source}/include/${relative_path}"
+  if ! grep -Fq \
+      "Fixed-gas formulation: solve only the liquid mass balance." \
+      "${source_file}"; then
+    echo "Corrected fixed-gas formulation is absent from ${source_file}" >&2
+    exit 3
+  fi
   if grep -Fq \
       "PIC_liquid_pressure_ - (-this->liquid_density_ * 9.81" \
       "${source_file}"; then

@@ -554,6 +554,29 @@ pressure/suction difference is `2.84e-12 Pa`; the largest saturation
 difference is `3.47e-18`; and the largest phase-velocity difference is below
 `8.48e-16 m/s`. HDF5 restart is therefore accepted for production.
 
+After r20 was completed, the fixed-gas formulation used by the open column
+was corrected to solve the reduced liquid balance `f_w / K_ww` while holding
+the gas-pressure rate at zero. This change does not alter the HDF5 restart
+layout or invalidate r20's restart-continuity result, but it does change the
+open-column evolution. Rebuild and repeat only the selected 3 s open check
+under a fresh UUID before production:
+
+```bash
+cd /home/xchenjm/chen/MPM/Backup-mpm
+git pull origin agent/siemens-column-validation
+cd Example/siemens2013_column_validation
+sbatch program_patch/rebuild_hpc4.sh
+# Wait for a successful rebuild, then:
+python prepare_stability_checks.py --duration 3 \
+  --revision r21-fixed-gas-3s --time-steps 2.5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0 run_stability_hpc4.sh
+```
+
+Do not submit the production chains until the r21 directory contains
+`RANGE_CHECK_PASSED.txt`. The closed case uses evolving gas pressure and does
+not need to be repeated for this source change.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
@@ -579,8 +602,8 @@ leaving useful margin under the 24-hour limit. The generator creates eight
 open segments and eighteen closed segments. The two cases run independently,
 while each case's segments are sequential `afterok` jobs.
 
-After pulling the current branch on the HPC4 login node, first inspect the
-exact commands without submitting:
+After r21 passes, first inspect the exact production commands without
+submitting:
 
 ```bash
 cd /home/xchenjm/chen/MPM/Backup-mpm/Example/siemens2013_column_validation
