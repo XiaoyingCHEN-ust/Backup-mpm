@@ -118,10 +118,10 @@
       "type": "Cundall",
       "damping_factor": 0.0
     },
-    "pressure_smoothing": true,
+    "pressure_smoothing": false,
     "uuid": "siemens2013-open",
-    "dt": 0.0005,
-    "nsteps": 800000,
+    "dt": 2.5e-06,
+    "nsteps": 160000000,
     "resume": {
       "resume": false,
       "uuid": "siemens2013-open",
@@ -134,7 +134,7 @@
   },
   "post_processing": {
     "path": "results/",
-    "write_hdf5": false,
+    "write_hdf5": true,
     "write_vtk": true,
     "vtk": ["free_surfaces"],
     "liquid_vtk": [
@@ -149,6 +149,6 @@
       "gas_velocities"
     ],
     "log_output_steps": false,
-    "output_steps": 2500
+    "output_steps": 500000
   }
 }

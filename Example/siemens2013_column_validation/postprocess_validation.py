@@ -108,17 +108,92 @@ def expected_initial_suction(config: dict):
     return float(p0 * (effective ** (-1.0 / m) - 1.0) ** (1.0 - m))
 
 
+def particle_step(path: Path) -> int:
+    match = STEP_PATTERN.search(path.name)
+    if match is None:
+        raise ValueError(f"Cannot read the global step from {path}")
+    return int(match.group(1))
+
+
+def production_particle_files(case_name: str, config: dict):
+    """Return a complete, numerically ordered output series.
+
+    Production is split between uniquely named restart directories.  Sorting
+    paths lexically is unsafe because each segment pads its global step using
+    a different final-step width, so merge the files by their decoded step.
+    """
+    result_root = CASE_DIR / config["post_processing"]["path"]
+    segment_pattern = f"siemens2013-production-{case_name}-seg*"
+    segment_dirs = sorted(
+        path for path in result_root.glob(segment_pattern) if path.is_dir()
+    )
+
+    if segment_dirs:
+        indices = []
+        files = []
+        for result_dir in segment_dirs:
+            try:
+                indices.append(int(result_dir.name.rsplit("seg", 1)[1]))
+            except (IndexError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid production result directory: {result_dir}"
+                ) from exc
+            marker = result_dir / "SEGMENT_COMPLETED.txt"
+            if not marker.is_file():
+                raise RuntimeError(
+                    f"Production segment is incomplete (missing {marker.name}): "
+                    f"{result_dir}"
+                )
+            files.extend(result_dir.glob("particle*.vtp"))
+        if indices != list(range(len(indices))):
+            raise RuntimeError(
+                f"Production segments for {case_name} are not a contiguous prefix: "
+                f"{indices}"
+            )
+        source_description = f"{len(segment_dirs)} production segment directories"
+    else:
+        uuid = config["analysis"]["uuid"]
+        result_dir = result_root / uuid
+        files = list(result_dir.glob("particle*.vtp"))
+        source_description = str(result_dir)
+
+    if not files:
+        raise FileNotFoundError(
+            f"No particle VTP files found for {case_name} in {source_description}"
+        )
+
+    files_by_step = {}
+    for path in files:
+        step = particle_step(path)
+        if step in files_by_step:
+            raise RuntimeError(
+                f"Duplicate particle output at global step {step}: "
+                f"{files_by_step[step]} and {path}"
+            )
+        files_by_step[step] = path
+
+    nsteps = int(config["analysis"]["nsteps"])
+    output_steps = int(config["post_processing"]["output_steps"])
+    expected_steps = list(range(0, nsteps + 1, output_steps))
+    actual_steps = sorted(files_by_step)
+    if actual_steps != expected_steps:
+        missing = sorted(set(expected_steps) - set(actual_steps))
+        unexpected = sorted(set(actual_steps) - set(expected_steps))
+        raise RuntimeError(
+            f"Incomplete {case_name} output series: expected {len(expected_steps)} "
+            f"files through global step {nsteps}, found {len(actual_steps)}; "
+            f"first missing={missing[:5]}, first unexpected={unexpected[:5]}"
+        )
+    return [files_by_step[step] for step in actual_steps]
+
+
 def extract_case(case_name: str, saturation_threshold: float):
     config_path = CASE_DIR / f"mpm_{case_name}.json"
     with config_path.open(encoding="utf-8") as stream:
         config = json.load(stream)
 
     dt = float(config["analysis"]["dt"])
-    uuid = config["analysis"]["uuid"]
-    result_dir = CASE_DIR / config["post_processing"]["path"] / uuid
-    files = sorted(result_dir.glob("particle*.vtp"))
-    if not files:
-        raise FileNotFoundError(f"No particle VTP files found in {result_dir}")
+    files = production_particle_files(case_name, config)
 
     cell_size = float(config["mesh"]["cellsize_min"])
     height = float("nan")
@@ -138,10 +213,7 @@ def extract_case(case_name: str, saturation_threshold: float):
     infiltration_origin_y = float("nan")
 
     for path in files:
-        match = STEP_PATTERN.search(path.name)
-        if match is None:
-            continue
-        step = int(match.group(1))
+        step = particle_step(path)
         polydata = read_vtp(path)
         points = vtk_to_numpy(polydata.GetPoints().GetData())
         y = points[:, 1]

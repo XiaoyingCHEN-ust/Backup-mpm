@@ -76,7 +76,11 @@ is not a fitted infiltration parameter.
   restart-continuity test.
 - `compare_checkpoint_restart.py` compares every reported hydraulic field in
   the resumed final state with the continuous 3 s reference.
-- `run_hpc4.sh` is the two-task full-duration Slurm array script.
+- `prepare_production_segments.py`, `run_production_segment_hpc4.sh`, and
+  `submit_production_hpc4.py` generate, check, and submit the restartable
+  full-duration dependency chains.
+- `run_hpc4.sh` is retained only as a fail-safe: the direct full-duration
+  array is disabled because neither case fits the 24-hour job limit.
 - `postprocess_validation.py` extracts wetting-front depth and pore-air
   pressure at the six experimental PPT elevations from the particle VTP files.
   A sensor curve terminates when the wetting front arrives and the instrument
@@ -543,6 +547,13 @@ The submission helper prepares both inputs and submits segment B with an
 coordinates, saturations, phase pressures, permeabilities, and velocities
 match the continuous reference within the documented tolerances.
 
+The r20 test passes. Both segments pass all range checks, and the resumed 3 s
+state is roundoff-equivalent to the continuous r19b result: coordinates, gas
+pressure, and both permeability fields are identical; the largest liquid
+pressure/suction difference is `2.84e-12 Pa`; the largest saturation
+difference is `3.47e-18`; and the largest phase-velocity difference is below
+`8.48e-16 m/s`. HDF5 restart is therefore accepted for production.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
@@ -558,25 +569,50 @@ The checker decodes the compressed VTP arrays themselves rather than trusting
 the XML `RangeMin`/`RangeMax` metadata, because VTK range metadata silently
 ignores NaN values.
 
-Download `stability_results/` after this short array. The stable step will be
-selected before the full inputs are changed; do not resubmit `run_hpc4.sh`
-with the current `dt=5e-4 s` inputs.
+## Restartable production run on HPC4
 
-## Full run on HPC4 (after the short check)
+The committed production inputs use `dt=2.5e-6 s`, `PIC=PIC_T=0`, no
+step-count-based pressure smoothing, and HDF5 output. The 400 s open case has
+160,000,000 updates and the 900 s closed case has 360,000,000 updates. Based
+on the measured 3 s throughput, a 50 s segment should take about 17.5 hours,
+leaving useful margin under the 24-hour limit. The generator creates eight
+open segments and eighteen closed segments. The two cases run independently,
+while each case's segments are sequential `afterok` jobs.
 
-The full script loads `miniconda3/24.3.0-quc3pyu`, activates `cbgeo_tbb`, and
-defaults to `/home/xchenjm/chen/MPM/mpm/build/mpm`. It also verifies that both
-source copies contain the patch and are not newer than the executable. Once
-the selected time step has been committed, submit with:
+After pulling the current branch on the HPC4 login node, first inspect the
+exact commands without submitting:
 
 ```bash
-sbatch run_hpc4.sh
+cd /home/xchenjm/chen/MPM/Backup-mpm/Example/siemens2013_column_validation
+python submit_production_hpc4.py --dry-run
 ```
 
-Set and export `MPM_SOURCE` or `MPM_BIN` only if those locations move. Array
-index 0 runs the open test and index 1 the closed test. Full results are
-written to `results/siemens2013-open/` and
-`results/siemens2013-closed/`.
+If the dry run reports 8 open and 18 closed jobs, submit both chains once:
+
+```bash
+python submit_production_hpc4.py
+```
+
+Every job requests one GPU and 32 CPUs from `granularmech` under
+`comgranmech`. It checks both installed source copies, rejects a stale
+executable, verifies the preceding HDF5 checkpoint and completion marker,
+runs the range checks, and writes `SEGMENT_COMPLETED.txt` only after the final
+VTP and HDF5 files exist. Inputs and the submitted job IDs are recorded under
+`production_inputs/`; outputs use unique directories such as
+`results/siemens2013-production-open-seg000/`.
+
+If a dependency chain stops, inspect the failed segment first. Do not mix an
+incomplete directory with a rerun. After moving the incomplete result and its
+log out of the case directory, resume the completed prefix and submit the
+remaining jobs with:
+
+```bash
+python submit_production_hpc4.py --resume
+```
+
+Set and export `MPM_SOURCE` or `MPM_BIN` only if the executable locations
+move. Do not submit `run_hpc4.sh`; it intentionally exits before starting the
+unsegmented calculation.
 
 ## Post-process after both runs
 
@@ -586,8 +622,11 @@ The script needs Python packages `vtk`, `numpy`, and `matplotlib`:
 python postprocess_validation.py
 ```
 
-It writes two summary CSV files and `siemens2013_validation.png` under
-`validation_results/`. The wetting front is the deepest layer in the wet
+It requires all expected global output steps (321 open and 361 closed), merges
+the segment directories by numeric global step, and rejects missing,
+duplicate, incomplete, or out-of-order segments. It then writes two summary
+CSV files and `siemens2013_validation.png` under `validation_results/`. The
+wetting front is the deepest layer in the wet
 region connected continuously to the top. This excludes any lower wet region
 from the front measurement and, together with the range checker, prevents an
 isolated numerical band from being treated as infiltration. The default

@@ -14,6 +14,12 @@
 
 set -eo pipefail
 
+if [[ "${ALLOW_UNSEGMENTED_FULL_RUN:-0}" != "1" ]]; then
+  echo "The direct full-duration run is disabled because it exceeds the 24-hour limit." >&2
+  echo "Use: python submit_production_hpc4.py" >&2
+  exit 4
+fi
+
 case_dir="${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}"
 cd "${case_dir}"
 
