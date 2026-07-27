@@ -306,6 +306,37 @@ This submits only the two open rows, with 150000 and 300000 steps. Compare
 their 21 common output times with the r12 reference before choosing a longer
 physical-time run.
 
+Both r13 runs are finite and retain horizontal symmetry. At 3 s, the lower
+connected wet-region depths are 0.2280, 0.2508, and 0.2622 m for time steps
+`2e-5`, `1e-5`, and `5e-6 s`, respectively. Relative to `5e-6 s`, the
+`1e-5 s` mean saturation differs by 0.00367 and its lower-front position by
+one cell (0.0114 m); the interior liquid-pressure RMS difference is 76.6 Pa.
+The `2e-5 s` errors are appreciably larger and that step is rejected.
+
+The time-step trend also exposed a boundary-model error that must be corrected
+before extending the run. Figure 5 of Siemens et al. shows only a thin wet
+layer at the lower constant-head screen at both 0 and 45 s, whereas every r12/
+r13 solution develops a 0.23--0.26 m base-connected wet region by only 3 s.
+The validation domain represents the initially unsaturated interval above the
+lower fluid surface and the simulation terminates when the top-connected front
+first reaches that surface. Before contact, impose zero vertical liquid
+velocity at the lower boundary rather than forcing the bottom particles to
+zero suction. Distributed open-system air venting remains represented by
+`fixed_gas_pressure=true`.
+
+First test this lower-boundary correction over only 0.6 s, which is long enough
+to cover the onset of the spurious lower wet region seen in r12/r13:
+
+```bash
+python prepare_stability_checks.py --duration 0.6 \
+  --revision r14-open-dry-base --time-steps 1e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-1 run_stability_hpc4.sh
+```
+
+The two open tasks contain 60000 and 120000 steps. Do not extend to the
+experimental time scale until the lower saturation profile has been checked.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
