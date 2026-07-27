@@ -282,6 +282,30 @@ This creates open and closed manifest rows, but `--array=0` submits only the
 open diagnostic (600000 steps). The job script reads the generated manifest,
 so its array index must match the desired row.
 
+The r12 open diagnostic passes the strengthened check. Across all 21 outputs,
+the largest saturation difference between the two particles in a horizontal
+layer is `2.71e-14`, compared with 0.95 in r11. Horizontal liquid and gas
+velocities remain zero. The maximum absolute phase pressure is 1.260 kPa, and
+the liquid-velocity magnitude peaks at 0.126 m/s at 0.15 s before decreasing
+to 0.0526 m/s at 3 s. The central dry interval retains its initial saturation;
+the saturation increase below it is the separate base-connected wet region
+created by the open experiment's lower constant-head boundary. The top-
+connected front has not moved beyond the prescribed top cell by 3 s.
+
+Complete the corrected open-case time-step comparison without rerunning the
+existing r12 `5e-6 s` reference:
+
+```bash
+python prepare_stability_checks.py --duration 3 \
+  --revision r13-open-convergence --time-steps 2e-5 1e-5 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-1 run_stability_hpc4.sh
+```
+
+This submits only the two open rows, with 150000 and 300000 steps. Compare
+their 21 common output times with the r12 reference before choosing a longer
+physical-time run.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
