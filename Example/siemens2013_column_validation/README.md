@@ -15,7 +15,8 @@ profiles at 5 s intervals, and wetting-front trajectories. It also provides
 two boundary-condition regimes in the same apparatus:
 
 - `mpm_open.json`: pore air is maintained at atmospheric pressure and the
-  bottom boundary has constant pressure.
+  cropped, initially unsaturated interval has a no-flow liquid boundary at
+  its lower wet-interface datum.
 - `mpm_closed.json`: the sides and base are impermeable; compressed air can
   escape only by counterflow through the wetted zone and the surface pond.
 
@@ -89,7 +90,9 @@ python preprocess.py
 ```
 
 Expected counts are 94 cells, 376 particles, four top-boundary particles (the
-complete top cell), and two bottom-boundary particles.
+complete top cell), and two particles marking the lower datum. The latter are
+retained in the generated entity sets for diagnostics but are not assigned a
+liquid-pressure constraint in the cropped-domain input.
 
 ## Rebuild and run the mandatory short check on HPC4
 
@@ -367,6 +370,41 @@ Do not reuse r14 as the fine reference: r15 changes the governing liquid
 momentum force. The run scripts now reject source trees that still contain the
 obsolete hard-coded hydrostatic subtraction.
 
+Both r15 jobs produced all 21 requested snapshots. The `5e-6 s` run remained
+bounded and laterally symmetric, with maximum absolute pressure `1.253 kPa`,
+maximum liquid-velocity component `0.06343 m/s`, and within-layer saturation
+spread `1.15e-14`. The `1e-5 s` run lost lateral symmetry at 0.6 s: its maximum
+within-layer saturation spread reached `0.00543`, and its mean saturation
+dropped nonphysically from `0.1140` at 0.54 s to `0.0894` at 0.6 s.
+
+The fine r15 field also exposed a boundary-initialisation incompatibility that
+the previous range checks did not detect. At 0.6 s, its lowest layer is
+saturated, the next layer remains at `Sw=0.0354`, and a separate nearly
+saturated band occupies approximately 0.014--0.100 m. This disconnected band
+first appears by 0.06 s. Figure 5 of Siemens et al. already contains a lower
+wet zone at the experimental initial time, whereas the reduced model contains
+only the initially unsaturated interval above that datum. Suddenly imposing
+zero suction on its lowest particle row therefore creates an artificial
+pressure/saturation transient.
+
+Retain the corrected liquid force but return the cropped lower boundary to
+zero vertical liquid velocity. Repeat the 0.6 s comparison before any longer
+run:
+
+```bash
+python prepare_stability_checks.py --duration 0.6 \
+  --revision r16-force-corrected-dry-base --time-steps 1e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-1 run_stability_hpc4.sh
+```
+
+The range checker now also rejects any layer with mean saturation at or above
+`0.40` that is not connected continuously to either the upper or lower model
+boundary. This prevents a bounded but disconnected wet band such as r15 from
+being accepted. A strict experimental constant-head base would instead require
+initialising the measured lower wet profile; applying the pressure to more dry
+particles would not supply that missing initial state.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
@@ -411,8 +449,9 @@ python postprocess_validation.py
 
 It writes two summary CSV files and `siemens2013_validation.png` under
 `validation_results/`. The wetting front is the deepest layer in the wet
-region connected continuously to the top. This excludes the separate
-saturated constant-head layer at the base of the open column. The default
+region connected continuously to the top. This excludes any lower wet region
+from the front measurement and, together with the range checker, prevents an
+isolated numerical band from being treated as infiltration. The default
 mean-saturation threshold is 0.40 and can be changed with
 `--saturation-threshold`. The script also rejects outputs when the SWRC
 initialisation is absent or pressures have blown up, so an invalid run cannot

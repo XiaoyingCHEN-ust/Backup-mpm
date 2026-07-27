@@ -131,6 +131,45 @@ def maximum_layer_spread(path: Path, values):
     )
 
 
+def maximum_unconnected_layer_saturation(path: Path, values, wet_threshold):
+    """Return the wettest layer not connected to either column boundary."""
+    coordinates = point_coordinates(path)
+    if len(coordinates) != len(values):
+        raise ValueError(f"Coordinate/value count mismatch in {path}")
+
+    layers = {}
+    for coordinates_i, value in zip(coordinates, values):
+        layers.setdefault(round(coordinates_i[1], 8), []).append(value)
+    ordered_layers = sorted(layers)
+    if not ordered_layers or any(len(layers[y]) != 2 for y in ordered_layers):
+        raise RuntimeError(
+            "The reduced column checker expects exactly two particles per "
+            f"horizontal layer in {path.name}"
+        )
+
+    layer_saturations = [sum(layers[y]) / len(layers[y]) for y in ordered_layers]
+    lower_connected = 0
+    while (
+        lower_connected < len(layer_saturations)
+        and layer_saturations[lower_connected] >= wet_threshold
+    ):
+        lower_connected += 1
+
+    upper_connected = len(layer_saturations)
+    while (
+        upper_connected > lower_connected
+        and layer_saturations[upper_connected - 1] >= wet_threshold
+    ):
+        upper_connected -= 1
+
+    if lower_connected == upper_connected:
+        return 0.0, None
+    interior = layer_saturations[lower_connected:upper_connected]
+    local_index = max(range(len(interior)), key=interior.__getitem__)
+    layer_index = lower_connected + local_index
+    return interior[local_index], ordered_layers[layer_index]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=Path)
@@ -142,6 +181,15 @@ def main():
         type=float,
         default=1.0e-4,
         help="maximum allowed saturation difference within a horizontal layer",
+    )
+    parser.add_argument(
+        "--connected-wet-saturation-threshold",
+        type=float,
+        default=0.40,
+        help=(
+            "layer-mean saturation used to reject wet bands that are not "
+            "connected to either column boundary"
+        ),
     )
     args = parser.parse_args()
 
@@ -183,6 +231,8 @@ def main():
     gas_saturation_max = -math.inf
     minimum_permeability = math.inf
     layer_saturation_spread = 0.0
+    maximum_unconnected_saturation = 0.0
+    maximum_unconnected_location = (None, None)
     for path in files:
         arrays = point_arrays(path, names)
         for name, values in arrays.items():
@@ -222,6 +272,16 @@ def main():
             layer_saturation_spread,
             maximum_layer_spread(path, arrays["liquid_saturations"]),
         )
+        unconnected_saturation, unconnected_y = (
+            maximum_unconnected_layer_saturation(
+                path,
+                arrays["liquid_saturations"],
+                args.connected_wet_saturation_threshold,
+            )
+        )
+        if unconnected_saturation > maximum_unconnected_saturation:
+            maximum_unconnected_saturation = unconnected_saturation
+            maximum_unconnected_location = (path.name, unconnected_y)
 
     if not (0.0 <= saturation_min <= saturation_max <= 1.0):
         raise RuntimeError(
@@ -242,6 +302,17 @@ def main():
             f"saturation spread={layer_saturation_spread:.6g}, limit="
             f"{args.layer_saturation_spread_limit:.6g}"
         )
+    if (
+        maximum_unconnected_saturation
+        >= args.connected_wet_saturation_threshold
+    ):
+        filename, layer_y = maximum_unconnected_location
+        raise RuntimeError(
+            "Disconnected wet-layer check failed: maximum layer-mean "
+            f"saturation={maximum_unconnected_saturation:.6g} at y="
+            f"{layer_y:.6g} m in {filename}; threshold="
+            f"{args.connected_wet_saturation_threshold:.6g}"
+        )
     if not math.isfinite(maximum_pressure) or maximum_pressure >= args.pressure_limit_pa:
         raise RuntimeError(
             f"Pressure stability check failed: max |p|={maximum_pressure:.6g} Pa"
@@ -259,7 +330,9 @@ def main():
         f"max_abs_velocity_component_mps={maximum_velocity:.12g}\n"
         f"min_phase_permeability_m2={minimum_permeability:.12g}\n"
         f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n"
-        f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n",
+        f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n"
+        f"max_unconnected_layer_saturation="
+        f"{maximum_unconnected_saturation:.12g}\n",
         encoding="utf-8",
     )
     print(f"PASS: {args.result_dir} (max |p|={maximum_pressure:.6g} Pa)")

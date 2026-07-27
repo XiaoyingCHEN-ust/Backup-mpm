@@ -14,6 +14,7 @@
       "velocity_constraints": [
         {"nset_id": 0, "dir": 0, "velocity": 0.0},
         {"nset_id": 0, "dir": 1, "velocity": 0.0},
+        {"nset_id": 1, "dir": 3, "velocity": 0.0},
         {"nset_id": 2, "dir": 2, "velocity": 0.0},
         {"nset_id": 2, "dir": 4, "velocity": 0.0},
         {"nset_id": 3, "dir": 2, "velocity": 0.0},
@@ -21,9 +22,6 @@
       ],
       "particles_at_free_surface": [
         {"nonfree_pset_id": 0, "pset_id": 1}
-      ],
-      "particle_pore_pressure_constraints": [
-        {"pset_id": 2, "pore_pressure": 0.0}
       ]
     }
   },
