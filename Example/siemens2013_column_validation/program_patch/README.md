@@ -9,6 +9,13 @@ by the job script. If either target template has been removed from the MPM
 source tree, the installer recreates its parent path and restores the tracked
 replacement before rebuilding.
 
+The installer also applies two guarded checkpoint-resume corrections needed
+for full-duration jobs longer than the 24-hour queue limit. It sizes the HDF5
+read buffer before loading particle records, and makes the three-phase solver
+start its loop at the resumed global step instead of silently restarting the
+step counter at zero. `patch_checkpoint_resume.py` is idempotent and refuses
+to edit an unrecognised source layout.
+
 The replacement adds two optional material properties:
 
 - `initial_suction`: an explicitly prescribed initial suction in Pa;

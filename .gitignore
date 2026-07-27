@@ -25,6 +25,8 @@ __pycache__/
 /Example/siemens2013_column_validation/stability-*.err
 /Example/siemens2013_column_validation/rebuild-*.out
 /Example/siemens2013_column_validation/rebuild-*.err
+/Example/siemens2013_column_validation/checkpoint-*.out
+/Example/siemens2013_column_validation/checkpoint-*.err
 
 # Reproducible generated sensitivity files and outputs
 /Example/slope_infiltration/sensitivity/cases/

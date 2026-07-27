@@ -197,6 +197,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=Path)
     parser.add_argument("--expected-suction-pa", type=float, default=972.9920291627446)
+    parser.add_argument(
+        "--skip-initial-suction-check",
+        action="store_true",
+        help=(
+            "skip the zero-time suction-patch check for a resumed directory "
+            "whose first output occurs after the checkpoint"
+        ),
+    )
     parser.add_argument("--pressure-limit-pa", type=float, default=1.0e6)
     parser.add_argument("--velocity-limit-mps", type=float, default=10.0)
     parser.add_argument(
@@ -243,7 +251,7 @@ def main():
     if any(not math.isfinite(value) for value in initial["suction_pressures"]):
         raise RuntimeError("Initial suction array contains non-finite values")
     observed_suction = max(initial["suction_pressures"])
-    if not math.isclose(
+    if not args.skip_initial_suction_check and not math.isclose(
         observed_suction, args.expected_suction_pa, rel_tol=0.02, abs_tol=1.0
     ):
         raise RuntimeError(
@@ -369,6 +377,8 @@ def main():
 
     marker.write_text(
         f"files={len(files)}\n"
+        f"initial_suction_check="
+        f"{'skipped' if args.skip_initial_suction_check else 'passed'}\n"
         f"initial_max_suction_pa={observed_suction:.12g}\n"
         f"max_abs_pressure_pa={maximum_pressure:.12g}\n"
         f"max_abs_velocity_component_mps={maximum_velocity:.12g}\n"

@@ -71,6 +71,11 @@ is not a fitted infiltration parameter.
   pressure range stated in the paper. The wetting-front points are approximate
   digitisation targets and should not be presented as exact tabulated data.
 - `run_stability_hpc4.sh` is a manifest-driven, short-duration time-step check.
+- `prepare_checkpoint_validation.py`, `run_checkpoint_segment_hpc4.sh`, and
+  `submit_checkpoint_validation_hpc4.sh` generate and submit the dependent r20
+  restart-continuity test.
+- `compare_checkpoint_restart.py` compares every reported hydraulic field in
+  the resumed final state with the continuous 3 s reference.
 - `run_hpc4.sh` is the two-task full-duration Slurm array script.
 - `postprocess_validation.py` extracts wetting-front depth and pore-air
   pressure at the six experimental PPT elevations from the particle VTP files.
@@ -507,6 +512,36 @@ sbatch --array=0 run_stability_hpc4.sh
 Do not rerun manifest row 1: the original r19 closed directory is already the
 accepted 3 s result. The new revision also prevents the incomplete 20-file
 open directory from being mistaken for a complete rerun.
+
+The r19b open rerun completes all 1,200,000 steps and passes every check. Its
+maximum pressure and velocity component are 1.412 kPa and `0.06279 m/s`, the
+maximum within-layer saturation difference is `6.94e-18`, no disconnected wet
+region develops, and the surface gas pressure remains zero. Its first 20
+outputs reproduce the incomplete r19 run to roundoff (zero gas-pressure
+difference and at most about `1e-12` in the other pressure arrays). Together
+with the accepted r19 closed result, this selects `2.5e-6 s` for production.
+
+At the observed throughput, however, the 400 and 900 s runs cannot fit within
+one 24-hour job. Validate HDF5 restart continuity before constructing the
+production chain. The r20 test runs the open column from 0 to 1.5 s, writes a
+checkpoint, resumes with global steps 600001--1200000, and compares its final
+state against the continuous r19b 3 s result. The installation patch first
+sizes the HDF5 read buffer and prevents the three-phase solver from resetting
+the resumed step counter. Pull and rebuild once, then submit both dependent
+segments:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# Wait for the rebuild to complete successfully, then:
+bash submit_checkpoint_validation_hpc4.sh
+```
+
+The submission helper prepares both inputs and submits segment B with an
+`afterok` dependency on segment A. Segment B checks all field ranges and writes
+`CHECKPOINT_COMPARISON_PASSED.txt` under
+`stability_results/siemens2013-r20-checkpoint-open-segment-b/` only if its
+coordinates, saturations, phase pressures, permeabilities, and velocities
+match the continuous reference within the documented tolerances.
 
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial

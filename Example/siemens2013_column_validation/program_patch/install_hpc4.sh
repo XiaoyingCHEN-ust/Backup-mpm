@@ -38,6 +38,13 @@ for relative_path in "${source_files[@]}"; do
   install -D -m 0644 "${replacement}" "${target}"
 done
 
+checkpoint_patcher="${script_dir}/patch_checkpoint_resume.py"
+if [[ ! -f "${checkpoint_patcher}" ]]; then
+  echo "Checkpoint patcher is missing: ${checkpoint_patcher}" >&2
+  exit 2
+fi
+python "${checkpoint_patcher}" --mpm-source "${mpm_source}"
+
 grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -q "initial_suction_from_swrc" \
@@ -51,6 +58,10 @@ for relative_path in "${source_files[@]}"; do
     exit 3
   fi
 done
+grep -Fq "std::vector<HDF5Particle> dst_buf(nparticles);" \
+  "${mpm_source}/include/mesh/mesh.tcc"
+grep -Fq "for (step_ = start_step; step_ <= nsteps_; ++step_)" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 
 cmake --build "${mpm_source}/build" --parallel "${threads}"
 
