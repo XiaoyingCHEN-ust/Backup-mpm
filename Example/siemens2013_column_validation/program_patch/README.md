@@ -5,7 +5,9 @@ hard-coded 20 psi suction: the initial VTP value was 137340 Pa rather than the
 972.99 Pa required by the input saturation and SWRC. The complete replacement
 is therefore stored in both include locations under `server_overrides/`, and
 `install_hpc4.sh` installs both copies and rebuilds the exact executable used
-by the job script.
+by the job script. If either target template has been removed from the MPM
+source tree, the installer recreates its parent path and restores the tracked
+replacement before rebuilding.
 
 The replacement adds two optional material properties:
 

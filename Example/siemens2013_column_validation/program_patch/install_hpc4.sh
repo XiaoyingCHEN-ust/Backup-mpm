@@ -26,14 +26,16 @@ for relative_path in "${source_files[@]}"; do
   target="${mpm_source}/include/${relative_path}"
   backup="${target}.pre-siemens-validation"
 
-  if [[ ! -f "${replacement}" || ! -f "${target}" ]]; then
-    echo "Missing replacement or target for ${relative_path}" >&2
+  if [[ ! -f "${replacement}" ]]; then
+    echo "Missing replacement for ${relative_path}: ${replacement}" >&2
     exit 2
   fi
-  if [[ ! -f "${backup}" ]]; then
+  if [[ -f "${target}" && ! -f "${backup}" ]]; then
     cp --preserve=mode,timestamps "${target}" "${backup}"
+  elif [[ ! -f "${target}" ]]; then
+    echo "Restoring missing source file: ${target}"
   fi
-  install -m 0644 "${replacement}" "${target}"
+  install -D -m 0644 "${replacement}" "${target}"
 done
 
 grep -q "initial_suction_from_swrc" \
