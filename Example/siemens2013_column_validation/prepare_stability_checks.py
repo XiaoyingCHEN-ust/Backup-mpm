@@ -61,13 +61,23 @@ def main():
 
     input_dir = CASE_DIR / "stability_inputs"
     input_dir.mkdir(exist_ok=True)
-    rows = []
+    manifest = input_dir / "manifest.csv"
+    # A failed preparation must not leave a submit script pointing at an old
+    # revision. The manifest is recreated only after every source is loaded
+    # and all requested inputs have been written successfully.
+    manifest.unlink(missing_ok=True)
 
+    sources = {}
     for case_name in ("open", "closed"):
         source_path = CASE_DIR / f"mpm_{case_name}.json"
+        if not source_path.is_file():
+            parser.error(f"missing source input: {source_path}")
         with source_path.open(encoding="utf-8") as stream:
-            source = json.load(stream)
+            sources[case_name] = json.load(stream)
 
+    rows = []
+
+    for case_name, source in sources.items():
         for dt in args.time_steps:
             tag = step_tag(dt)
             label = f"{case_name}_{tag}"
@@ -125,7 +135,6 @@ def main():
                 }
             )
 
-    manifest = input_dir / "manifest.csv"
     with manifest.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
