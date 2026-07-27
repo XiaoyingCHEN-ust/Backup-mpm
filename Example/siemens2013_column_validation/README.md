@@ -458,6 +458,34 @@ With one requested time step, manifest row 0 is the open case and row 1 is the
 closed case, so only array task 1 is submitted. It advances 240,000 steps and
 does not repeat the already-screened open column.
 
+The r18 closed reference passes every range and boundary check. At 0.6 s its
+dry-zone mean gas pressure is 9.67 Pa, compared with 13.48 Pa at `5e-6 s`.
+The coarse-to-medium and medium-to-fine gas-pressure RMS differences are 7.51
+and 3.79 Pa, giving an observed temporal order of 0.99. The corresponding
+fine-step error estimate is 3.87 Pa and the safety-factored grid-convergence
+index (GCI) is 4.84 Pa, or 0.40% of the experiment's lower 1.2 kPa pressure
+plateau. The saturation RMS differences likewise decrease from `6.49e-5` to
+`3.23e-5`, with a fine-step GCI of `4.02e-5`. The liquid-pressure RMS
+difference between the last two steps is 9.31 Pa; its GCI is 30.6 Pa, or 3.08%
+of the 994.734 Pa applied ponding pressure. The largest local liquid-pressure
+difference, 68.4 Pa, occurs in the dry layer immediately below the wetted top
+cell. These results reject `5e-6 s` but support `2.5e-6 s` as the production
+candidate on the experimental pressure and saturation scales.
+
+Before launching the 400 and 900 s production runs, extend both final boundary
+configurations to 3 s at the selected candidate step:
+
+```bash
+python prepare_stability_checks.py --duration 3 \
+  --revision r19-production-step-3s --time-steps 2.5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-1 run_stability_hpc4.sh
+```
+
+The open and closed tasks each advance 1,200,000 steps and write 21 particle
+outputs. If both pass the range, layer-symmetry, wet-connectivity, and surface
+gas-pressure checks, update the full-duration inputs to the selected step.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
