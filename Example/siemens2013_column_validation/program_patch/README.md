@@ -24,6 +24,15 @@ backward-compatible default is `1e-12`; the validation uses `1e-6` to keep the
 residual phase effectively immobile without producing an ill-conditioned
 drag matrix.
 
+The replacement also corrects the two-dimensional liquid internal force. The
+solver already maps liquid gravity through the external body force, and
+`PIC_liquid_pressure_` is the actual gauge pressure. The previous expression
+subtracted a hard-coded hydrostatic pressure inside the internal force and
+therefore introduced an additional gravity gradient. Both two-dimensional
+source copies now use `PIC_liquid_pressure_` directly, consistent with the
+three-dimensional implementation. Installation and run scripts explicitly
+reject the obsolete expression.
+
 The Siemens inputs use `initial_suction_from_swrc` because the published
 initial state is close to residual saturation and is incompatible with a
 hard-coded 20 psi value. Existing inputs retain 20 psi by default.

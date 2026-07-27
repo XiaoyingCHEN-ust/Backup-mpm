@@ -337,6 +337,36 @@ sbatch --array=0-1 run_stability_hpc4.sh
 The two open tasks contain 60000 and 120000 steps. Do not extend to the
 experimental time scale until the lower saturation profile has been checked.
 
+The r14 dry-base runs are finite, retain layer symmetry to roundoff, and do
+not develop a lower connected wet region. At 0.6 s, the `1e-5` versus `5e-6 s`
+maximum/RMS interior saturation differences are `3.85e-4` and `2.86e-5`;
+the corresponding liquid-pressure differences are 194 and 21.9 Pa. However,
+the entire upper half of each r14 field is identical to r12 at the common
+times to approximately `1e-12 Pa` and `1e-15 m/s`. Thus r14 used the previous
+liquid-force implementation and tests only the lower-boundary change.
+
+Code review then identified a separate two-dimensional liquid momentum error.
+Liquid gravity is already mapped as an external body force, while the internal
+force additionally subtracted a hard-coded hydrostatic pressure. Because
+`PIC_liquid_pressure_` stores actual gauge pressure rather than excess pressure,
+this introduced an extra gravity gradient. The two-dimensional internal force
+now uses `PIC_liquid_pressure_` directly, consistent with the three-dimensional
+implementation. Restore the experimental lower constant-head condition and
+repeat the same 0.6 s matrix after installing and rebuilding the updated patch:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+
+python prepare_stability_checks.py --duration 0.6 \
+  --revision r15-force-corrected --time-steps 1e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-1 run_stability_hpc4.sh
+```
+
+Do not reuse r14 as the fine reference: r15 changes the governing liquid
+momentum force. The run scripts now reject source trees that still contain the
+obsolete hard-coded hydrostatic subtraction.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure

@@ -40,6 +40,15 @@ grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/solvers/particle_threephase_new.tcc"
+for relative_path in "${source_files[@]}"; do
+  source_file="${mpm_source}/include/${relative_path}"
+  if grep -Fq \
+      "PIC_liquid_pressure_ - (-this->liquid_density_ * 9.81" \
+      "${source_file}"; then
+    echo "Obsolete double-gravity liquid-force expression remains in ${source_file}" >&2
+    exit 3
+  fi
+done
 
 cmake --build "${mpm_source}/build" --parallel "${threads}"
 

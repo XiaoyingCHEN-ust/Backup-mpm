@@ -39,6 +39,12 @@ for relative_path in \
     echo "Validation patch is absent from ${source_file}" >&2
     exit 3
   fi
+  if grep -Fq \
+      "PIC_liquid_pressure_ - (-this->liquid_density_ * 9.81" \
+      "${source_file}"; then
+    echo "Obsolete double-gravity liquid-force expression remains in ${source_file}" >&2
+    exit 3
+  fi
   if [[ "${source_file}" -nt "${mpm_bin}" ]]; then
     echo "Executable is older than ${source_file}; rebuild before submitting" >&2
     exit 3

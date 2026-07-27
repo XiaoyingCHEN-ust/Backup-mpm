@@ -752,8 +752,8 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
 
       // LIQUID PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        liquid_force[0] = dn_dx_(i, 0) * (this->PIC_liquid_pressure_ - (-this->liquid_density_ * 9.81 * this->coordinates_[1]));
-        liquid_force[1] = dn_dx_(i, 1) * (this->PIC_liquid_pressure_ - (-this->liquid_density_ * 9.81 * this->coordinates_[1]));
+        liquid_force[0] = dn_dx_(i, 0) * this->PIC_liquid_pressure_;
+        liquid_force[1] = dn_dx_(i, 1) * this->PIC_liquid_pressure_;
 
         liquid_force *= this->volume_ * this->liquid_fraction_;
 
