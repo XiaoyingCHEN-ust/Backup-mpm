@@ -16,7 +16,9 @@ DEFAULT_REVISION = "r3-smoke"
 
 
 def step_tag(dt: float) -> str:
-    return f"{dt:.0e}".replace("+", "")
+    mantissa, exponent = f"{dt:.12e}".split("e")
+    mantissa = mantissa.rstrip("0").rstrip(".").replace(".", "p")
+    return f"{mantissa}e{int(exponent):+03d}".replace("+", "")
 
 
 def main():
@@ -92,7 +94,7 @@ def main():
             smoothing = config["analysis"]["pressure_smoothing"]
             config["title"] = (
                 f"Siemens 2013 {case_name} stability check, "
-                f"dt={dt:.0e} s, duration={args.duration:g} s, "
+                f"dt={dt:g} s, duration={args.duration:g} s, "
                 f"PIC={pic:g}, PIC_T={pic_t:g}, pressure_smoothing={smoothing}"
             )
             config["analysis"]["dt"] = dt

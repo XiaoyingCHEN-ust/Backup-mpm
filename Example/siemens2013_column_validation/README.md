@@ -438,6 +438,26 @@ pressure. This retroactively rejects the r16 closed outputs and prevents the
 experiment's measured pressure plateau from being imposed as a numerical
 boundary condition.
 
+Both r17 closed runs pass the range, symmetry, wet-region connectivity, and
+atmospheric-outlet checks. At 0.6 s the dry-zone mean gas pressures are 21.03
+and 13.48 Pa for `1e-5` and `5e-6 s`, respectively; the maximum and RMS gas
+pressure differences are 7.72 and 7.55 Pa. The saturation maximum/RMS
+differences are `6.24e-4` and `6.52e-5`, and the maximum liquid-pressure
+difference is 76.3 Pa. Because the coarser-step mean gas pressure is about 56%
+above the finer result, reject `1e-5 s` for the gas-pressure validation and
+test whether `5e-6 s` is converged with one geometric-refinement reference:
+
+```bash
+python prepare_stability_checks.py --duration 0.6 \
+  --revision r18-gas-dt-refinement --time-steps 2.5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=1 run_stability_hpc4.sh
+```
+
+With one requested time step, manifest row 0 is the open case and row 1 is the
+closed case, so only array task 1 is submitted. It advances 240,000 steps and
+does not repeat the already-screened open column.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
