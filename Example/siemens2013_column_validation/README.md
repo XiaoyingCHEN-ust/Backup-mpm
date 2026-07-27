@@ -405,6 +405,39 @@ being accepted. A strict experimental constant-head base would instead require
 initialising the measured lower wet profile; applying the pressure to more dry
 particles would not supply that missing initial state.
 
+Both r16 open runs pass the symmetry, range, and wet-region connectivity
+checks. Their top-connected wet region remains one cell deep and the lower
+boundary stays dry. Relative to `5e-6 s`, the `1e-5 s` saturation maximum/RMS
+differences at 0.6 s are `3.85e-4` and `4.00e-5`; the liquid-pressure maximum
+difference is 193 Pa and its RMS difference is 23.1 Pa. The maximum
+liquid-velocity component differs by `0.00142 m/s`.
+
+The r16 closed runs are likewise finite and one-dimensional, but a subsequent
+boundary audit invalidated them for physical comparison. At 0.6 s the dry-zone
+mean gas pressures are 40.4 and 32.8 Pa for `1e-5` and `5e-6 s`, respectively,
+while the four prescribed top particles have `p_g=994.734 Pa`. The previous
+`surface_gas_pressure_ratio=1` applied the liquid ponding pressure directly to
+the residual gas phase. Siemens et al. state that confined air is released
+upward through the transmission zone and that some bubbles reach the surface
+and dissipate into the atmosphere. Thus the closed test has no lateral or base
+gas venting, but its surface gas outlet is atmospheric.
+
+Keep `fixed_gas_pressure=false` so that interior gas pressure evolves, and set
+`surface_gas_pressure_ratio=0` so that air can leave only through the upper
+wet zone. Repeat only the two closed 0.6 s diagnostics:
+
+```bash
+python prepare_stability_checks.py --duration 0.6 \
+  --revision r17-atmospheric-gas-outlet --time-steps 1e-5 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=2-3 run_stability_hpc4.sh
+```
+
+The checker now requires all four top particles to retain zero gauge gas
+pressure. This retroactively rejects the r16 closed outputs and prevents the
+experiment's measured pressure plateau from being imposed as a numerical
+boundary condition.
+
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
@@ -412,8 +445,9 @@ exceeds the deliberately loose 1 MPa safety bound. It also rejects non-finite
 arrays, nonpositive phase permeability, inconsistent phase saturations, and
 velocity components above the loose 10 m/s bound. The checker now also rejects
 a saturation difference greater than `1e-4` between the two particles in any
-horizontal layer. Passing directories contain `RANGE_CHECK_PASSED.txt` under
-`stability_results/`.
+horizontal layer, a disconnected wet band, or non-atmospheric gas pressure in
+the four top particles. Passing directories contain `RANGE_CHECK_PASSED.txt`
+under `stability_results/`.
 
 The checker decodes the compressed VTP arrays themselves rather than trusting
 the XML `RangeMin`/`RangeMax` metadata, because VTK range metadata silently

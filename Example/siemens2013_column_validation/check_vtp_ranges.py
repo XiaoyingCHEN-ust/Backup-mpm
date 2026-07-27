@@ -170,6 +170,29 @@ def maximum_unconnected_layer_saturation(path: Path, values, wet_threshold):
     return interior[local_index], ordered_layers[layer_index]
 
 
+def maximum_top_cell_abs_value(path: Path, values):
+    """Return the maximum absolute scalar value in the four top particles."""
+    coordinates = point_coordinates(path)
+    if len(coordinates) != len(values):
+        raise ValueError(f"Coordinate/value count mismatch in {path}")
+
+    layers = {}
+    for index, coordinates_i in enumerate(coordinates):
+        layers.setdefault(round(coordinates_i[1], 8), []).append(index)
+    ordered_layers = sorted(layers)
+    if len(ordered_layers) < 2 or any(
+        len(layers[y]) != 2 for y in ordered_layers
+    ):
+        raise RuntimeError(
+            "The reduced column checker expects exactly two particles per "
+            f"horizontal layer in {path.name}"
+        )
+    top_cell_ids = [
+        index for y in ordered_layers[-2:] for index in layers[y]
+    ]
+    return max(abs(values[index]) for index in top_cell_ids)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=Path)
@@ -190,6 +213,12 @@ def main():
             "layer-mean saturation used to reject wet bands that are not "
             "connected to either column boundary"
         ),
+    )
+    parser.add_argument(
+        "--surface-gas-pressure-limit-pa",
+        type=float,
+        default=1.0e-6,
+        help="maximum absolute gas pressure allowed in the four top particles",
     )
     args = parser.parse_args()
 
@@ -233,6 +262,8 @@ def main():
     layer_saturation_spread = 0.0
     maximum_unconnected_saturation = 0.0
     maximum_unconnected_location = (None, None)
+    maximum_surface_gas_pressure = 0.0
+    maximum_surface_gas_pressure_file = None
     for path in files:
         arrays = point_arrays(path, names)
         for name, values in arrays.items():
@@ -282,6 +313,12 @@ def main():
         if unconnected_saturation > maximum_unconnected_saturation:
             maximum_unconnected_saturation = unconnected_saturation
             maximum_unconnected_location = (path.name, unconnected_y)
+        surface_gas_pressure = maximum_top_cell_abs_value(
+            path, arrays["gas_pressures"]
+        )
+        if surface_gas_pressure > maximum_surface_gas_pressure:
+            maximum_surface_gas_pressure = surface_gas_pressure
+            maximum_surface_gas_pressure_file = path.name
 
     if not (0.0 <= saturation_min <= saturation_max <= 1.0):
         raise RuntimeError(
@@ -313,6 +350,13 @@ def main():
             f"{layer_y:.6g} m in {filename}; threshold="
             f"{args.connected_wet_saturation_threshold:.6g}"
         )
+    if maximum_surface_gas_pressure > args.surface_gas_pressure_limit_pa:
+        raise RuntimeError(
+            "Atmospheric surface gas-pressure check failed: maximum |p_g|="
+            f"{maximum_surface_gas_pressure:.6g} Pa in "
+            f"{maximum_surface_gas_pressure_file}; limit="
+            f"{args.surface_gas_pressure_limit_pa:.6g} Pa"
+        )
     if not math.isfinite(maximum_pressure) or maximum_pressure >= args.pressure_limit_pa:
         raise RuntimeError(
             f"Pressure stability check failed: max |p|={maximum_pressure:.6g} Pa"
@@ -332,7 +376,9 @@ def main():
         f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n"
         f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n"
         f"max_unconnected_layer_saturation="
-        f"{maximum_unconnected_saturation:.12g}\n",
+        f"{maximum_unconnected_saturation:.12g}\n"
+        f"max_abs_surface_gas_pressure_pa="
+        f"{maximum_surface_gas_pressure:.12g}\n",
         encoding="utf-8",
     )
     print(f"PASS: {args.result_dir} (max |p|={maximum_pressure:.6g} Pa)")

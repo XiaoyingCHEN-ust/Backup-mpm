@@ -89,7 +89,7 @@
       "relative_permeability_floor": 1.0e-6,
       "fixed_gas_pressure": false,
       "surface_liquid_pressure": 994.734,
-      "surface_gas_pressure_ratio": 1.0,
+      "surface_gas_pressure_ratio": 0.0,
       "constant_mg": 3.0,
       "para_p0": 170.0,
       "para_m": 0.84,
