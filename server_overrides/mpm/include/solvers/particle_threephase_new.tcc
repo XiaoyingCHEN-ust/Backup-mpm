@@ -1199,7 +1199,15 @@ void mpm::ThreePhaseParticleNew<Tdim>::compute_pore_pressure(double dt){
       K_matrix(1,0) = K_gw;
       K_matrix(1,1) = K_gg;
 
-      if (K_gg > 1E-16) {
+      const bool fixed_gas_pressure =
+          liquid_material_->template property_or<bool>(
+              std::string("fixed_gas_pressure"), false);
+
+      // Fixed-gas formulation: solve only the liquid mass balance.
+      if (fixed_gas_pressure) {
+          this->liquid_pressure_acceleration_ = f_w / K_ww;
+          this->gas_pressure_acceleration_ = 0;
+      } else if (K_gg > 1E-16) {
         K_matrix_inverse = K_matrix.inverse();
 
         this->liquid_pressure_acceleration_ = K_matrix_inverse(0, 0) * f_w +
@@ -1211,9 +1219,6 @@ void mpm::ThreePhaseParticleNew<Tdim>::compute_pore_pressure(double dt){
           this->gas_pressure_acceleration_ = 0;
       }
 
-      const bool fixed_gas_pressure =
-          liquid_material_->template property_or<bool>(
-              std::string("fixed_gas_pressure"), false);
       this->liquid_pressure_ += this->liquid_pressure_acceleration_ * dt;
       if (!fixed_gas_pressure) {
         this->gas_pressure_ += this->gas_pressure_acceleration_ * dt;

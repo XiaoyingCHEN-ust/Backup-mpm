@@ -21,8 +21,9 @@ fixed-gas reference at the same permeability and water head.
 
 The calculation JSON now controls the former hard-coded C++ choices:
 
-- `fixed_gas_pressure`: `false` evolves gas pressure; `true` freezes the
-  initial equilibrated gas-pressure field.
+- `fixed_gas_pressure`: `false` evolves gas pressure with the coupled
+  liquid--gas system; `true` freezes the initial equilibrated gas-pressure
+  field and evaluates the liquid-pressure rate as `f_w / K_ww`.
 - `surface_liquid_pressure`: imposed surface water pressure in Pa.
 - `surface_gas_pressure_ratio`: \(P_{g,b}/P_{l,b}\) for the variable-gas
   model. `1.0` reproduces the co-pressurized manuscript boundary and `0.0`

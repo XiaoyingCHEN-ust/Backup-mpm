@@ -21,6 +21,10 @@ The replacement adds three optional liquid-material properties:
 When they are omitted, the defaults preserve the current variable-gas 25 kPa
 surface boundary.
 
+For `fixed_gas_pressure: true`, the gas-pressure rate is set to zero and the
+liquid-pressure rate is evaluated from the reduced balance `f_w / K_ww`, which
+matches the fixed-pressure formulation used for the manuscript comparison.
+
 For the laboratory validation it additionally adds `initial_suction` and
 `initial_suction_from_swrc`, initialises the retention-curve derivative, and
 updates effective saturation consistently so that phase permeabilities can
