@@ -89,12 +89,60 @@ def point_arrays(path: Path, requested_names):
     return arrays
 
 
+def point_coordinates(path: Path):
+    root = ET.parse(path).getroot()
+    element = root.find("./PolyData/Piece/Points/DataArray")
+    if element is None:
+        raise ValueError(f"Point coordinates are missing in {path}")
+    vtk_type = element.get("type")
+    if vtk_type not in VTK_STRUCT_TYPES:
+        raise ValueError(f"Unsupported point-coordinate type: {vtk_type}")
+    raw, endian = decode_binary_array(
+        element,
+        root.get("byte_order", "LittleEndian"),
+        root.get("header_type", "UInt32"),
+        root.get("compressor", ""),
+    )
+    code = VTK_STRUCT_TYPES[vtk_type]
+    values = tuple(value[0] for value in struct.iter_unpack(endian + code, raw))
+    if len(values) % 3:
+        raise ValueError(f"Invalid point-coordinate count in {path}")
+    return tuple(zip(values[0::3], values[1::3], values[2::3]))
+
+
+def maximum_layer_spread(path: Path, values):
+    coordinates = point_coordinates(path)
+    if len(coordinates) != len(values):
+        raise ValueError(f"Coordinate/value count mismatch in {path}")
+
+    layers = {}
+    for coordinates_i, value in zip(coordinates, values):
+        layers.setdefault(round(coordinates_i[1], 8), []).append(value)
+    if not layers or any(
+        len(layer_values) != 2 for layer_values in layers.values()
+    ):
+        raise RuntimeError(
+            "The reduced column checker expects exactly two particles per "
+            f"horizontal layer in {path.name}"
+        )
+    return max(
+        max(layer_values) - min(layer_values)
+        for layer_values in layers.values()
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=Path)
     parser.add_argument("--expected-suction-pa", type=float, default=972.9920291627446)
     parser.add_argument("--pressure-limit-pa", type=float, default=1.0e6)
     parser.add_argument("--velocity-limit-mps", type=float, default=10.0)
+    parser.add_argument(
+        "--layer-saturation-spread-limit",
+        type=float,
+        default=1.0e-4,
+        help="maximum allowed saturation difference within a horizontal layer",
+    )
     args = parser.parse_args()
 
     files = sorted(args.result_dir.glob("particle*.vtp"))
@@ -134,6 +182,7 @@ def main():
     gas_saturation_min = math.inf
     gas_saturation_max = -math.inf
     minimum_permeability = math.inf
+    layer_saturation_spread = 0.0
     for path in files:
         arrays = point_arrays(path, names)
         for name, values in arrays.items():
@@ -169,6 +218,10 @@ def main():
                 "Liquid and gas saturations do not sum to one in "
                 f"{path.name}: error={maximum_saturation_sum_error:.6g}"
             )
+        layer_saturation_spread = max(
+            layer_saturation_spread,
+            maximum_layer_spread(path, arrays["liquid_saturations"]),
+        )
 
     if not (0.0 <= saturation_min <= saturation_max <= 1.0):
         raise RuntimeError(
@@ -182,6 +235,12 @@ def main():
     if minimum_permeability <= 0.0:
         raise RuntimeError(
             f"Nonpositive phase permeability: {minimum_permeability:.6g} m^2"
+        )
+    if layer_saturation_spread > args.layer_saturation_spread_limit:
+        raise RuntimeError(
+            "One-dimensional layer symmetry check failed: maximum liquid-"
+            f"saturation spread={layer_saturation_spread:.6g}, limit="
+            f"{args.layer_saturation_spread_limit:.6g}"
         )
     if not math.isfinite(maximum_pressure) or maximum_pressure >= args.pressure_limit_pa:
         raise RuntimeError(
@@ -199,7 +258,8 @@ def main():
         f"max_abs_pressure_pa={maximum_pressure:.12g}\n"
         f"max_abs_velocity_component_mps={maximum_velocity:.12g}\n"
         f"min_phase_permeability_m2={minimum_permeability:.12g}\n"
-        f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n",
+        f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n"
+        f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n",
         encoding="utf-8",
     )
     print(f"PASS: {args.result_dir} (max |p|={maximum_pressure:.6g} Pa)")

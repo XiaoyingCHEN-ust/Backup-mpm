@@ -253,16 +253,44 @@ sbatch run_stability_hpc4.sh
 
 This creates six tasks with 150000, 300000, or 600000 steps. Do not proceed to
 the experimental pressure-rise interval until these results have been reviewed.
-The job script reads the generated manifest, so its array range must match the
-number of manifest rows.
+
+The r11 range checks initially passed, but a direct comparison of the two
+particles in every horizontal layer exposed a nonphysical lateral mode in the
+open case. The maximum within-layer saturation difference reaches 0.95. It is
+already visible at the first 0.15 s output for `dt=2e-5 s`, at 0.30 s for
+`dt=1e-5 s`, and between 1.95 and 2.10 s for `dt=5e-6 s`. Consequently, none
+of the open r11 runs is accepted and the production step is not yet selected.
+The closed runs retain layer symmetry to roundoff, remain bounded, and show a
+continued decrease in the gas-pressure difference as the step is reduced.
+
+Siemens et al. represent their open test using constant heads at the top and
+base plus manometer ports open along the column. In this reduced model,
+`fixed_gas_pressure=true` already homogenizes that distributed venting as zero
+gauge gas pressure. The side-wall gas velocity is therefore now constrained in
+the horizontal direction, as is required by the one-dimensional equivalent
+model, to avoid representing lateral venting twice. Test this correction only
+with the previously most stable step before repeating a convergence study:
+
+```bash
+python prepare_stability_checks.py --duration 3 \
+  --revision r12-open-gas-x --time-steps 5e-6 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0 run_stability_hpc4.sh
+```
+
+This creates open and closed manifest rows, but `--array=0` submits only the
+open diagnostic (600000 steps). The job script reads the generated manifest,
+so its array index must match the desired row.
 
 Each array task requests one GPU and 32 CPUs from `granularmech` under
 `comgranmech`. It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
 exceeds the deliberately loose 1 MPa safety bound. It also rejects non-finite
 arrays, nonpositive phase permeability, inconsistent phase saturations, and
-velocity components above the loose 10 m/s bound. Passing directories contain
-`RANGE_CHECK_PASSED.txt` under `stability_results/`.
+velocity components above the loose 10 m/s bound. The checker now also rejects
+a saturation difference greater than `1e-4` between the two particles in any
+horizontal layer. Passing directories contain `RANGE_CHECK_PASSED.txt` under
+`stability_results/`.
 
 The checker decodes the compressed VTP arrays themselves rather than trusting
 the XML `RangeMin`/`RangeMax` metadata, because VTK range metadata silently
