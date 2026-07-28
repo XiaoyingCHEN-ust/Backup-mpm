@@ -19,6 +19,7 @@ __pycache__/
 /Example/siemens2013_column_validation/results/
 /Example/siemens2013_column_validation/validation_results/
 /Example/siemens2013_column_validation/stability_inputs/
+/Example/siemens2013_column_validation/semi_implicit_inputs/
 /Example/siemens2013_column_validation/stability_results/
 /Example/siemens2013_column_validation/slurm-*.out
 /Example/siemens2013_column_validation/stability-*.out
@@ -30,6 +31,8 @@ __pycache__/
 /Example/siemens2013_column_validation/production_inputs/
 /Example/siemens2013_column_validation/production-*.out
 /Example/siemens2013_column_validation/production-*.err
+/Example/siemens2013_column_validation/semi-*.out
+/Example/siemens2013_column_validation/semi-*.err
 
 # Reproducible generated sensitivity files and outputs
 /Example/slope_infiltration/sensitivity/cases/

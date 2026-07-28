@@ -677,6 +677,62 @@ script divides the scaled permeability and velocity arrays by the multiplier
 before comparing every hydraulic field. The `k x 100` route would reduce the
 event durations to 4 s open and 9 s closed only if this overlap test passes.
 
+Both r22 runs are stable but fail that equivalence requirement. At the mapped
+50 s state, the first interior layer has `Sw=0.07670` in the unscaled run,
+`0.03835` for `k x 10`, and `0.03584` for `k x 100`. The maximum liquid-
+pressure differences are 244 and 415 Pa. The discrepancy begins at the first
+2.5 s comparison output and grows monotonically, even though the input files
+differ only in permeability, duration, and output controls. Permeability/time
+scaling is therefore rejected and the corresponding closed tests must not be
+submitted.
+
+### Semi-implicit three-phase pressure smoke test
+
+The validation patch now provides an opt-in global backward-Euler pressure
+solve with liquid and gas pressure as separate unknowns. Solid mechanics and
+the final three-phase momentum update remain explicit. The pressure system
+uses the existing SWRC tangent, liquid compressibility, ideal-gas storage,
+phase permeabilities, gravity, and the same `0.981 * viscosity / permeability`
+drag convention as the explicit momentum equation. The open case reduces to
+one liquid-pressure block when `fixed_gas_pressure=true`; the closed case
+retains the full coupled two-pressure block. The historical solver remains
+unchanged unless the input contains:
+
+```json
+"pressure_integration": "semi_implicit"
+```
+
+Do not resume production yet. Pull and rebuild, then run only four 0.05 s open
+smoke tests: one explicit baseline at `2.5e-6 s` and semi-implicit candidates
+at `2.5e-5`, `1e-4`, and `5e-4 s`.
+
+```bash
+cd /home/xchenjm/chen/MPM/Backup-mpm
+git pull origin agent/siemens-column-validation
+cd Example/siemens2013_column_validation
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py
+sbatch --array=0-3 run_semi_implicit_hpc4.sh
+```
+
+The rebuild installs the tracked particle headers and implementations plus
+the pressure-solver header and implementation. After a successful build it
+also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
+two duplicated particle sources; the current sources remain recoverable from
+the tracked replacements. Each smoke-test task performs the usual decoded-VTP
+range checks. Download all four open result directories before selecting a
+larger step. They can then be compared at all eleven common physical times:
+
+```bash
+python compare_semi_implicit.py
+```
+
+Only after the open histories are finite and sufficiently close to the
+explicit baseline should manifest rows 4--7 be submitted for the closed gas-
+pressure test. This staged test prevents an unverified matrix formulation or
+overlarge time step from consuming another long allocation.
+
 ## Post-process after both runs
 
 The script needs Python packages `vtk`, `numpy`, and `matplotlib`:

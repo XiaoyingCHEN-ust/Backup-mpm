@@ -12,8 +12,13 @@ threads="${SLURM_CPUS_PER_TASK:-32}"
 
 replacement_root="${repo_root}/server_overrides/mpm/include"
 source_files=(
+  "particles/threephase_pressure_state.h"
+  "particles/particle_threephase_new.h"
   "particles/particle_threephase_new.tcc"
+  "solvers/particle_threephase_new.h"
   "solvers/particle_threephase_new.tcc"
+  "solvers/thm_mpm_explicit_threephase_new.h"
+  "solvers/thm_mpm_explicit_threephase_new.tcc"
 )
 
 if [[ ! -d "${mpm_source}/build" ]]; then
@@ -24,15 +29,12 @@ fi
 for relative_path in "${source_files[@]}"; do
   replacement="${replacement_root}/${relative_path}"
   target="${mpm_source}/include/${relative_path}"
-  backup="${target}.pre-siemens-validation"
 
   if [[ ! -f "${replacement}" ]]; then
     echo "Missing replacement for ${relative_path}: ${replacement}" >&2
     exit 2
   fi
-  if [[ -f "${target}" && ! -f "${backup}" ]]; then
-    cp --preserve=mode,timestamps "${target}" "${backup}"
-  elif [[ ! -f "${target}" ]]; then
+  if [[ ! -f "${target}" ]]; then
     echo "Restoring missing source file: ${target}"
   fi
   install -D -m 0644 "${replacement}" "${target}"
@@ -49,6 +51,16 @@ grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/solvers/particle_threephase_new.tcc"
+grep -q "ThreePhasePressureState" \
+  "${mpm_source}/include/particles/threephase_pressure_state.h"
+grep -q "ThreePhasePressureState" \
+  "${mpm_source}/include/particles/particle_threephase_new.h"
+grep -q "ThreePhasePressureState" \
+  "${mpm_source}/include/solvers/particle_threephase_new.h"
+grep -q "solve_semi_implicit_pressure" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.h"
+grep -q 'pressure_integration == "semi_implicit"' \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 for relative_path in "${source_files[@]}"; do
   source_file="${mpm_source}/include/${relative_path}"
   if ! grep -Fq \
@@ -76,5 +88,22 @@ if [[ ! -x "${mpm_bin}" ]]; then
   echo "Build completed without an executable at ${mpm_bin}" >&2
   exit 2
 fi
+
+# The replacements are versioned in Backup-mpm, so historical side-by-side
+# copies only create ambiguity about which source was compiled.  Remove the
+# two legacy backup naming schemes after a successful rebuild.
+for relative_path in \
+  "particles/particle_threephase_new.h" \
+  "particles/particle_threephase_new.tcc" \
+  "solvers/particle_threephase_new.h" \
+  "solvers/particle_threephase_new.tcc"; do
+  target="${mpm_source}/include/${relative_path}"
+  for backup in "${target}.pre-siemens-validation" "${target}".before-*; do
+    if [[ -f "${backup}" ]]; then
+      rm -- "${backup}"
+      echo "Removed obsolete source backup: ${backup}"
+    fi
+  done
+done
 
 echo "Installed Siemens validation patch and rebuilt ${mpm_bin}"

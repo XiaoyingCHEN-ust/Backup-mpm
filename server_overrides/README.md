@@ -1,16 +1,20 @@
 # MPM source replacements
 
-These two files are identical copies kept in both source locations used by the
-current checkout. For HPC4, the Siemens validation installer performs the
-replacement, backup, and rebuild automatically:
+The particle header and implementation are identical copies kept in both
+source locations used by the current checkout. The three-phase solver header
+and implementation additionally contain the opt-in coupled semi-implicit
+pressure path. For HPC4, the Siemens validation installer performs the
+replacement and rebuild automatically:
 
 ```bash
 cd /home/xchenjm/chen/MPM/Backup-mpm/Example/siemens2013_column_validation
 sbatch program_patch/rebuild_hpc4.sh
 ```
 
-The `.pre-siemens-validation` files are local backups and should not be
-committed.
+The tracked replacements are the recovery copies. After a successful rebuild,
+the installer removes obsolete `.pre-siemens-validation` and `.before-*`
+particle-source backups so a stale file cannot be mistaken for the compiled
+source.
 
 The replacement adds three optional liquid-material properties:
 
@@ -31,3 +35,8 @@ updates effective saturation consistently so that phase permeabilities can
 evolve during infiltration. The optional `relative_permeability_floor`
 regularises residual phase endpoints so the drag calculation never divides
 by zero permeability.
+
+Set `analysis.pressure_integration` to `"semi_implicit"` to assemble the
+liquid/gas backward-Euler pressure system. The default remains `"explicit"`.
+The new integration path is experimental until the r23 short open and closed
+comparison matrices pass.

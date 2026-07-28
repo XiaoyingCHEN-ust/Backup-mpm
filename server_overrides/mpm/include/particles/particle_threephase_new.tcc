@@ -1085,6 +1085,156 @@ void mpm::ThreePhaseParticleNew<Tdim>::compute_updated_velocity(
   }
 }
 
+// Return frozen coefficients for a global semi-implicit pressure solve
+template <unsigned Tdim>
+mpm::ThreePhasePressureState<Tdim>
+mpm::ThreePhaseParticleNew<Tdim>::semi_implicit_pressure_state() {
+  ThreePhasePressureState<Tdim> state;
+  if (this->material_id_ == 999) return state;
+
+  state.active_node_ids.reserve(nodes_.size());
+  for (const auto& node : nodes_) state.active_node_ids.emplace_back(node->active_id());
+  state.shapefn = shapefn_;
+  state.dn_dx = dn_dx_;
+  state.volume = volume_;
+  state.porosity = porosity_;
+  state.liquid_saturation = liquid_saturation_;
+  state.gas_saturation = gas_saturation_;
+  state.liquid_pressure = PIC_liquid_pressure_;
+  state.gas_pressure = PIC_gas_pressure_;
+  state.saturation_pressure_tangent = std::max(dSw_dpw_, 0.0);
+  state.liquid_compressibility = liquid_compressibility_;
+  state.gas_compressibility =
+      gas_saturation_ / std::max(gas_density_, 1.0e-12) * gas_molar_mass_ /
+      gas_constant_ / std::max(PIC_temperature_ + 273.15, 1.0);
+  // The current three-phase momentum equation uses 0.981 * viscosity / k
+  // in its drag coefficient.  Retain that convention in the Darcy operator
+  // so the semi-implicit and explicit paths have the same steady mobility.
+  state.liquid_conductivity =
+      liquid_permeability_ / std::max(0.981 * liquid_viscosity_, 1.0e-30);
+  state.gas_conductivity =
+      gas_permeability_ / std::max(0.981 * gas_viscosity_, 1.0e-30);
+  state.liquid_density = liquid_density_;
+  state.gas_density = gas_density_;
+  state.fixed_gas_pressure =
+      liquid_material_->template property_or<bool>(
+          std::string("fixed_gas_pressure"), false);
+
+  const auto solid_strain_rate = this->compute_strain_rate(
+      dn_dx_, shapefn_, mpm::ParticlePhase::Solid);
+  const double solid_volumetric_strain_rate =
+      is_axisymmetric_ ? solid_strain_rate.head(3).sum()
+                       : solid_strain_rate.head(Tdim).sum();
+  const double beta_w =
+      3.0 * (1.0 - porosity_) * liquid_saturation_ * solid_expansivity_ +
+      3.0 * liquid_fraction_ * liquid_expansivity_;
+  const double beta_g =
+      3.0 * (1.0 - porosity_) * gas_saturation_ * solid_expansivity_ +
+      gas_fraction_ / std::max(gas_density_, 1.0e-12) * gas_pressure_ *
+          gas_molar_mass_ / gas_constant_ /
+          std::pow(std::max(PIC_temperature_ + 273.15, 1.0), 2);
+  state.liquid_mass_source =
+      beta_w * temperature_acceleration_ -
+      liquid_saturation_ * solid_volumetric_strain_rate;
+  state.gas_mass_source =
+      beta_g * temperature_acceleration_ -
+      gas_saturation_ * solid_volumetric_strain_rate;
+
+  state.pressure_boundary = set_pressure_constraint_ || this->free_surface();
+  if (set_pressure_constraint_) {
+    state.boundary_liquid_pressure = 0.0;
+    state.boundary_gas_pressure = 0.0;
+  } else if (this->free_surface()) {
+    if ((coordinates_[1] <= sea_level_) && (coordinates_[0] >= 25.0) &&
+        wave_pressure_) {
+      const double pgravity = -pgravity_[1];
+      state.boundary_liquid_pressure =
+          liquid_density_ * pgravity * (sea_level_ - coordinates_[1]) +
+          this->pf_seabed_surface_particle();
+      state.boundary_gas_pressure = state.boundary_liquid_pressure;
+    } else {
+      state.boundary_liquid_pressure =
+          liquid_material_->template property_or<double>(
+              std::string("surface_liquid_pressure"), 25000.0);
+      state.boundary_gas_pressure =
+          state.fixed_gas_pressure
+              ? gas_pressure_
+              : liquid_material_->template property_or<double>(
+                    std::string("surface_gas_pressure_ratio"), 1.0) *
+                    state.boundary_liquid_pressure;
+    }
+  }
+  return state;
+}
+
+// Update particle pressure from a global semi-implicit nodal solution
+template <unsigned Tdim>
+bool mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
+    const Eigen::VectorXd& nodal_liquid_pressure,
+    const Eigen::VectorXd& nodal_gas_pressure, double dt) {
+  if (this->material_id_ == 999) return true;
+  try {
+    const double old_liquid_pressure = liquid_pressure_;
+    const double old_gas_pressure = gas_pressure_;
+    liquid_pressure_ = 0.0;
+    gas_pressure_ = 0.0;
+    liquid_pressure_gradient_.setZero();
+    gas_pressure_gradient_.setZero();
+    for (unsigned i = 0; i < nodes_.size(); ++i) {
+      const auto active_id = nodes_[i]->active_id();
+      if (active_id >= static_cast<Index>(nodal_liquid_pressure.size()))
+        throw std::runtime_error("Invalid active node id in pressure update");
+      liquid_pressure_ += shapefn_[i] * nodal_liquid_pressure(active_id);
+      gas_pressure_ += shapefn_[i] * nodal_gas_pressure(active_id);
+      liquid_pressure_gradient_ +=
+          dn_dx_.row(i).transpose() * nodal_liquid_pressure(active_id);
+      gas_pressure_gradient_ +=
+          dn_dx_.row(i).transpose() * nodal_gas_pressure(active_id);
+    }
+
+    const bool fixed_gas_pressure =
+        liquid_material_->template property_or<bool>(
+            std::string("fixed_gas_pressure"), false);
+    if (fixed_gas_pressure) gas_pressure_ = old_gas_pressure;
+    if (set_pressure_constraint_) {
+      liquid_pressure_ = 0.0;
+      gas_pressure_ = 0.0;
+    } else if (this->free_surface()) {
+      if ((coordinates_[1] <= sea_level_) && (coordinates_[0] >= 25.0) &&
+          wave_pressure_) {
+        const double pgravity = -pgravity_[1];
+        liquid_pressure_ =
+            liquid_density_ * pgravity * (sea_level_ - coordinates_[1]) +
+            this->pf_seabed_surface_particle();
+        gas_pressure_ = liquid_pressure_;
+      } else {
+        liquid_pressure_ = liquid_material_->template property_or<double>(
+            std::string("surface_liquid_pressure"), 25000.0);
+        if (!fixed_gas_pressure)
+          gas_pressure_ =
+              liquid_material_->template property_or<double>(
+                  std::string("surface_gas_pressure_ratio"), 1.0) *
+              liquid_pressure_;
+      }
+    }
+
+    liquid_pressure_acceleration_ =
+        (liquid_pressure_ - old_liquid_pressure) / dt;
+    gas_pressure_acceleration_ =
+        fixed_gas_pressure ? 0.0 : (gas_pressure_ - old_gas_pressure) / dt;
+    PIC_liquid_pressure_ = liquid_pressure_;
+    PIC_gas_pressure_ = gas_pressure_;
+    suction_pressure_ = std::max(gas_pressure_ - liquid_pressure_, 0.0);
+    pore_pressure_ = liquid_saturation_ * liquid_pressure_ +
+                     gas_saturation_ * gas_pressure_;
+    return std::isfinite(liquid_pressure_) && std::isfinite(gas_pressure_);
+  } catch (std::exception& exception) {
+    console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__,
+                    __func__, exception.what());
+    return false;
+  }
+}
+
 // Compute updated pore pressure
 template <unsigned Tdim>
 void mpm::ThreePhaseParticleNew<Tdim>::compute_pore_pressure(double dt){

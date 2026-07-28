@@ -52,6 +52,15 @@ The Siemens inputs use `initial_suction_from_swrc` because the published
 initial state is close to residual saturation and is incompatible with a
 hard-coded 20 psi value. Existing inputs retain 20 psi by default.
 
+The patch also contains an opt-in semi-implicit pressure integration path for
+the three-phase solver. It assembles a backward-Euler finite-element system
+for liquid and gas gauge pressures while retaining explicit solid mechanics.
+The open validation case automatically reduces to the liquid block when its
+gas pressure is fixed; the closed case solves the coupled two-pressure block.
+Activate it only with `analysis.pressure_integration = "semi_implicit"`.
+Omitting the key, or setting it to `"explicit"`, preserves the historical
+update. This path must pass the short r23 smoke-test matrix before production.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild
@@ -64,9 +73,10 @@ sbatch program_patch/rebuild_hpc4.sh
 The default source and executable are
 `/home/xchenjm/chen/MPM/mpm` and `/home/xchenjm/chen/MPM/mpm/build/mpm`.
 Set and export `MPM_SOURCE` before submission only if that source checkout
-moves. The installer creates one `.pre-siemens-validation` backup beside each
-original source file before replacement and builds with 32 parallel jobs by
-default.
+moves. The replacements are versioned in `Backup-mpm`, so the installer no
+longer creates side-by-side source backups. After a successful build it
+removes legacy `.pre-siemens-validation` and `.before-*` copies of the two
+duplicated particle sources. It builds with 32 parallel jobs by default.
 
 Do not run the full 400/900 s calculations immediately after rebuilding.
 First run the short time-step matrix described in the case README; every
