@@ -76,6 +76,16 @@ grep -Fq "solve_semi_implicit_pressure" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "compact_liquid_pressure_increment" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+for source_file in \
+  "${mpm_source}/include/particles/particle_threephase_new.tcc" \
+  "${mpm_source}/include/solvers/particle_threephase_new.tcc"; do
+  grep -Fq "liquid_permeability_ / std::max(liquid_viscosity_" \
+    "${source_file}"
+  if grep -Fq "0.981 * liquid_viscosity_" "${source_file}"; then
+    echo "Obsolete 0.981 mobility factor remains in ${source_file}" >&2
+    exit 3
+  fi
+done
 
 if [[ ! -f "${input}" ]]; then
   echo "Missing ${input}; run python prepare_semi_implicit_checks.py first" >&2

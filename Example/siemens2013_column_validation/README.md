@@ -692,8 +692,8 @@ The validation patch now provides an opt-in global backward-Euler pressure
 solve with liquid and gas pressure as separate unknowns. Solid mechanics and
 the final three-phase momentum update remain explicit. The pressure system
 uses the existing SWRC tangent, liquid compressibility, ideal-gas storage,
-phase permeabilities, gravity, and the same `0.981 * viscosity / permeability`
-drag convention as the explicit momentum equation. The open case reduces to
+phase permeabilities, gravity, and the same `viscosity / permeability` drag
+convention as the explicit momentum equation. The open case reduces to
 one liquid-pressure block when `fixed_gas_pressure=true`; the closed case
 retains the full coupled two-pressure block. The historical solver remains
 unchanged unless the input contains:
@@ -798,6 +798,42 @@ python prepare_semi_implicit_checks.py \
 sbatch --array=1 run_semi_implicit_hpc4.sh
 ```
 
+The r29 run produced all eleven outputs and passed every range check. Pressure
+remained below `1.343 kPa`, the largest phase-velocity component was
+`0.0802 m/s`, and the saturation difference between the two particles in each
+horizontal layer was below `1.4e-13`. The apparent maximum non-connected
+saturation of `0.394` occurred in the single transition layer immediately
+below the top-connected wet region at `0.27 s`; at `0.30 s` it crossed the
+`0.40` front threshold and joined that region. The profile is therefore a
+continuous advancing front rather than a detached band. The front depth at
+`0.30 s` was `17.1 mm`.
+
+During this audit, the semi-implicit Darcy mobility was found to contain an
+obsolete factor of `0.981` that is absent from the current three-phase drag
+coefficient. The r30 correction uses exactly `permeability / viscosity` for
+both phases. Rebuild it, then repeat the short open test at two time steps to
+check that the lumped formulation is time-step convergent before extending
+the duration:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.3 \
+  --semi-implicit-dts 2.5e-5 1e-4 \
+  --boundary-penalty 100 \
+  --revision r30-correct-darcy-mobility-0p3s
+sbatch --array=1-2 run_semi_implicit_hpc4.sh
+```
+
+After both rows pass, compare `dt=1e-4 s` directly with the finer
+semi-implicit result:
+
+```bash
+python compare_semi_implicit.py --case open \
+  --semi-implicit-reference-dt 2.5e-5
+```
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
@@ -805,7 +841,7 @@ two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
 smoke-test command. Do not start the closed or production calculation until
-the r27 three-second open comparison has passed.
+the r30 time-step comparison and a subsequent three-second open run pass.
 
 ## Post-process after both runs
 

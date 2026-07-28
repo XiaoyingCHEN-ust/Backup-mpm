@@ -65,13 +65,16 @@ DOF map from nodes with nonzero shape-function or gradient support. Although
 r24 completed, its smaller time steps moved the wetting front farther because
 absolute particle pressure was reprojected through the grid on every step.
 The r25 path transfers only the solved nodal pressure increment back to each
-particle, so a zero physical increment produces no projection smoothing. It
-The r27 three-second run subsequently exposed non-monotone saturated bands
+particle, so a zero physical increment produces no projection smoothing. The
+r27 three-second run subsequently exposed non-monotone saturated bands
 disconnected from the top boundary. The pressure storage and weak boundary
 terms now use row-sum mass lumping, while the Darcy diffusion blocks remain
 consistent. This is intended to preserve a sharp dry/wet front without the
-overshoot produced by the consistent pressure mass matrix. It must pass the
-short r29 smoke test before production.
+overshoot produced by the consistent pressure mass matrix. The r29 short open
+test passed; r30 removes an obsolete `0.981` factor so the implicit Darcy
+mobility exactly matches the current three-phase `viscosity / permeability`
+drag coefficient. The r30 two-time-step check and longer open/closed tests
+must pass before production.
 
 ## Apply on HPC4
 

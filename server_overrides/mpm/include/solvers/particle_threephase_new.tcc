@@ -1107,13 +1107,13 @@ mpm::ThreePhaseParticleNew<Tdim>::semi_implicit_pressure_state() {
   state.gas_compressibility =
       gas_saturation_ / std::max(gas_density_, 1.0e-12) * gas_molar_mass_ /
       gas_constant_ / std::max(PIC_temperature_ + 273.15, 1.0);
-  // The current three-phase momentum equation uses 0.981 * viscosity / k
-  // in its drag coefficient.  Retain that convention in the Darcy operator
-  // so the semi-implicit and explicit paths have the same steady mobility.
+  // The three-phase momentum equation uses viscosity / permeability in its
+  // drag coefficient.  Use the corresponding Darcy mobility here so the
+  // semi-implicit and explicit paths have the same steady response.
   state.liquid_conductivity =
-      liquid_permeability_ / std::max(0.981 * liquid_viscosity_, 1.0e-30);
+      liquid_permeability_ / std::max(liquid_viscosity_, 1.0e-30);
   state.gas_conductivity =
-      gas_permeability_ / std::max(0.981 * gas_viscosity_, 1.0e-30);
+      gas_permeability_ / std::max(gas_viscosity_, 1.0e-30);
   state.liquid_density = liquid_density_;
   state.gas_density = gas_density_;
   state.fixed_gas_pressure =

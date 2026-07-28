@@ -85,6 +85,16 @@ for relative_path in "${particle_implementations[@]}"; do
     echo "Obsolete double-gravity liquid-force expression remains in ${source_file}" >&2
     exit 3
   fi
+  if ! grep -Fq \
+      "liquid_permeability_ / std::max(liquid_viscosity_" \
+      "${source_file}"; then
+    echo "Correct Darcy mobility is absent from ${source_file}" >&2
+    exit 3
+  fi
+  if grep -Fq "0.981 * liquid_viscosity_" "${source_file}"; then
+    echo "Obsolete 0.981 mobility factor remains in ${source_file}" >&2
+    exit 3
+  fi
 done
 grep -Fq "std::vector<HDF5Particle> dst_buf(nparticles);" \
   "${mpm_source}/include/mesh/mesh.tcc"

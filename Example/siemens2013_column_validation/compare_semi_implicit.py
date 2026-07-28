@@ -1,4 +1,4 @@
-"""Compare semi-implicit smoke-test histories with their explicit baselines."""
+"""Compare semi-implicit histories with explicit or finer-step baselines."""
 
 from __future__ import annotations
 
@@ -71,6 +71,15 @@ def main() -> None:
         default=2.5e-6,
         help="time step used by --open-reference-dir",
     )
+    parser.add_argument(
+        "--semi-implicit-reference-dt",
+        type=float,
+        default=None,
+        help=(
+            "compare the other semi-implicit rows with the generated "
+            "semi-implicit row at this time step"
+        ),
+    )
     args = parser.parse_args()
 
     with args.manifest.open(encoding="utf-8", newline="") as stream:
@@ -78,23 +87,53 @@ def main() -> None:
     case_names = ("open", "closed") if args.case == "both" else (args.case,)
     for case_name in case_names:
         case_rows = [row for row in rows if row["case"] == case_name]
-        explicit_rows = [row for row in case_rows if row["method"] == "explicit"]
-        if len(explicit_rows) != 1:
-            raise RuntimeError(f"Expected one {case_name} explicit baseline")
-        reference_row = explicit_rows[0]
-        if case_name == "open" and args.open_reference_dir is not None:
-            reference_files = output_files(
-                args.open_reference_dir, args.open_reference_dt
-            )
-        else:
+        semi_implicit_rows = [
+            row for row in case_rows if row["method"] == "semi_implicit"
+        ]
+        if args.semi_implicit_reference_dt is not None:
+            matching_rows = [
+                row
+                for row in semi_implicit_rows
+                if math.isclose(
+                    float(row["dt_s"]),
+                    args.semi_implicit_reference_dt,
+                    rel_tol=1.0e-12,
+                    abs_tol=0.0,
+                )
+            ]
+            if len(matching_rows) != 1:
+                raise RuntimeError(
+                    f"Expected one {case_name} semi-implicit reference at "
+                    f"dt={args.semi_implicit_reference_dt:g} s; "
+                    f"found {len(matching_rows)}"
+                )
+            reference_row = matching_rows[0]
             reference_files = output_files(
                 args.results / reference_row["uuid"],
                 float(reference_row["dt_s"]),
             )
+            rows_to_compare = [
+                row for row in semi_implicit_rows if row is not reference_row
+            ]
+        else:
+            explicit_rows = [
+                row for row in case_rows if row["method"] == "explicit"
+            ]
+            if len(explicit_rows) != 1:
+                raise RuntimeError(f"Expected one {case_name} explicit baseline")
+            reference_row = explicit_rows[0]
+            if case_name == "open" and args.open_reference_dir is not None:
+                reference_files = output_files(
+                    args.open_reference_dir, args.open_reference_dt
+                )
+            else:
+                reference_files = output_files(
+                    args.results / reference_row["uuid"],
+                    float(reference_row["dt_s"]),
+                )
+            rows_to_compare = semi_implicit_rows
 
-        for row in case_rows:
-            if row["method"] != "semi_implicit":
-                continue
+        for row in rows_to_compare:
             candidate_files = output_files(
                 args.results / row["uuid"], float(row["dt_s"])
             )
@@ -144,6 +183,8 @@ def main() -> None:
             print(
                 f"{case_name} dt={float(row['dt_s']):g} s, "
                 f"penalty={float(row['boundary_penalty']):g}, "
+                f"reference={reference_row['method']} "
+                f"dt={float(reference_row['dt_s']):g} s, "
                 f"outputs={len(candidate_files)}, "
                 f"coordinate_max={coordinate_maximum:.6g} m"
             )
