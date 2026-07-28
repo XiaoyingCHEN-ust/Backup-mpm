@@ -772,7 +772,7 @@ physical times without rerunning the explicit reference:
 ```bash
 python compare_semi_implicit.py --case open \
   --open-reference-dir \
-  results/stability_results/siemens2013-stability-r21-fixed-gas-3s-open_2p5e-06 \
+  stability_results/siemens2013-stability-r21-fixed-gas-3s-open_2p5e-06 \
   --open-reference-dt 2.5e-6
 ```
 
