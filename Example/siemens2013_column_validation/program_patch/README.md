@@ -74,8 +74,9 @@ overshoot produced by the consistent pressure mass matrix. The r29 short open
 test passed; r30 removes an obsolete `0.981` factor so the implicit Darcy
 mobility exactly matches the current three-phase `viscosity / permeability`
 drag coefficient. The r30 two-time-step open check passed with an identical
-wetting-front position at every output time. The longer r31 open test and the
-subsequent closed test must pass before production.
+wetting-front position at every output time, and the r31 three-second open
+test remained one-dimensional and free of detached wet bands. The r32 closed
+time-step check and subsequent longer closed test must pass before production.
 
 ## Apply on HPC4
 

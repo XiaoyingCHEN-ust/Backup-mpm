@@ -857,14 +857,45 @@ python prepare_semi_implicit_checks.py \
 sbatch --array=1 run_semi_implicit_hpc4.sh
 ```
 
+The r31 open run produced all eleven outputs through `3 s` and passed every
+range check. The top-connected front advanced monotonically from `5.7 mm` to
+`45.6 mm`; no detached wet layer appeared through the interval where r27 had
+failed. The maximum left/right saturation spread was `5.26e-13`, maximum
+absolute pressure was `1.143 kPa`, and the largest velocity component was
+`0.0769 m/s`. At `3 s`, the saturated transmission zone remained connected
+to the prescribed top cell and was followed by one smooth transition layer.
+
+The open test exercises only the liquid-pressure block because its gas
+pressure is fixed. Before running the full coupled closed block for 3 s, first
+perform a `0.3 s` closed time-step check. The generator still creates all six
+rows, but submit only closed semi-implicit rows 4 and 5:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.3 \
+  --semi-implicit-dts 2.5e-5 1e-4 \
+  --boundary-penalty 100 \
+  --revision r32-closed-timestep-0p3s
+sbatch --array=4-5 run_semi_implicit_hpc4.sh
+```
+
+Compare the coarse closed result directly with the finer coupled-pressure
+solution:
+
+```bash
+python compare_semi_implicit.py --case closed \
+  --semi-implicit-reference-dt 2.5e-5
+```
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
 two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
-smoke-test command. Do not start the closed or production calculation until
-the r31 three-second open run passes.
+smoke-test command. Do not start a longer closed or production calculation
+until the r32 closed time-step comparison and a subsequent three-second closed
+run pass.
 
 ## Post-process after both runs
 
