@@ -65,6 +65,8 @@ grep -Fq "No supported pressure degrees of freedom" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "compact_liquid_pressure_increment" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "Row-sum lump the pressure-storage matrix" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 particle_implementations=(
   "particles/particle_threephase_new.tcc"
   "solvers/particle_threephase_new.tcc"

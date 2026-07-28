@@ -776,6 +776,28 @@ python compare_semi_implicit.py --case open \
   --open-reference-dt 2.5e-6
 ```
 
+The r27 output did not pass the range checker. At `0.3 s`, it already contained
+a fully saturated layer near `y=0.989 m` disconnected from the prescribed top
+water layer. The left/right saturation spread reached `0.949` by `0.6 s`.
+These alternating wet and dry layers are a non-monotone consistent-mass
+oscillation at the sharp infiltration front, rather than physical one-
+dimensional infiltration. The next solver revision row-sum lumps the liquid/
+gas storage and weak pressure-boundary matrices but leaves the spatial Darcy
+diffusion matrix unchanged.
+
+After rebuilding, first run only a `0.3 s` r29 open smoke test. This is long
+enough to reach the first r27 disconnected band but costs only 3,000
+semi-implicit steps:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.3 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --revision r29-lumped-pressure-0p3s
+sbatch --array=1 run_semi_implicit_hpc4.sh
+```
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

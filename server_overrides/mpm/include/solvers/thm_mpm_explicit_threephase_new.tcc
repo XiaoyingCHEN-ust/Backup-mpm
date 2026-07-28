@@ -616,49 +616,56 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
                           gradient_i.dot(state.gas_density * gravity_);
         }
 
+        // Row-sum lump the pressure-storage matrix.  A consistent mass
+        // matrix is non-monotone at the sharp dry/wet discontinuity and
+        // produced saturated bands disconnected from the imposed surface.
+        const double lumped_mass =
+            state.volume * std::max(shape_i, 0.0);
+        coefficients.emplace_back(
+            row_w, row_w, c_ww * lumped_mass / dt);
+        right(row_w) +=
+            c_ww * lumped_mass / dt * old_liquid_pressure(row_w);
+        if (!fixed_gas_pressure) {
+          coefficients.emplace_back(
+              row_w, row_g, c_wg * lumped_mass / dt);
+          coefficients.emplace_back(
+              row_g, row_w, c_gw * lumped_mass / dt);
+          coefficients.emplace_back(
+              row_g, row_g, c_gg * lumped_mass / dt);
+          right(row_w) +=
+              c_wg * lumped_mass / dt * old_gas_pressure(row_w);
+          right(row_g) +=
+              c_gw * lumped_mass / dt * old_liquid_pressure(row_w) +
+              c_gg * lumped_mass / dt * old_gas_pressure(row_w);
+        }
+
         for (unsigned j = 0; j < state.active_node_ids.size(); ++j) {
           const auto col_w = pressure_dof[state.active_node_ids[j]];
           if (col_w == invalid_dof) continue;
           const auto col_g = col_w + pressure_active_dof;
-          const double mass =
-              state.volume * shape_i * state.shapefn(j);
           const double diffusion = state.volume *
               gradient_i.dot(state.dn_dx.row(j).transpose());
 
           coefficients.emplace_back(
-              row_w, col_w,
-              c_ww * mass / dt + liquid_conductivity * diffusion);
-          right(row_w) +=
-              c_ww * mass / dt * old_liquid_pressure(col_w);
+              row_w, col_w, liquid_conductivity * diffusion);
 
           if (!fixed_gas_pressure) {
-            coefficients.emplace_back(row_w, col_g, c_wg * mass / dt);
-            coefficients.emplace_back(row_g, col_w, c_gw * mass / dt);
             coefficients.emplace_back(
-                row_g, col_g,
-                c_gg * mass / dt + gas_conductivity * diffusion);
-            right(row_w) +=
-                c_wg * mass / dt * old_gas_pressure(col_w);
-            right(row_g) +=
-                c_gw * mass / dt * old_liquid_pressure(col_w) +
-                c_gg * mass / dt * old_gas_pressure(col_w);
-          }
-
-          if (state.pressure_boundary) {
-            coefficients.emplace_back(row_w, col_w,
-                                      liquid_penalty * mass);
-            if (!fixed_gas_pressure)
-              coefficients.emplace_back(row_g, col_g,
-                                        gas_penalty * mass);
+                row_g, col_g, gas_conductivity * diffusion);
           }
         }
 
         if (state.pressure_boundary) {
-          right(row_w) += state.volume * shape_i * liquid_penalty *
+          coefficients.emplace_back(
+              row_w, row_w, liquid_penalty * lumped_mass);
+          right(row_w) += liquid_penalty * lumped_mass *
                           state.boundary_liquid_pressure;
-          if (!fixed_gas_pressure)
-            right(row_g) += state.volume * shape_i * gas_penalty *
+          if (!fixed_gas_pressure) {
+            coefficients.emplace_back(
+                row_g, row_g, gas_penalty * lumped_mass);
+            right(row_g) += gas_penalty * lumped_mass *
                             state.boundary_gas_pressure;
+          }
         }
       }
     }

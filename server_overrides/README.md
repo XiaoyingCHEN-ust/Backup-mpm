@@ -38,5 +38,5 @@ by zero permeability.
 
 Set `analysis.pressure_integration` to `"semi_implicit"` to assemble the
 liquid/gas backward-Euler pressure system. The default remains `"explicit"`.
-The new integration path is experimental until the r25 short open and closed
+The new integration path is experimental until the r29 short open and closed
 comparison matrices pass.
