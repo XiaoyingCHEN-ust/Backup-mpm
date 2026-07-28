@@ -61,6 +61,8 @@ grep -q "solve_semi_implicit_pressure" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.h"
 grep -q 'pressure_integration == "semi_implicit"' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "No supported pressure degrees of freedom" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 particle_implementations=(
   "particles/particle_threephase_new.tcc"
   "solvers/particle_threephase_new.tcc"

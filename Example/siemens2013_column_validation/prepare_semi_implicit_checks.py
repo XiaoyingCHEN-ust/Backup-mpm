@@ -38,7 +38,7 @@ def main() -> None:
         nargs="+",
         default=(2.5e-5, 1.0e-4, 5.0e-4),
     )
-    parser.add_argument("--revision", default="r23-semi-pressure-smoke")
+    parser.add_argument("--revision", default="r24-semi-pressure-dof-smoke")
     parser.add_argument("--boundary-penalty", type=float, default=1.0e6)
     args = parser.parse_args()
 

@@ -702,6 +702,14 @@ unchanged unless the input contains:
 "pressure_integration": "semi_implicit"
 ```
 
+The first r23 semi-implicit launch stopped before step 0 because a few GIMP
+support nodes were mechanically active but had zero pressure projection
+weight. The r24 correction uses a compact pressure-specific DOF map containing
+only nodes with nonzero shape-function or gradient support. Gradient-only
+nodes are initialised with the volume-weighted particle pressure mean; this
+removes the invalid zero-weight division without changing the pressure
+boundary conditions or material parameters.
+
 Do not resume production yet. Pull and rebuild, then run only four 0.05 s open
 smoke tests: one explicit baseline at `2.5e-6 s` and semi-implicit candidates
 at `2.5e-5`, `1e-4`, and `5e-4 s`.

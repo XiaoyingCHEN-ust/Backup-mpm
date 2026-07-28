@@ -467,8 +467,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
   if (!(dt > 0.0)) return false;
 
   try {
-    const unsigned active_dof = mesh_->assign_active_node_id();
-    if (active_dof == 0) throw std::runtime_error("No active pressure nodes");
+    const unsigned mesh_active_dof = mesh_->assign_active_node_id();
+    if (mesh_active_dof == 0)
+      throw std::runtime_error("No active pressure nodes");
 
     std::vector<PressureState> states;
     states.reserve(mesh_->nparticles());
@@ -496,32 +497,74 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
           state.dn_dx.rows() != state.shapefn.size())
         throw std::runtime_error("Invalid particle pressure interpolation data");
       for (const auto node_id : state.active_node_ids)
-        if (node_id >= active_dof)
+        if (node_id >= mesh_active_dof)
           throw std::runtime_error("Inactive node in pressure interpolation");
     }
 
-    // Project old particle pressures to active nodes for the storage term.
-    Eigen::VectorXd nodal_weight = Eigen::VectorXd::Zero(active_dof);
-    Eigen::VectorXd old_liquid_pressure = Eigen::VectorXd::Zero(active_dof);
-    Eigen::VectorXd old_gas_pressure = Eigen::VectorXd::Zero(active_dof);
+    // A GIMP cell can mark support nodes as mechanically active even when a
+    // node has zero pressure interpolation weight.  Build a compact pressure
+    // DOF map from nodes that contribute through either N or grad(N), instead
+    // of treating every mechanically active node as a pressure unknown.
+    const Index invalid_dof = std::numeric_limits<Index>::max();
+    std::vector<bool> pressure_support(mesh_active_dof, false);
     for (const auto& state : states) {
       for (unsigned i = 0; i < state.active_node_ids.size(); ++i) {
-        const auto node_id = state.active_node_ids[i];
-        const double weight = state.volume * state.shapefn(i);
-        nodal_weight(node_id) += weight;
-        old_liquid_pressure(node_id) += weight * state.liquid_pressure;
-        old_gas_pressure(node_id) += weight * state.gas_pressure;
+        if (std::abs(state.shapefn(i)) > 1.0e-14 ||
+            state.dn_dx.row(i).squaredNorm() > 1.0e-28)
+          pressure_support[state.active_node_ids[i]] = true;
       }
     }
-    for (unsigned i = 0; i < active_dof; ++i) {
-      if (nodal_weight(i) <= 0.0)
-        throw std::runtime_error("Zero pressure projection weight");
-      old_liquid_pressure(i) /= nodal_weight(i);
-      old_gas_pressure(i) /= nodal_weight(i);
+    std::vector<Index> pressure_dof(mesh_active_dof, invalid_dof);
+    unsigned pressure_active_dof = 0;
+    for (unsigned node_id = 0; node_id < mesh_active_dof; ++node_id) {
+      if (pressure_support[node_id])
+        pressure_dof[node_id] = pressure_active_dof++;
+    }
+    if (pressure_active_dof == 0)
+      throw std::runtime_error("No supported pressure degrees of freedom");
+
+    // Project old particle pressures to the compact pressure nodes for the
+    // storage term.  Absolute interpolation weights are robust to generalised
+    // interpolation functions.  A gradient-only pressure node has no storage
+    // contribution, so initialise it with the volume-weighted particle mean.
+    Eigen::VectorXd nodal_weight =
+        Eigen::VectorXd::Zero(pressure_active_dof);
+    Eigen::VectorXd old_liquid_pressure =
+        Eigen::VectorXd::Zero(pressure_active_dof);
+    Eigen::VectorXd old_gas_pressure =
+        Eigen::VectorXd::Zero(pressure_active_dof);
+    double particle_volume = 0.0;
+    double mean_liquid_pressure = 0.0;
+    double mean_gas_pressure = 0.0;
+    for (const auto& state : states) {
+      particle_volume += state.volume;
+      mean_liquid_pressure += state.volume * state.liquid_pressure;
+      mean_gas_pressure += state.volume * state.gas_pressure;
+      for (unsigned i = 0; i < state.active_node_ids.size(); ++i) {
+        const auto dof = pressure_dof[state.active_node_ids[i]];
+        if (dof == invalid_dof) continue;
+        const double weight = state.volume * std::abs(state.shapefn(i));
+        nodal_weight(dof) += weight;
+        old_liquid_pressure(dof) += weight * state.liquid_pressure;
+        old_gas_pressure(dof) += weight * state.gas_pressure;
+      }
+    }
+    if (!(particle_volume > 0.0))
+      throw std::runtime_error("Non-positive particle volume in pressure solve");
+    mean_liquid_pressure /= particle_volume;
+    mean_gas_pressure /= particle_volume;
+    for (unsigned i = 0; i < pressure_active_dof; ++i) {
+      if (nodal_weight(i) > 0.0) {
+        old_liquid_pressure(i) /= nodal_weight(i);
+        old_gas_pressure(i) /= nodal_weight(i);
+      } else {
+        old_liquid_pressure(i) = mean_liquid_pressure;
+        old_gas_pressure(i) = mean_gas_pressure;
+      }
     }
 
     const unsigned system_size =
-        fixed_gas_pressure ? active_dof : 2 * active_dof;
+        fixed_gas_pressure ? pressure_active_dof : 2 * pressure_active_dof;
     Eigen::VectorXd right = Eigen::VectorXd::Zero(system_size);
     std::vector<Triplet> coefficients;
     const unsigned nodes_per_particle =
@@ -556,8 +599,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
                     1.0e-20});
 
       for (unsigned i = 0; i < state.active_node_ids.size(); ++i) {
-        const auto row_w = state.active_node_ids[i];
-        const auto row_g = row_w + active_dof;
+        const auto row_w = pressure_dof[state.active_node_ids[i]];
+        if (row_w == invalid_dof) continue;
+        const auto row_g = row_w + pressure_active_dof;
         const double shape_i = state.shapefn(i);
         const auto gradient_i = state.dn_dx.row(i).transpose();
 
@@ -573,8 +617,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
         }
 
         for (unsigned j = 0; j < state.active_node_ids.size(); ++j) {
-          const auto col_w = state.active_node_ids[j];
-          const auto col_g = col_w + active_dof;
+          const auto col_w = pressure_dof[state.active_node_ids[j]];
+          if (col_w == invalid_dof) continue;
+          const auto col_g = col_w + pressure_active_dof;
           const double mass =
               state.volume * shape_i * state.shapefn(j);
           const double diffusion = state.volume *
@@ -635,10 +680,21 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     if (!std::isfinite(relative_residual) || relative_residual > 1.0e-7)
       throw std::runtime_error("Pressure solve residual exceeded tolerance");
 
-    const Eigen::VectorXd liquid_pressure = pressure.head(active_dof);
-    const Eigen::VectorXd gas_pressure = fixed_gas_pressure
+    const Eigen::VectorXd compact_liquid_pressure =
+        pressure.head(pressure_active_dof);
+    const Eigen::VectorXd compact_gas_pressure = fixed_gas_pressure
         ? old_gas_pressure
-        : pressure.tail(active_dof);
+        : pressure.tail(pressure_active_dof);
+    Eigen::VectorXd liquid_pressure =
+        Eigen::VectorXd::Constant(mesh_active_dof, mean_liquid_pressure);
+    Eigen::VectorXd gas_pressure =
+        Eigen::VectorXd::Constant(mesh_active_dof, mean_gas_pressure);
+    for (unsigned node_id = 0; node_id < mesh_active_dof; ++node_id) {
+      const auto dof = pressure_dof[node_id];
+      if (dof == invalid_dof) continue;
+      liquid_pressure(node_id) = compact_liquid_pressure(dof);
+      gas_pressure(node_id) = compact_gas_pressure(dof);
+    }
     std::atomic<bool> update_status{true};
     mesh_->iterate_over_particles(
         [&](const std::shared_ptr<mpm::ParticleBase<Tdim>>& base_particle) {
@@ -653,8 +709,10 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
 
     if (log_pressure_solver_ && step_ % output_steps_ == 0)
       console_->info(
-          "Semi-implicit pressure: dofs={}, fixed_gas={}, residual={}",
-          system_size, fixed_gas_pressure, relative_residual);
+          "Semi-implicit pressure: dofs={}, mesh_active_nodes={}, "
+          "fixed_gas={}, residual={}",
+          system_size, mesh_active_dof, fixed_gas_pressure,
+          relative_residual);
     return true;
   } catch (std::exception& exception) {
     console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__,

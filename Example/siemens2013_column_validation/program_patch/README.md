@@ -59,7 +59,10 @@ The open validation case automatically reduces to the liquid block when its
 gas pressure is fixed; the closed case solves the coupled two-pressure block.
 Activate it only with `analysis.pressure_integration = "semi_implicit"`.
 Omitting the key, or setting it to `"explicit"`, preserves the historical
-update. This path must pass the short r23 smoke-test matrix before production.
+update. The r23 run exposed mechanically active GIMP support nodes with zero
+pressure projection weight. The r24 path therefore builds a compact pressure
+DOF map from nodes with nonzero shape-function or gradient support. It must
+pass the short r24 smoke-test matrix before production.
 
 ## Apply on HPC4
 
