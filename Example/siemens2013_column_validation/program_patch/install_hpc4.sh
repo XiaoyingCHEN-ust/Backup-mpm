@@ -61,7 +61,11 @@ grep -q "solve_semi_implicit_pressure" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.h"
 grep -q 'pressure_integration == "semi_implicit"' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
-for relative_path in "${source_files[@]}"; do
+particle_implementations=(
+  "particles/particle_threephase_new.tcc"
+  "solvers/particle_threephase_new.tcc"
+)
+for relative_path in "${particle_implementations[@]}"; do
   source_file="${mpm_source}/include/${relative_path}"
   if ! grep -Fq \
       "Fixed-gas formulation: solve only the liquid mass balance." \
