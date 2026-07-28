@@ -53,11 +53,18 @@ def main() -> None:
     parser.add_argument(
         "--results", type=Path, default=Path("stability_results")
     )
+    parser.add_argument(
+        "--case",
+        choices=("open", "closed", "both"),
+        default="both",
+        help="Compare only the selected boundary condition (default: both)",
+    )
     args = parser.parse_args()
 
     with args.manifest.open(encoding="utf-8", newline="") as stream:
         rows = list(csv.DictReader(stream))
-    for case_name in ("open", "closed"):
+    case_names = ("open", "closed") if args.case == "both" else (args.case,)
+    for case_name in case_names:
         case_rows = [row for row in rows if row["case"] == case_name]
         explicit_rows = [row for row in case_rows if row["method"] == "explicit"]
         if len(explicit_rows) != 1:

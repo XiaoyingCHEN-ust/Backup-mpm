@@ -725,7 +725,7 @@ range checks. Download all four open result directories before selecting a
 larger step. They can then be compared at all eleven common physical times:
 
 ```bash
-python compare_semi_implicit.py
+python compare_semi_implicit.py --case open
 ```
 
 Only after the open histories are finite and sufficiently close to the
