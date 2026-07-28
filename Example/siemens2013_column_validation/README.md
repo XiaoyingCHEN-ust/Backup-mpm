@@ -910,14 +910,39 @@ python prepare_semi_implicit_checks.py \
 sbatch --array=3 run_semi_implicit_hpc4.sh
 ```
 
+The r33 closed run produced all eleven outputs through `3 s` and passed every
+range check. Its top-connected front reached `22.8 mm`, compared with
+`45.6 mm` in r31 open, while the dry-zone mean gas pressure rose smoothly to
+`0.904 kPa`. The gas-pressure standard deviation in the dry zone was only
+`4.57 Pa` at `3 s`, and the imposed surface gas pressure remained exactly
+zero. The maximum gas-phase particle speed (`5.66 m/s`) occurred in the highly
+gas-permeable dry region while pressure was rapidly equalising, peaked at
+`2.1 s`, and then declined to `5.07 m/s`; pressure, saturation, and front
+motion remained bounded and monotone.
+
+The next run stops at the first direct experimental gas-pressure checkpoint.
+At `25 s`, Siemens et al. report a nearly uniform `1.2--1.6 kPa` excess pore-
+air pressure. Generate the 25 s matrix and submit only closed semi-implicit
+row 3 (`250,000` steps). Override the smoke-test wall time because this is the
+first experimental-time run:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 25 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --revision r34-closed-25s-pressure-checkpoint
+sbatch --array=3 --time=04:00:00 run_semi_implicit_hpc4.sh
+```
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
 two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
-smoke-test command. Do not start the 50 s experimental checkpoint or a
-production calculation until the r33 three-second closed run passes.
+smoke-test command. Do not start the 50 s open checkpoint or a production
+calculation until r34 confirms the closed-column pressure plateau.
 
 ## Post-process after both runs
 

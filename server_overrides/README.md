@@ -42,4 +42,5 @@ Its Darcy operator uses the same `permeability / viscosity` mobility implied
 by the current three-phase drag coefficient. The new integration path remains
 experimental. The r30 open time-step check, r31 three-second open test, and
 coupled-pressure r32 closed time-step check passed. The r33 three-second
-closed test is the next required gate before an experimental-time checkpoint.
+closed test also passed. The r34 25 s closed pressure checkpoint is the next
+required gate before longer validation runs.

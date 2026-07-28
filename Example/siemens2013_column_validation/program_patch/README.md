@@ -77,8 +77,9 @@ drag coefficient. The r30 two-time-step open check passed with an identical
 wetting-front position at every output time, and the r31 three-second open
 test remained one-dimensional and free of detached wet bands. The r32 closed
 time-step check also passed; its dry-zone gas pressure and wetting-front
-history converged at `dt=1e-4 s`. The r33 three-second closed test must pass
-before the first experimental-time checkpoint.
+history converged at `dt=1e-4 s`. The r33 three-second closed test also passed
+with stable pressure and front histories; r34 extends only the closed case to
+the directly reported 25 s gas-pressure checkpoint.
 
 ## Apply on HPC4
 
