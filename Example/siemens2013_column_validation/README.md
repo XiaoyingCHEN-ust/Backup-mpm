@@ -834,6 +834,29 @@ python compare_semi_implicit.py --case open \
   --semi-implicit-reference-dt 2.5e-5
 ```
 
+Both r30 jobs produced eleven outputs and passed every range check. The
+`dt=2.5e-5 s` and `dt=1e-4 s` solutions gave the same top-connected wetting-
+front depth at every output time, including `17.1 mm` at `0.30 s`. The maximum
+saturation difference (`0.0479`) was confined to the single 5.7 mm transition
+layer. The nominal maximum pressure difference (`505 Pa` at `0.18 s`) occurred
+in that same layer when the coarse-step solution had just reached full
+saturation and its capillary suction became zero; it was not a bulk dry-zone
+pressure discrepancy. The RMS saturation and liquid-pressure differences
+over all particles and times were only `0.00268` and `15.0 Pa`, respectively.
+The `1e-4 s` step is therefore accepted for the longer smoke test.
+
+No rebuild is needed after r30. Generate and submit only the 3 s open
+semi-implicit row (`30,000` steps):
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 3 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --revision r31-correct-darcy-mobility-3s
+sbatch --array=1 run_semi_implicit_hpc4.sh
+```
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
@@ -841,7 +864,7 @@ two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
 smoke-test command. Do not start the closed or production calculation until
-the r30 time-step comparison and a subsequent three-second open run pass.
+the r31 three-second open run passes.
 
 ## Post-process after both runs
 

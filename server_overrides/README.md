@@ -40,5 +40,5 @@ Set `analysis.pressure_integration` to `"semi_implicit"` to assemble the
 liquid/gas backward-Euler pressure system. The default remains `"explicit"`.
 Its Darcy operator uses the same `permeability / viscosity` mobility implied
 by the current three-phase drag coefficient. The new integration path remains
-experimental until the r30 time-step check and the longer open/closed tests
-pass.
+experimental. The r30 open time-step check passed; the longer r31 open and
+subsequent closed tests remain before production use.

@@ -73,8 +73,9 @@ consistent. This is intended to preserve a sharp dry/wet front without the
 overshoot produced by the consistent pressure mass matrix. The r29 short open
 test passed; r30 removes an obsolete `0.981` factor so the implicit Darcy
 mobility exactly matches the current three-phase `viscosity / permeability`
-drag coefficient. The r30 two-time-step check and longer open/closed tests
-must pass before production.
+drag coefficient. The r30 two-time-step open check passed with an identical
+wetting-front position at every output time. The longer r31 open test and the
+subsequent closed test must pass before production.
 
 ## Apply on HPC4
 
