@@ -747,18 +747,33 @@ Compare the five open jobs with:
 python compare_semi_implicit.py --case open
 ```
 
-Do not resume production yet. Pull and rebuild, then run only four 0.05 s open
-smoke tests: one explicit baseline at `2.5e-6 s` and semi-implicit candidates
-at `2.5e-5`, `1e-4`, and `5e-4 s`.
+The r26 sweep rejects penalty `1`, which reached `301 MPa` and failed the
+range checks. Penalties `100`, `1e4`, and `1e6` were all bounded and nearly
+identical; `100` gave the smallest pressure and velocity errors and is selected
+as the least stiff stable boundary penalty. The existing passed r21 fixed-gas
+open run already supplies a 3 s explicit baseline at `dt=2.5e-6 s`, so the
+next stage should not repeat its 1.2 million explicit steps.
+
+Generate the r27 manifest and submit only row 1, the 3 s semi-implicit open
+case (`30,000` steps):
 
 ```bash
-cd /home/xchenjm/chen/MPM/Backup-mpm
-git pull origin agent/siemens-column-validation
-cd Example/siemens2013_column_validation
-sbatch program_patch/rebuild_hpc4.sh
-# After the rebuild succeeds:
-python prepare_semi_implicit_checks.py
-sbatch --array=0-3 run_semi_implicit_hpc4.sh
+python prepare_semi_implicit_checks.py \
+  --duration 3 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --revision r27-open-3s
+sbatch --array=1 run_semi_implicit_hpc4.sh
+```
+
+If the old r21 result remains on the server, compare r27 at the eleven shared
+physical times without rerunning the explicit reference:
+
+```bash
+python compare_semi_implicit.py --case open \
+  --open-reference-dir \
+  results/stability_results/siemens2013-stability-r21-fixed-gas-3s-open_2p5e-06 \
+  --open-reference-dt 2.5e-6
 ```
 
 The rebuild installs the tracked particle headers and implementations plus
@@ -766,17 +781,9 @@ the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
 two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
-range checks. Download all four open result directories before selecting a
-larger step. They can then be compared at all eleven common physical times:
-
-```bash
-python compare_semi_implicit.py --case open
-```
-
-Only after the open histories are finite and sufficiently close to the
-explicit baseline should manifest rows 4--7 be submitted for the closed gas-
-pressure test. This staged test prevents an unverified matrix formulation or
-overlarge time step from consuming another long allocation.
+range checks. The r23--r27 sequence above supersedes the original four-job
+smoke-test command. Do not start the closed or production calculation until
+the r27 three-second open comparison has passed.
 
 ## Post-process after both runs
 

@@ -59,6 +59,18 @@ def main() -> None:
         default="both",
         help="Compare only the selected boundary condition (default: both)",
     )
+    parser.add_argument(
+        "--open-reference-dir",
+        type=Path,
+        default=None,
+        help="reuse an existing open explicit result directory",
+    )
+    parser.add_argument(
+        "--open-reference-dt",
+        type=float,
+        default=2.5e-6,
+        help="time step used by --open-reference-dir",
+    )
     args = parser.parse_args()
 
     with args.manifest.open(encoding="utf-8", newline="") as stream:
@@ -70,9 +82,15 @@ def main() -> None:
         if len(explicit_rows) != 1:
             raise RuntimeError(f"Expected one {case_name} explicit baseline")
         reference_row = explicit_rows[0]
-        reference_files = output_files(
-            args.results / reference_row["uuid"], float(reference_row["dt_s"])
-        )
+        if case_name == "open" and args.open_reference_dir is not None:
+            reference_files = output_files(
+                args.open_reference_dir, args.open_reference_dt
+            )
+        else:
+            reference_files = output_files(
+                args.results / reference_row["uuid"],
+                float(reference_row["dt_s"]),
+            )
 
         for row in case_rows:
             if row["method"] != "semi_implicit":
@@ -80,11 +98,10 @@ def main() -> None:
             candidate_files = output_files(
                 args.results / row["uuid"], float(row["dt_s"])
             )
-            if set(candidate_files) != set(reference_files):
+            if not set(candidate_files).issubset(reference_files):
                 raise RuntimeError(
-                    f"Physical output times differ for {row['uuid']}: "
-                    f"reference={sorted(reference_files)}, "
-                    f"candidate={sorted(candidate_files)}"
+                    f"Reference lacks candidate output times for {row['uuid']}: "
+                    f"missing={sorted(set(candidate_files) - set(reference_files))}"
                 )
 
             totals = {
@@ -92,7 +109,7 @@ def main() -> None:
                 for name in FIELDS
             }
             coordinate_maximum = 0.0
-            for time in sorted(reference_files):
+            for time in sorted(candidate_files):
                 reference_path = reference_files[time]
                 candidate_path = candidate_files[time]
                 reference = point_arrays(reference_path, FIELDS)
