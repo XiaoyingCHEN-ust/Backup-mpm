@@ -1167,29 +1167,32 @@ mpm::ThreePhaseParticleNew<Tdim>::semi_implicit_pressure_state() {
   return state;
 }
 
-// Update particle pressure from a global semi-implicit nodal solution
+// Increment particle pressure from a global semi-implicit nodal solution.
+// Incremental transfer avoids repeated particle-node-particle smoothing of
+// the absolute pressure when the physical pressure increment is zero.
 template <unsigned Tdim>
 bool mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
-    const Eigen::VectorXd& nodal_liquid_pressure,
-    const Eigen::VectorXd& nodal_gas_pressure, double dt) {
+    const Eigen::VectorXd& nodal_liquid_pressure_increment,
+    const Eigen::VectorXd& nodal_gas_pressure_increment, double dt) {
   if (this->material_id_ == 999) return true;
   try {
     const double old_liquid_pressure = liquid_pressure_;
     const double old_gas_pressure = gas_pressure_;
-    liquid_pressure_ = 0.0;
-    gas_pressure_ = 0.0;
-    liquid_pressure_gradient_.setZero();
-    gas_pressure_gradient_.setZero();
     for (unsigned i = 0; i < nodes_.size(); ++i) {
       const auto active_id = nodes_[i]->active_id();
-      if (active_id >= static_cast<Index>(nodal_liquid_pressure.size()))
+      if (active_id >=
+          static_cast<Index>(nodal_liquid_pressure_increment.size()))
         throw std::runtime_error("Invalid active node id in pressure update");
-      liquid_pressure_ += shapefn_[i] * nodal_liquid_pressure(active_id);
-      gas_pressure_ += shapefn_[i] * nodal_gas_pressure(active_id);
+      liquid_pressure_ +=
+          shapefn_[i] * nodal_liquid_pressure_increment(active_id);
+      gas_pressure_ +=
+          shapefn_[i] * nodal_gas_pressure_increment(active_id);
       liquid_pressure_gradient_ +=
-          dn_dx_.row(i).transpose() * nodal_liquid_pressure(active_id);
+          dn_dx_.row(i).transpose() *
+          nodal_liquid_pressure_increment(active_id);
       gas_pressure_gradient_ +=
-          dn_dx_.row(i).transpose() * nodal_gas_pressure(active_id);
+          dn_dx_.row(i).transpose() *
+          nodal_gas_pressure_increment(active_id);
     }
 
     const bool fixed_gas_pressure =

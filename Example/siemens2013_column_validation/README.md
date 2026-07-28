@@ -710,6 +710,15 @@ nodes are initialised with the volume-weighted particle pressure mean; this
 removes the invalid zero-weight division without changing the pressure
 boundary conditions or material parameters.
 
+All r24 open jobs then produced eleven outputs, but they did not pass the
+comparison: the `2.5e-5 s` run had larger saturation error than the `5e-4 s`
+run and advanced the wetting front much farther. This inverse time-step trend
+identified repeated absolute particle-node-particle pressure projection as
+artificial per-step diffusion. The r25 correction solves the same global
+backward-Euler system but transfers only the nodal pressure increment to the
+particles. With zero physical pressure change, the transferred increment is
+exactly zero and the particle pressure is not smoothed.
+
 Do not resume production yet. Pull and rebuild, then run only four 0.05 s open
 smoke tests: one explicit baseline at `2.5e-6 s` and semi-implicit candidates
 at `2.5e-5`, `1e-4`, and `5e-4 s`.

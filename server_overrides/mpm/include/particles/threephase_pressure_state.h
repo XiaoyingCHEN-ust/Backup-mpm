@@ -45,8 +45,8 @@ class ThreePhasePressureParticle {
   virtual ~ThreePhasePressureParticle() = default;
   virtual ThreePhasePressureState<Tdim> semi_implicit_pressure_state() = 0;
   virtual bool update_semi_implicit_pressure(
-      const Eigen::VectorXd& liquid_pressure,
-      const Eigen::VectorXd& gas_pressure, double dt) = 0;
+      const Eigen::VectorXd& liquid_pressure_increment,
+      const Eigen::VectorXd& gas_pressure_increment, double dt) = 0;
 };
 
 }  // namespace mpm

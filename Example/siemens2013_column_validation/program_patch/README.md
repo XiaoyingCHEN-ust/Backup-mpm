@@ -60,9 +60,13 @@ gas pressure is fixed; the closed case solves the coupled two-pressure block.
 Activate it only with `analysis.pressure_integration = "semi_implicit"`.
 Omitting the key, or setting it to `"explicit"`, preserves the historical
 update. The r23 run exposed mechanically active GIMP support nodes with zero
-pressure projection weight. The r24 path therefore builds a compact pressure
-DOF map from nodes with nonzero shape-function or gradient support. It must
-pass the short r24 smoke-test matrix before production.
+pressure projection weight. The r24 path therefore built a compact pressure
+DOF map from nodes with nonzero shape-function or gradient support. Although
+r24 completed, its smaller time steps moved the wetting front farther because
+absolute particle pressure was reprojected through the grid on every step.
+The r25 path transfers only the solved nodal pressure increment back to each
+particle, so a zero physical increment produces no projection smoothing. It
+must pass the short r25 smoke-test matrix before production.
 
 ## Apply on HPC4
 

@@ -680,20 +680,28 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     if (!std::isfinite(relative_residual) || relative_residual > 1.0e-7)
       throw std::runtime_error("Pressure solve residual exceeded tolerance");
 
-    const Eigen::VectorXd compact_liquid_pressure =
-        pressure.head(pressure_active_dof);
-    const Eigen::VectorXd compact_gas_pressure = fixed_gas_pressure
-        ? old_gas_pressure
-        : pressure.tail(pressure_active_dof);
-    Eigen::VectorXd liquid_pressure =
-        Eigen::VectorXd::Constant(mesh_active_dof, mean_liquid_pressure);
-    Eigen::VectorXd gas_pressure =
-        Eigen::VectorXd::Constant(mesh_active_dof, mean_gas_pressure);
+    // Transfer only the pressure increment back to particles.  Replacing the
+    // particle pressure with the projected absolute nodal pressure would add
+    // one artificial smoothing operation per time step and move a sharp
+    // wetting front faster when a smaller time step is used.
+    const Eigen::VectorXd compact_liquid_pressure_increment =
+        pressure.head(pressure_active_dof) - old_liquid_pressure;
+    Eigen::VectorXd compact_gas_pressure_increment =
+        Eigen::VectorXd::Zero(pressure_active_dof);
+    if (!fixed_gas_pressure)
+      compact_gas_pressure_increment =
+          pressure.tail(pressure_active_dof) - old_gas_pressure;
+    Eigen::VectorXd liquid_pressure_increment =
+        Eigen::VectorXd::Zero(mesh_active_dof);
+    Eigen::VectorXd gas_pressure_increment =
+        Eigen::VectorXd::Zero(mesh_active_dof);
     for (unsigned node_id = 0; node_id < mesh_active_dof; ++node_id) {
       const auto dof = pressure_dof[node_id];
       if (dof == invalid_dof) continue;
-      liquid_pressure(node_id) = compact_liquid_pressure(dof);
-      gas_pressure(node_id) = compact_gas_pressure(dof);
+      liquid_pressure_increment(node_id) =
+          compact_liquid_pressure_increment(dof);
+      gas_pressure_increment(node_id) =
+          compact_gas_pressure_increment(dof);
     }
     std::atomic<bool> update_status{true};
     mesh_->iterate_over_particles(
@@ -701,7 +709,8 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
           const auto particle = std::dynamic_pointer_cast<
               mpm::ThreePhasePressureParticle<Tdim>>(base_particle);
           if (particle && !particle->update_semi_implicit_pressure(
-                              liquid_pressure, gas_pressure, dt))
+                              liquid_pressure_increment,
+                              gas_pressure_increment, dt))
             update_status.store(false);
         });
     if (!update_status.load())

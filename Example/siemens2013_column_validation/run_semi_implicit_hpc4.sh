@@ -74,6 +74,8 @@ grep -Fq "ThreePhasePressureState" \
   "${mpm_source}/include/particles/particle_threephase_new.h"
 grep -Fq "solve_semi_implicit_pressure" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "compact_liquid_pressure_increment" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 
 if [[ ! -f "${input}" ]]; then
   echo "Missing ${input}; run python prepare_semi_implicit_checks.py first" >&2
@@ -87,7 +89,13 @@ echo "boundary penalty=${boundary_penalty}"
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
 result_dir="stability_results/${uuid}"
-python check_vtp_ranges.py "${result_dir}"
+if [[ "${method}" == "semi_implicit" ]]; then
+  # particle00000.vtp is written after the first, potentially much larger,
+  # semi-implicit step; row 0 already verifies the common initial suction.
+  python check_vtp_ranges.py "${result_dir}" --skip-initial-suction-check
+else
+  python check_vtp_ranges.py "${result_dir}"
+fi
 cat > "${result_dir}/SEMI_IMPLICIT_RUN_COMPLETED.txt" <<EOF
 case=${case_name}
 method=${method}
