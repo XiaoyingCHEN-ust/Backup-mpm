@@ -76,6 +76,8 @@ is not a fitted infiltration parameter.
   restart-continuity test.
 - `compare_checkpoint_restart.py` compares every reported hydraulic field in
   the resumed final state with the continuous 3 s reference.
+- `compare_permeability_time_scaling.py` tests a proposed permeability/time
+  acceleration after normalising phase permeability and velocity fields.
 - `prepare_production_segments.py`, `run_production_segment_hpc4.sh`, and
   `submit_production_hpc4.py` generate, check, and submit the restartable
   full-duration dependency chains.
@@ -636,6 +638,44 @@ python submit_production_hpc4.py --resume
 Set and export `MPM_SOURCE` or `MPM_BIN` only if the executable locations
 move. Do not submit `run_hpc4.sh`; it intentionally exits before starting the
 unsegmented calculation.
+
+### Production segment 0 audit and permeability/time acceleration test
+
+The first 50 s open production segment is numerically complete and passes all
+range checks, but it fails the experimental wetting-front comparison. It has
+41 particle outputs through global step 20,000,000, zero gas pressure, a
+maximum absolute pressure of 994.734 Pa, and no lateral or disconnected-band
+instability. Nevertheless, only the prescribed top cell exceeds `Sw=0.40` at
+50 s. The first interior cell reaches `Sw=0.0767`, and material about 100 mm
+below the boundary remains at the initial `Sw=0.0301`. The simulated wetting
+depth is therefore 0 mm at the standard threshold (about 11 mm even at a
+threshold of 0.05), whereas the digitised experiment gives approximately
+212 mm at 50 s. A numerical range pass is not an experimental validation.
+
+Do not resume the production chains until this mismatch is resolved. A full
+three-phase semi-implicit conversion would require two coupled pressure
+unknowns and is not the existing single-pore-pressure two-phase solver. First
+test the cheaper alternative: multiply the common intrinsic permeability by
+10 and 100 while reducing computed time by the same factors. This is accepted
+only if it reproduces the unscaled state after mapping back to the 50 s
+reference time; it is not a calibration of the experimental permeability.
+
+Generate the two open tests (computed durations 5 and 0.5 s) and submit only
+manifest rows 0 and 1:
+
+```bash
+python prepare_stability_checks.py --duration 50 \
+  --revision r22-k-time-scaling --time-steps 2.5e-6 \
+  --permeability-scales 10 100 \
+  --pic 0 --pic-t 0 --pressure-smoothing false
+sbatch --array=0-1 --time=04:00:00 run_stability_hpc4.sh
+```
+
+The generator records the original 50 s duration, actual computed duration,
+and permeability multiplier in both JSON and the manifest. The comparison
+script divides the scaled permeability and velocity arrays by the multiplier
+before comparing every hydraulic field. The `k x 100` route would reduce the
+event durations to 4 s open and 9 s closed only if this overlap test passes.
 
 ## Post-process after both runs
 

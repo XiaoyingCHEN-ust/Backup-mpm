@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import re
+from itertools import product
 from pathlib import Path
 
 
@@ -21,11 +22,26 @@ def step_tag(dt: float) -> str:
     return f"{mantissa}e{int(exponent):+03d}".replace("+", "")
 
 
+def value_tag(value: float) -> str:
+    return f"{value:.12g}".replace(".", "p").replace("+", "")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION_S)
     parser.add_argument(
         "--time-steps", type=float, nargs="+", default=DEFAULT_TIME_STEPS
+    )
+    parser.add_argument(
+        "--permeability-scales",
+        type=float,
+        nargs="+",
+        default=(1.0,),
+        help=(
+            "multiply the common intrinsic permeability and shorten the "
+            "computed duration by the same factor; --duration remains the "
+            "reference physical duration"
+        ),
     )
     parser.add_argument("--revision", default=DEFAULT_REVISION)
     parser.add_argument(
@@ -50,8 +66,10 @@ def main():
 
     if args.duration <= 0.0:
         parser.error("--duration must be positive")
-    if any(dt <= 0.0 or dt > args.duration for dt in args.time_steps):
-        parser.error("every time step must be positive and no larger than duration")
+    if any(dt <= 0.0 for dt in args.time_steps):
+        parser.error("every time step must be positive")
+    if any(scale <= 0.0 for scale in args.permeability_scales):
+        parser.error("every permeability scale must be positive")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
     if args.pic is not None and not 0.0 <= args.pic <= 1.0:
@@ -78,19 +96,46 @@ def main():
     rows = []
 
     for case_name, source in sources.items():
-        for dt in args.time_steps:
-            tag = step_tag(dt)
-            label = f"{case_name}_{tag}"
-            uuid = f"siemens2013-stability-{args.revision}-{label}"
-            nsteps = round(args.duration / dt)
-            duration_tolerance = max(1.0e-12, 1.0e-10 * args.duration)
-            if not abs(nsteps * dt - args.duration) <= duration_tolerance:
+        for permeability_scale, dt in product(
+            args.permeability_scales, args.time_steps
+        ):
+            computed_duration = args.duration / permeability_scale
+            if dt > computed_duration:
                 parser.error(
-                    f"duration {args.duration:g} is not an integer multiple of dt {dt:g}"
+                    f"dt {dt:g} exceeds the computed duration "
+                    f"{computed_duration:g} for k scale {permeability_scale:g}"
+                )
+            tag = step_tag(dt)
+            scale_tag = value_tag(permeability_scale)
+            label = (
+                f"{case_name}_{tag}"
+                if permeability_scale == 1.0
+                else f"{case_name}_k{scale_tag}x_{tag}"
+            )
+            uuid = f"siemens2013-stability-{args.revision}-{label}"
+            nsteps = round(computed_duration / dt)
+            duration_tolerance = max(1.0e-12, 1.0e-10 * computed_duration)
+            if not abs(nsteps * dt - computed_duration) <= duration_tolerance:
+                parser.error(
+                    f"computed duration {computed_duration:g} is not an "
+                    f"integer multiple of dt {dt:g}"
                 )
             output_steps = max(1, nsteps // 20)
 
             config = json.loads(json.dumps(source))
+            permeability_materials = [
+                material
+                for material in config["materials"]
+                if "intrinsic_permeability" in material
+            ]
+            if len(permeability_materials) != 1:
+                parser.error(
+                    f"expected one intrinsic-permeability material for {case_name}, "
+                    f"found {len(permeability_materials)}"
+                )
+            permeability_materials[0]["intrinsic_permeability"] *= (
+                permeability_scale
+            )
             if args.pic is not None:
                 config["analysis"]["PIC"] = args.pic
             if args.pic_t is not None:
@@ -104,7 +149,9 @@ def main():
             smoothing = config["analysis"]["pressure_smoothing"]
             config["title"] = (
                 f"Siemens 2013 {case_name} stability check, "
-                f"dt={dt:g} s, duration={args.duration:g} s, "
+                f"dt={dt:g} s, computed duration={computed_duration:g} s, "
+                f"reference duration={args.duration:g} s, "
+                f"permeability scale={permeability_scale:g}, "
                 f"PIC={pic:g}, PIC_T={pic_t:g}, pressure_smoothing={smoothing}"
             )
             config["analysis"]["dt"] = dt
@@ -113,7 +160,13 @@ def main():
             config["analysis"]["resume"].update(
                 {"resume": False, "uuid": uuid, "step": 0, "nsteps": 0}
             )
+            config["analysis"]["validation_time_scaling"] = {
+                "permeability_scale": permeability_scale,
+                "reference_duration_s": args.duration,
+                "computed_duration_s": computed_duration,
+            }
             config["post_processing"]["path"] = "stability_results/"
+            config["post_processing"]["write_hdf5"] = False
             config["post_processing"]["output_steps"] = output_steps
 
             output_path = input_dir / f"mpm_{args.revision}_{label}.json"
@@ -127,11 +180,13 @@ def main():
                     "label": label,
                     "case": case_name,
                     "dt_s": dt,
-                    "duration_s": args.duration,
+                    "duration_s": computed_duration,
                     "nsteps": nsteps,
                     "output_steps": output_steps,
                     "uuid": uuid,
                     "input": output_path.relative_to(CASE_DIR).as_posix(),
+                    "permeability_scale": permeability_scale,
+                    "reference_duration_s": args.duration,
                 }
             )
 

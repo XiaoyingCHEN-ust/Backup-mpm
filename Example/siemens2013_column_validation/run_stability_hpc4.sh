@@ -38,8 +38,9 @@ if [[ -z "${manifest_row}" ]]; then
   exit 4
 fi
 IFS=',' read -r manifest_index label case_name dt duration nsteps \
-  output_steps uuid input <<< "${manifest_row}"
-input="${input%$'\r'}"
+  output_steps uuid input permeability_scale reference_duration \
+  <<< "${manifest_row}"
+reference_duration="${reference_duration%$'\r'}"
 if [[ "${manifest_index}" != "${task_index}" ]]; then
   echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
   exit 4
@@ -80,7 +81,8 @@ if [[ ! -f "${input}" ]]; then
 fi
 
 echo "Running ${label} on $(hostname) with ${threads} threads"
-echo "dt=${dt} s, duration=${duration} s, nsteps=${nsteps}"
+echo "dt=${dt} s, computed duration=${duration} s, nsteps=${nsteps}"
+echo "permeability scale=${permeability_scale}, reference duration=${reference_duration} s"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 10000 != 0) next} {print}'
 python check_vtp_ranges.py "stability_results/${uuid}"
