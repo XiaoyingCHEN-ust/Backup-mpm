@@ -719,6 +719,34 @@ backward-Euler system but transfers only the nodal pressure increment to the
 particles. With zero physical pressure change, the transferred increment is
 exactly zero and the particle pressure is not smoothed.
 
+The r25 open results reject `5e-4 s`: pressure grew to `8.42 MPa`, velocity to
+about `86 m/s`, and the disconnected-wet-layer check failed. The `2.5e-5` and
+`1e-4 s` runs both remained bounded and were nearly identical. At `0.05 s`,
+only four particles immediately below the prescribed top cell had saturation
+errors above `0.001`; all remaining particles were below `1e-4`. Two of those
+four particles were fully wetted in the semi-implicit solution but remained
+dry in the explicit solution. This local error points to the `1e6` weak
+boundary penalty, not continuing bulk projection diffusion.
+
+Before extending the duration or running the closed column, keep the r25
+executable and perform a `0.005 s`, `dt=1e-4 s` penalty sweep. No rebuild is
+needed after pulling this input-script update:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.005 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalties 1 1e2 1e4 1e6 \
+  --revision r26-boundary-penalty-sweep
+sbatch --array=0-4 run_semi_implicit_hpc4.sh
+```
+
+Compare the five open jobs with:
+
+```bash
+python compare_semi_implicit.py --case open
+```
+
 Do not resume production yet. Pull and rebuild, then run only four 0.05 s open
 smoke tests: one explicit baseline at `2.5e-6 s` and semi-implicit candidates
 at `2.5e-5`, `1e-4`, and `5e-4 s`.

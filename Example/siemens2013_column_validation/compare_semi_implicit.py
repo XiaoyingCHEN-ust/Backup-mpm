@@ -126,6 +126,7 @@ def main() -> None:
 
             print(
                 f"{case_name} dt={float(row['dt_s']):g} s, "
+                f"penalty={float(row['boundary_penalty']):g}, "
                 f"outputs={len(candidate_files)}, "
                 f"coordinate_max={coordinate_maximum:.6g} m"
             )

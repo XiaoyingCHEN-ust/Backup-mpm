@@ -40,14 +40,26 @@ def main() -> None:
     )
     parser.add_argument("--revision", default="r25-semi-pressure-increment-smoke")
     parser.add_argument("--boundary-penalty", type=float, default=1.0e6)
+    parser.add_argument(
+        "--boundary-penalties",
+        type=float,
+        nargs="+",
+        default=None,
+        help="optional semi-implicit boundary-penalty sweep",
+    )
     args = parser.parse_args()
 
     if args.duration <= 0.0:
         parser.error("--duration must be positive")
     if args.explicit_dt <= 0.0 or any(dt <= 0.0 for dt in args.semi_implicit_dts):
         parser.error("all time steps must be positive")
-    if args.boundary_penalty <= 0.0:
-        parser.error("--boundary-penalty must be positive")
+    boundary_penalties = (
+        args.boundary_penalties
+        if args.boundary_penalties is not None
+        else [args.boundary_penalty]
+    )
+    if any(value <= 0.0 for value in boundary_penalties):
+        parser.error("all boundary penalties must be positive")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
 
@@ -57,8 +69,10 @@ def main() -> None:
     manifest.unlink(missing_ok=True)
 
     rows: list[dict[str, object]] = []
-    methods = [("explicit", args.explicit_dt)] + [
-        ("semi_implicit", dt) for dt in args.semi_implicit_dts
+    methods = [("explicit", args.explicit_dt, boundary_penalties[0])] + [
+        ("semi_implicit", dt, penalty)
+        for dt in args.semi_implicit_dts
+        for penalty in boundary_penalties
     ]
     for case_name in ("open", "closed"):
         source_path = CASE_DIR / f"mpm_{case_name}.json"
@@ -66,12 +80,14 @@ def main() -> None:
             parser.error(f"missing source input: {source_path}")
         source = json.loads(source_path.read_text(encoding="utf-8"))
 
-        for method, dt in methods:
+        for method, dt, boundary_penalty in methods:
             try:
                 nsteps = checked_steps(args.duration, dt)
             except ValueError as error:
                 parser.error(str(error))
             label = f"{case_name}_{method}_{step_tag(dt)}"
+            if method == "semi_implicit" and len(boundary_penalties) > 1:
+                label += f"_penalty_{step_tag(boundary_penalty)}"
             uuid = f"siemens2013-{args.revision}-{label}"
             config = json.loads(json.dumps(source))
             config["title"] = (
@@ -91,7 +107,7 @@ def main() -> None:
                 }
             )
             analysis["semi_implicit_pressure"] = {
-                "boundary_penalty": args.boundary_penalty,
+                "boundary_penalty": boundary_penalty,
                 "log_solver": True,
             }
             analysis["resume"].update(
@@ -132,7 +148,7 @@ def main() -> None:
                     "output_steps": output_steps,
                     "uuid": uuid,
                     "input": input_path.relative_to(CASE_DIR).as_posix(),
-                    "boundary_penalty": args.boundary_penalty,
+                    "boundary_penalty": boundary_penalty,
                 }
             )
 
@@ -141,8 +157,18 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     print(f"Wrote {len(rows)} inputs and {manifest}")
-    print("First submit only the open checks: sbatch --array=0-3 run_semi_implicit_hpc4.sh")
-    print("After they pass, submit closed checks: sbatch --array=4-7 run_semi_implicit_hpc4.sh")
+    open_last = len(methods) - 1
+    closed_first = len(methods)
+    closed_last = 2 * len(methods) - 1
+    print(
+        "First submit only the open checks: "
+        f"sbatch --array=0-{open_last} run_semi_implicit_hpc4.sh"
+    )
+    print(
+        "After they pass, submit closed checks: "
+        f"sbatch --array={closed_first}-{closed_last} "
+        "run_semi_implicit_hpc4.sh"
+    )
 
 
 if __name__ == "__main__":
