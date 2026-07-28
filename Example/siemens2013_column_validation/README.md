@@ -887,15 +887,37 @@ python compare_semi_implicit.py --case closed \
   --semi-implicit-reference-dt 2.5e-5
 ```
 
+Both r32 closed jobs produced eleven outputs and passed every range check.
+The coarse solution lagged the fine wetting front by one 5.7 mm layer only at
+`0.03 s`; from `0.06 s` through `0.30 s`, both front histories were identical
+and ended at `11.4 mm`. At `0.30 s`, the dry-zone mean gas pressures were
+`331.97 Pa` and `332.28 Pa`, a difference of only `0.313 Pa`, and the maximum
+pointwise gas-pressure difference had fallen to `0.390 Pa`. The overall
+`53.0 Pa` maximum reported by the comparison occurred at `0.03 s` in the
+newly wetted upper layer. Saturation and gas-velocity differences were also
+confined to the moving transition layer. The `1e-4 s` step is therefore
+accepted for the coupled closed solve.
+
+No rebuild is needed. Generate a 3 s matrix and submit only closed
+semi-implicit row 3 (`30,000` steps):
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 3 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --revision r33-closed-3s
+sbatch --array=3 run_semi_implicit_hpc4.sh
+```
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
 two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
-smoke-test command. Do not start a longer closed or production calculation
-until the r32 closed time-step comparison and a subsequent three-second closed
-run pass.
+smoke-test command. Do not start the 50 s experimental checkpoint or a
+production calculation until the r33 three-second closed run passes.
 
 ## Post-process after both runs
 
