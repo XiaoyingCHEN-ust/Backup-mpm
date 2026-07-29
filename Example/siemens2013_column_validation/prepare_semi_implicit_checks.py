@@ -103,6 +103,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--pressure-projection-rates",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "optional pressure-only grid-to-particle relaxation rates in "
+            "1/s; zero preserves pure incremental pressure transfer"
+        ),
+    )
+    parser.add_argument(
         "--gravity-scale",
         type=float,
         default=1.0,
@@ -133,6 +143,18 @@ def main() -> None:
     )
     if any(value <= 0.0 for value in boundary_penalties):
         parser.error("all boundary penalties must be positive")
+    pressure_projection_rates = (
+        args.pressure_projection_rates
+        if args.pressure_projection_rates is not None
+        else [0.0]
+    )
+    if any(
+        not math.isfinite(value) or value < 0.0
+        for value in pressure_projection_rates
+    ):
+        parser.error(
+            "all pressure projection rates must be finite and nonnegative"
+        )
     if not math.isfinite(args.gravity_scale):
         parser.error("--gravity-scale must be finite")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
@@ -149,10 +171,13 @@ def main() -> None:
     manifest.unlink(missing_ok=True)
 
     rows: list[dict[str, object]] = []
-    methods = [("explicit", args.explicit_dt, boundary_penalties[0])] + [
-        ("semi_implicit", dt, penalty)
+    methods = [
+        ("explicit", args.explicit_dt, boundary_penalties[0], 0.0)
+    ] + [
+        ("semi_implicit", dt, penalty, projection_rate)
         for dt in args.semi_implicit_dts
         for penalty in boundary_penalties
+        for projection_rate in pressure_projection_rates
     ]
     for case_name in ("open", "closed"):
         source_path = CASE_DIR / f"mpm_{case_name}.json"
@@ -160,7 +185,7 @@ def main() -> None:
             parser.error(f"missing source input: {source_path}")
         source = json.loads(source_path.read_text(encoding="utf-8"))
 
-        for method, dt, boundary_penalty in methods:
+        for method, dt, boundary_penalty, pressure_projection_rate in methods:
             try:
                 nsteps = checked_steps(args.duration, dt)
             except ValueError as error:
@@ -168,6 +193,13 @@ def main() -> None:
             label = f"{case_name}_{method}_{step_tag(dt)}"
             if method == "semi_implicit" and len(boundary_penalties) > 1:
                 label += f"_penalty_{step_tag(boundary_penalty)}"
+            if method == "semi_implicit" and (
+                len(pressure_projection_rates) > 1
+                or pressure_projection_rate != 0.0
+            ):
+                label += (
+                    f"_projection_rate_{step_tag(pressure_projection_rate)}"
+                )
             uuid = f"siemens2013-{args.revision}-{label}"
             config = json.loads(json.dumps(source))
             mesh_file, entity_sets_file, cell_size = MESH_VARIANTS[
@@ -219,6 +251,7 @@ def main() -> None:
                 "reconstruct_darcy_velocity": (
                     args.reconstruct_darcy_velocity
                 ),
+                "projection_rate": pressure_projection_rate,
             }
             analysis["resume"].update(
                 {
@@ -304,6 +337,7 @@ def main() -> None:
                     "reconstruct_darcy_velocity": (
                         args.reconstruct_darcy_velocity
                     ),
+                    "pressure_projection_rate": pressure_projection_rate,
                 }
             )
 

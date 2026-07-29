@@ -167,8 +167,8 @@ public:
       const Eigen::VectorXd& nodal_liquid_pressure,
       const Eigen::VectorXd& nodal_gas_pressure,
       bool reconstruct_pressure_gradient, bool reconstruct_pressure_force,
-      bool reconstruct_darcy_velocity, bool bounded_transfer,
-      double dt) override;
+      bool reconstruct_darcy_velocity, double pressure_projection_rate,
+      bool bounded_transfer, double dt) override;
 
   // Calculate relative permeability
   double compute_relative_permeability(

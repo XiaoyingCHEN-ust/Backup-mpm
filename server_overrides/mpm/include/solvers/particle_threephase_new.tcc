@@ -1235,7 +1235,8 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     const Eigen::VectorXd& nodal_liquid_pressure,
     const Eigen::VectorXd& nodal_gas_pressure,
     bool reconstruct_pressure_gradient, bool reconstruct_pressure_force,
-    bool reconstruct_darcy_velocity, bool bounded_transfer, double dt) {
+    bool reconstruct_darcy_velocity, double pressure_projection_rate,
+    bool bounded_transfer, double dt) {
   if (this->material_id_ == 999) return 0;
   try {
     const double old_liquid_pressure = liquid_pressure_;
@@ -1254,6 +1255,8 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     double minimum_capillary_pressure = std::numeric_limits<double>::max();
     double maximum_capillary_pressure = std::numeric_limits<double>::lowest();
     const bool reconstruct_gradient = reconstruct_pressure_gradient_;
+    const bool reconstruct_absolute_pressure =
+        reconstruct_pressure_force_ || pressure_projection_rate > 0.0;
     if (reconstruct_gradient) {
       liquid_pressure_gradient_.setZero();
       gas_pressure_gradient_.setZero();
@@ -1270,7 +1273,7 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
           shapefn_[i] * nodal_liquid_pressure_increment(active_id);
       gas_pressure_ +=
           shapefn_[i] * nodal_gas_pressure_increment(active_id);
-      if (reconstruct_pressure_force_) {
+      if (reconstruct_absolute_pressure) {
         reconstructed_liquid_pressure +=
             shapefn_[i] * nodal_liquid_pressure(active_id);
         reconstructed_gas_pressure +=
@@ -1309,8 +1312,23 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
         liquid_material_->template property_or<bool>(
             std::string("fixed_gas_pressure"), false);
     if (fixed_gas_pressure) gas_pressure_ = old_gas_pressure;
+    const bool pressure_boundary =
+        set_pressure_constraint_ || this->free_surface();
+    if (pressure_projection_rate > 0.0 && !pressure_boundary) {
+      // Apply a time-step-invariant, pressure-only PIC correction.  The
+      // exponential fraction integrates relaxation toward the resolved nodal
+      // pressure at a rate measured in 1/s; mechanical PIC remains unchanged.
+      const double projection_fraction =
+          -std::expm1(-pressure_projection_rate * dt);
+      liquid_pressure_ =
+          (1.0 - projection_fraction) * liquid_pressure_ +
+          projection_fraction * reconstructed_liquid_pressure;
+      if (!fixed_gas_pressure)
+        gas_pressure_ =
+            (1.0 - projection_fraction) * gas_pressure_ +
+            projection_fraction * reconstructed_gas_pressure;
+    }
     unsigned limiter_flags = 0;
-    const bool pressure_boundary = set_pressure_constraint_ || this->free_surface();
     if (bounded_transfer && !pressure_boundary) {
       // Bound the FLIP pressure transfer by the local resolved nodal field.
       // Pure incremental transfer preserves particle modes that are invisible

@@ -40,11 +40,13 @@ fi
 IFS=',' read -r manifest_index label case_name method dt duration nsteps \
   output_steps uuid input boundary_penalty gravity_scale mesh_variant \
   bounded_pressure_transfer reconstruct_pressure_gradient \
-  reconstruct_pressure_force reconstruct_darcy_velocity <<< "${manifest_row}"
+  reconstruct_pressure_force reconstruct_darcy_velocity \
+  pressure_projection_rate <<< "${manifest_row}"
 bounded_pressure_transfer="${bounded_pressure_transfer%$'\r'}"
 reconstruct_pressure_gradient="${reconstruct_pressure_gradient%$'\r'}"
 reconstruct_pressure_force="${reconstruct_pressure_force%$'\r'}"
 reconstruct_darcy_velocity="${reconstruct_darcy_velocity%$'\r'}"
+pressure_projection_rate="${pressure_projection_rate%$'\r'}"
 if [[ "${manifest_index}" != "${task_index}" ]]; then
   echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
   exit 4
@@ -85,6 +87,10 @@ grep -Fq "direct_gradient_force" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq 'pressure_options["reconstruct_darcy_velocity"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq 'pressure_options["projection_rate"]' \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "time-step-invariant, pressure-only PIC correction" \
+  "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -Fq "Bound the FLIP pressure transfer" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
@@ -116,6 +122,12 @@ for source_file in \
     echo "Darcy-consistent phase velocity is absent from ${source_file}" >&2
     exit 3
   fi
+  if ! grep -Fq \
+      "time-step-invariant, pressure-only PIC correction" \
+      "${source_file}"; then
+    echo "Pressure projection-rate correction is absent from ${source_file}" >&2
+    exit 3
+  fi
 done
 
 if [[ ! -f "${input}" ]]; then
@@ -132,6 +144,7 @@ echo "bounded pressure transfer=${bounded_pressure_transfer:-False}"
 echo "reconstruct pressure gradient=${reconstruct_pressure_gradient:-False}"
 echo "reconstruct pressure force=${reconstruct_pressure_force:-False}"
 echo "reconstruct Darcy velocity=${reconstruct_darcy_velocity:-False}"
+echo "pressure projection rate=${pressure_projection_rate:-0} 1/s"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
@@ -169,4 +182,5 @@ bounded_pressure_transfer=${bounded_pressure_transfer:-False}
 reconstruct_pressure_gradient=${reconstruct_pressure_gradient:-False}
 reconstruct_pressure_force=${reconstruct_pressure_force:-False}
 reconstruct_darcy_velocity=${reconstruct_darcy_velocity:-False}
+pressure_projection_rate=${pressure_projection_rate:-0}
 EOF

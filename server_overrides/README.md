@@ -118,3 +118,10 @@ but a dry-column pressure mode appeared after `1.1 s`, reaching 35 adjacent
 gas-velocity sign changes at `1.2 s`. Run the unchanged binary at `dt=8e-5 s`
 and `5e-5 s` over the same interval to distinguish a time-step error from a
 pressure-space mode. No rebuild is needed.
+
+The r54 time-step check confirmed a spatial pressure mode: every time step
+first failed at `1.15 s`, and refinement increased the sign-change count. The
+new opt-in `semi_implicit_pressure.projection_rate` supplies a time-step-
+invariant pressure-only relaxation toward the resolved nodal solution. The
+default is zero, so existing inputs and mechanical `PIC=0` are unchanged.
+Rebuild before the r55 projection-rate sweep.

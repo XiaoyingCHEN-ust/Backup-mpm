@@ -84,6 +84,10 @@ grep -Fq 'pressure_options["reconstruct_force"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq 'pressure_options["reconstruct_darcy_velocity"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq 'pressure_options["projection_rate"]' \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "time-step-invariant, pressure-only PIC correction" \
+  "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -Fq "direct_gradient_force" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "force_gas_pressure_ : PIC_gas_pressure_" \
@@ -134,6 +138,12 @@ for relative_path in "${particle_implementations[@]}"; do
       "liquid_density_ * pgravity_ - liquid_pressure_gradient_" \
       "${source_file}"; then
     echo "Darcy-consistent phase velocity is absent from ${source_file}" >&2
+    exit 3
+  fi
+  if ! grep -Fq \
+      "time-step-invariant, pressure-only PIC correction" \
+      "${source_file}"; then
+    echo "Pressure projection-rate correction is absent from ${source_file}" >&2
     exit 3
   fi
 done

@@ -168,6 +168,14 @@ pressure mode then appeared: gas-velocity sign changes increased to 21 at
 remain bounded. Compare `dt=8e-5 s` and `5e-5 s` over the same `1.2 s` interval
 before changing the pressure formulation.
 
+The r54 time-step check showed the same `1.15 s` onset at all three time steps,
+with more sign changes as `dt` decreased. The opt-in
+`semi_implicit_pressure.projection_rate` therefore applies a pressure-only
+relaxation toward the resolved nodal field. Its fraction per step is
+`1 - exp(-rate*dt)`, so the specified `1/s` rate is approximately invariant to
+time-step refinement. A zero or omitted rate exactly preserves the prior
+incremental transfer, and mechanical `PIC` remains unchanged.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

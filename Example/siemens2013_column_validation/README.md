@@ -1597,6 +1597,48 @@ Array task 4 uses `dt=8e-5 s`, and task 5 uses `dt=5e-5 s`. No rebuild is
 required. A time-step-independent onset would rule out simple temporal
 truncation and require stabilization of the pressure space instead.
 
+Both r54 runs failed at the same physical time as r53. The first dry-zone gas-
+velocity sign changes appeared at `1.15 s` for all three time steps. At
+`1.2 s`, decreasing `dt` from `1e-4 s` to `8e-5 s` and `5e-5 s` increased the
+sign-change count from 35 to 41 and 57; the largest adjacent dry-layer gas-
+pressure difference increased from `714 Pa` to `724 Pa` and `742 Pa`.
+Therefore the late mode is spatial and cannot be corrected by reducing the
+time step.
+
+The r55 diagnostic adds an opt-in, rate-controlled pressure projection. After
+the usual incremental pressure transfer, particle liquid and gas pressures
+relax toward the resolved nodal pressures by
+`alpha = 1 - exp(-projection_rate * dt)`. Specifying the rate in `1/s` makes
+the accumulated correction approximately independent of time-step size. This
+is pressure-only stabilization: mechanical `PIC` and `PIC_T` remain exactly
+zero, and `projection_rate=0` preserves the previous algorithm.
+
+Test three rates over the same rejected `1.2 s` interval. Rebuild first because
+this diagnostic changes the solver and particle interface:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 1.2 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --pressure-projection-rates 0.5 2 10 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r55-pressure-projection-rate-1p2s
+sbatch --array=5-7 --time=00:45:00 run_semi_implicit_hpc4.sh
+```
+
+Tasks 5, 6, and 7 use `0.5`, `2`, and `10 1/s`, respectively. Select the
+weakest rate that removes all dry-layer sign changes without advancing the
+connected front or materially changing pressure and saturation through the
+previously valid `0--1.0 s` interval.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
