@@ -1436,6 +1436,38 @@ The task must report `gradient=true`, `force=true`, and
 `darcy_velocity=true`; the automatic range check must again report zero gas
 and liquid dry-layer sign changes.
 
+r49 passed through `0.1 s`, including the interval after `0.06 s` where the
+r47 FLIP mode had returned. Both phase sign-change counts remained zero. From
+`0.06 s` to `0.1 s`, the gas maximum decreased from `0.02548 m/s` to
+`0.02502 m/s`, and the liquid maximum decreased from `0.02011 m/s` to
+`0.01690 m/s`. The maximum gas pressure reached `468 Pa`, and the connected
+front advanced by one vertical layer at `0.1 s`. The reported maximum
+unconnected-layer saturation of `0.3799` was the next front layer approaching
+the `0.4` threshold at `0.09 s`; the downward saturation increase remained
+only `3.51e-8`, so it was not a detached wet band. Through the common
+`0--0.05 s` outputs, physical pressures and saturations again matched r43 to
+approximately `1.55e-11 Pa` and `2.50e-15`.
+
+Continue with one `0.3 s` closed-column check using the unchanged executable:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.3 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r50-darcy-velocity-0p3s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+Do not yet jump to the experimental duration. The r50 result must retain the
+zero sign-change counts, a monotone connected saturation profile, and bounded
+gas pressure before the next duration increase.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

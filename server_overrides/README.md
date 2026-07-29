@@ -90,3 +90,9 @@ changes in both phases. After its first output, both phase maxima decayed, and
 physical pressure and saturation matched the pre-velocity-reconstruction
 reference to round-off. Continue with the same executable for only `0.1 s`;
 no source reinstall or rebuild is needed.
+
+The r49 `0.1 s` extension passed with zero gas and liquid sign changes. Both
+phase maxima continued to decay through the interval where the earlier FLIP
+mode had reappeared, and the saturation profile remained connected and
+monotone. The next accepted step is an unchanged `0.3 s` closed-column run;
+it also requires no rebuild.

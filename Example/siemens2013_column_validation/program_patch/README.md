@@ -137,6 +137,12 @@ pressure and saturation fields remained unchanged to round-off. The next
 diagnostic is the unchanged option set extended only to `0.1 s`; it does not
 require another rebuild.
 
+The r49 `0.1 s` extension also passed, including the interval after `0.06 s`
+where the earlier FLIP mode had returned. Both phase maxima continued to
+decay, both sign-change counts remained zero, and the connected wetting front
+advanced by one layer without a detached band. Continue with the same binary
+for a `0.3 s` closed-column check.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild
