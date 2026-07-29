@@ -16,6 +16,12 @@ the installer removes obsolete `.pre-siemens-validation` and `.before-*`
 particle-source backups so a stale file cannot be mistaken for the compiled
 source.
 
+The installer additionally patches the shared `mpm_base.tcc` VTK whitelist
+in place. This permits the opt-in `force_liquid_pressures` and
+`force_gas_pressures` diagnostics while leaving the default output fields for
+other particle types unchanged. The guarded patcher is tracked with the
+Siemens case and refuses an unrecognised or partially patched source layout.
+
 The replacement adds three optional liquid-material properties:
 
 - `fixed_gas_pressure`

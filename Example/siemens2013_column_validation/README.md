@@ -1238,10 +1238,16 @@ hydraulic solution.
 
 The remaining gas-velocity maximum still increased during the `0.05 s` test,
 so do not jump to the multi-second run. Extend only to `0.1 s` (`1000` steps)
-and output the physical and force-only pressures separately. The r43 binary
-already contains these fields; no rebuild is needed:
+and output the physical and force-only pressures separately. The first r44
+submission stopped before time integration at its initial VTK write: the
+particle registered both force-only pressure fields, but the shared
+`mpm_base.tcc` liquid-output whitelist rejected them and the fallback writer
+then terminated at `map::at`. This was an output-registration error, not a
+numerical instability. Pull the whitelist patch and rebuild before rerunning:
 
 ```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
 python prepare_semi_implicit_checks.py \
   --duration 0.1 \
   --semi-implicit-dts 1e-4 \

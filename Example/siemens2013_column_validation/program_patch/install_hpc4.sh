@@ -47,6 +47,13 @@ if [[ ! -f "${checkpoint_patcher}" ]]; then
 fi
 python "${checkpoint_patcher}" --mpm-source "${mpm_source}"
 
+vtk_patcher="${script_dir}/patch_vtk_force_fields.py"
+if [[ ! -f "${vtk_patcher}" ]]; then
+  echo "VTK whitelist patcher is missing: ${vtk_patcher}" >&2
+  exit 2
+fi
+python "${vtk_patcher}" --mpm-source "${mpm_source}"
+
 grep -q "initial_suction_from_swrc" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -q "initial_suction_from_swrc" \
@@ -77,6 +84,10 @@ grep -Fq 'pressure_options["reconstruct_force"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "force_gas_pressure_ : PIC_gas_pressure_" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
+grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
+grep -Fq 'liquid_vtk_allowed.emplace_back("force_gas_pressures");' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
 particle_implementations=(
   "particles/particle_threephase_new.tcc"
   "solvers/particle_threephase_new.tcc"

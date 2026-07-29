@@ -16,6 +16,14 @@ start its loop at the resumed global step instead of silently restarting the
 step counter at zero. `patch_checkpoint_resume.py` is idempotent and refuses
 to edit an unrecognised source layout.
 
+It also applies a guarded VTK whitelist correction in `mpm_base.tcc`. The
+r44 job originally stopped at its first output because the new opt-in
+`force_liquid_pressures` and `force_gas_pressures` particle fields were
+registered by the three-phase particle but were absent from the global liquid
+VTK whitelist. `patch_vtk_force_fields.py` allows those two requested fields
+without adding them to the default output list used by other particle types.
+The run script checks this source and refuses to use an older executable.
+
 The replacement adds two optional material properties:
 
 - `initial_suction`: an explicitly prescribed initial suction in Pa;

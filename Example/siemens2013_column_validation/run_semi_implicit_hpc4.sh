@@ -59,6 +59,7 @@ source_files=(
   "include/particles/particle_threephase_new.tcc"
   "include/solvers/particle_threephase_new.h"
   "include/solvers/particle_threephase_new.tcc"
+  "include/solvers/mpm_base.tcc"
   "include/solvers/thm_mpm_explicit_threephase_new.h"
   "include/solvers/thm_mpm_explicit_threephase_new.tcc"
 )
@@ -81,6 +82,10 @@ grep -Fq "compact_liquid_pressure_increment" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "Bound the FLIP pressure transfer" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
+grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
+grep -Fq 'liquid_vtk_allowed.emplace_back("force_gas_pressures");' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
 for source_file in \
   "${mpm_source}/include/particles/particle_threephase_new.tcc" \
   "${mpm_source}/include/solvers/particle_threephase_new.tcc"; do
