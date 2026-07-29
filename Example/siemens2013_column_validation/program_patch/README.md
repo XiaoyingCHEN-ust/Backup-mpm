@@ -187,6 +187,11 @@ mode, whereas `0.1` and `0.2 1/s` passed. The weakest passing `0.1 1/s` rate
 kept the connected-front and dry-gas pressure histories close to r52. Confirm
 it at `dt=5e-5 s` before accepting it for longer calculations.
 
+The r57 half-step result confirmed the `0.1 1/s` rate: its front history was
+identical to r56, pressure and saturation differences were small, and both
+phase sign-change counts remained zero. Use `dt=1e-4 s` and `0.1 1/s` for the
+next three-second repeated-front diagnostic.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

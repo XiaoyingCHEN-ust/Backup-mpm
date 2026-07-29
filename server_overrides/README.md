@@ -135,3 +135,8 @@ The r56 sweep identified `0.1 1/s` as the weakest passing rate; `0.01` and
 `0.05 1/s` retained the late mode. The `0.1 1/s` connected-front history was
 unchanged and its dry-zone mean gas pressure remained close to r52. Verify it
 at `dt=5e-5 s` before extending the duration.
+
+The r57 half-step check passed with the same front history, zero sign changes,
+and small pressure/saturation differences. Accept `0.1 1/s` provisionally and
+return to `dt=1e-4 s` for a three-second repeated-front diagnostic. No rebuild
+is required.

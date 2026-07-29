@@ -1704,6 +1704,39 @@ No rebuild is required. Compare r57 directly with the r56 `0.1 1/s` result;
 both the front history and the pressure/saturation fields must converge while
 the sign-change counts remain zero.
 
+r57 passed at `dt=5e-5 s`. Compared with the r56 `dt=1e-4 s` result using the
+same `0.1 1/s` rate, the connected-front history was identical and both phase
+sign-change counts remained zero. Across all 25 common outputs, the maximum/
+RMS differences were `0.0121/0.000516` in saturation and approximately
+`66/16 Pa` in pressure. The dry-zone mean gas-pressure difference was only
+`3.8 Pa` at `1.2 s`. The larger `0.117 m/s` value belongs to the first output
+after the smaller semi-implicit step; the post-initial maximum was
+`0.0664 m/s`.
+
+Accept `projection_rate=0.1 1/s` for the next diagnostic and return to the
+more efficient `dt=1e-4 s`. Run a three-second closed-column case with
+`0.05 s` outputs to observe several additional layer-expulsion cycles:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 3.0 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --pressure-projection-rates 0.1 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r58-selected-projection-3s
+sbatch --array=3 --time=01:00:00 run_semi_implicit_hpc4.sh
+```
+
+No rebuild is required. This writes 61 particle outputs. Accept the three-
+second result only if every wetting advance remains connected and both dry-
+zone sign-change counts stay zero through all repeated pressure pulses.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
