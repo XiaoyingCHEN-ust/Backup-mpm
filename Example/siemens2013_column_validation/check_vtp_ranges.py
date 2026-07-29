@@ -236,6 +236,14 @@ def main():
             "whose first output occurs after the checkpoint"
         ),
     )
+    parser.add_argument(
+        "--require-force-pressure-fields",
+        action="store_true",
+        help=(
+            "require and validate the force_liquid_pressures and "
+            "force_gas_pressures diagnostic arrays"
+        ),
+    )
     parser.add_argument("--pressure-limit-pa", type=float, default=1.0e6)
     parser.add_argument("--velocity-limit-mps", type=float, default=10.0)
     parser.add_argument(
@@ -287,6 +295,8 @@ def main():
         "liquid_velocities",
         "gas_velocities",
     )
+    if args.require_force_pressure_fields:
+        names += ("force_liquid_pressures", "force_gas_pressures")
     initial = point_arrays(files[0], names)
     if any(not math.isfinite(value) for value in initial["suction_pressures"]):
         raise RuntimeError("Initial suction array contains non-finite values")
@@ -322,7 +332,12 @@ def main():
                 raise RuntimeError(
                     f"Non-finite {name} values in {path.name}: {nonfinite}"
                 )
-        for name in ("gas_pressures", "liquid_pressures"):
+        pressure_names = ["gas_pressures", "liquid_pressures"]
+        if args.require_force_pressure_fields:
+            pressure_names.extend(
+                ("force_gas_pressures", "force_liquid_pressures")
+            )
+        for name in pressure_names:
             maximum_pressure = max(
                 maximum_pressure, max(abs(value) for value in arrays[name])
             )
@@ -443,6 +458,8 @@ def main():
 
     marker.write_text(
         f"files={len(files)}\n"
+        f"force_pressure_fields="
+        f"{'required' if args.require_force_pressure_fields else 'not_required'}\n"
         f"initial_suction_check="
         f"{'skipped' if args.skip_initial_suction_check else 'passed'}\n"
         f"initial_max_suction_pa={observed_suction:.12g}\n"

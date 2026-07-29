@@ -88,6 +88,10 @@ grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
   "${mpm_source}/include/solvers/mpm_base.tcc"
 grep -Fq 'liquid_vtk_allowed.emplace_back("force_gas_pressures");' \
   "${mpm_source}/include/solvers/mpm_base.tcc"
+grep -Fq '"force_liquid_pressures",' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
+grep -Fq '"force_gas_pressures",' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
 particle_implementations=(
   "particles/particle_threephase_new.tcc"
   "solvers/particle_threephase_new.tcc"

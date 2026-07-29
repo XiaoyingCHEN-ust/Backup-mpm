@@ -86,6 +86,10 @@ grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
   "${mpm_source}/include/solvers/mpm_base.tcc"
 grep -Fq 'liquid_vtk_allowed.emplace_back("force_gas_pressures");' \
   "${mpm_source}/include/solvers/mpm_base.tcc"
+grep -Fq '"force_liquid_pressures",' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
+grep -Fq '"force_gas_pressures",' \
+  "${mpm_source}/include/solvers/mpm_base.tcc"
 for source_file in \
   "${mpm_source}/include/particles/particle_threephase_new.tcc" \
   "${mpm_source}/include/solvers/particle_threephase_new.tcc"; do
@@ -114,13 +118,16 @@ echo "reconstruct pressure force=${reconstruct_pressure_force:-False}"
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
 result_dir="stability_results/${uuid}"
+range_check_args=()
 if [[ "${method}" == "semi_implicit" ]]; then
   # particle00000.vtp is written after the first, potentially much larger,
   # semi-implicit step; row 0 already verifies the common initial suction.
-  python check_vtp_ranges.py "${result_dir}" --skip-initial-suction-check
-else
-  python check_vtp_ranges.py "${result_dir}"
+  range_check_args+=(--skip-initial-suction-check)
 fi
+if [[ "${reconstruct_pressure_force}" == "True" ]]; then
+  range_check_args+=(--require-force-pressure-fields)
+fi
+python check_vtp_ranges.py "${result_dir}" "${range_check_args[@]}"
 cat > "${result_dir}/SEMI_IMPLICIT_RUN_COMPLETED.txt" <<EOF
 case=${case_name}
 method=${method}

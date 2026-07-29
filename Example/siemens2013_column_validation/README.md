@@ -1263,6 +1263,43 @@ If the maximum gas velocity approaches a plateau and the force-only pressure
 remains smooth, the next duration is `0.3 s`; otherwise the remaining FLIP
 phase-velocity mode must be treated before extending the hydraulic run.
 
+The corrected r44 calculation completed all eleven outputs and passed the
+range, symmetry, pressure, saturation, and connected-front checks. At `0.1 s`,
+the maximum gas velocity had nevertheless increased to `3.178 m/s`, compared
+with `1.274 m/s` at `0.05 s`; it had not approached a plateau. The connected
+wet depth increased from `17.1 mm` to `22.8 mm`, maximum physical gas pressure
+was `468.4 Pa`, and the global pressure bound remained `994.734 Pa`. Therefore
+do not extend to `0.3 s` yet.
+
+The r44 VTP audit also found that the shared writer had a second hard-coded
+scalar list. The first whitelist patch prevented the initial `map::at` crash,
+but that writer list silently omitted the two accepted force-only pressure
+fields. Pull the second output patch, rebuild, and repeat the identical
+`0.1 s` diagnostic under a new revision so that the failed-output and
+physical-only r44 directories remain auditable:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.1 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-force \
+  --revision r45-force-pressure-output-0p1s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+The r45 VTP files must contain `force_liquid_pressures` and
+`force_gas_pressures`. Use their spatial and temporal differences from the
+physical FLIP pressures to diagnose the continuing gas-velocity growth; do
+not use r45 as authorization for a longer run merely because its standard
+range check passes. The submission script now makes both fields mandatory
+whenever `reconstruct_force=true`, so a silently incomplete output fails the
+job automatically.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
