@@ -5,9 +5,10 @@ pond and the lower wet boundary in the coarse transparent-sand column. Since
 the validation targets are one-dimensional, one square cell is used across a
 representative-width slice. Two particles per horizontal layer retain the
 standard 2 x 2 particles per cell, while 188 particle layers resolve the
-approximately 1.075 m experimental interval.  A second mesh places each
-particle in its own cell while keeping the particle locations, particle
-volumes, and four-particle surface loading region unchanged.
+approximately 1.075 m experimental interval. Additional meshes separate the
+two vertical particle layers either by refining both directions or only the
+vertical direction, while keeping the particle locations, particle volumes,
+and four-particle surface loading region unchanged.
 """
 
 from __future__ import annotations
@@ -27,22 +28,36 @@ TOP_BOUNDARY_DEPTH = COARSE_CELL_SIZE
 
 MESH_VARIANTS = {
     "coarse": {
-        "cell_size": COARSE_CELL_SIZE,
+        "cell_size_x": COARSE_CELL_SIZE,
+        "cell_size_y": COARSE_CELL_SIZE,
         "mesh": "gimp_mesh2d.txt",
         "entity_sets": "entity_sets.json",
     },
     "one_particle_per_cell": {
-        "cell_size": PARTICLE_SPACING,
+        "cell_size_x": PARTICLE_SPACING,
+        "cell_size_y": PARTICLE_SPACING,
         "mesh": "gimp_mesh2d_one_particle_per_cell.txt",
         "entity_sets": "entity_sets_one_particle_per_cell.json",
+    },
+    "one_layer_per_cell": {
+        "cell_size_x": COARSE_CELL_SIZE,
+        "cell_size_y": PARTICLE_SPACING,
+        "mesh": "gimp_mesh2d_one_layer_per_cell.txt",
+        "entity_sets": "entity_sets_one_layer_per_cell.json",
     },
 }
 
 
-def gimp_mesh2d(width: float, height: float, cell_size: float):
+def gimp_mesh2d(
+    width: float, height: float, cell_size_x: float, cell_size_y: float
+):
     """Create the 16-node GIMP connectivity used by ED2Q16G."""
-    x_range = np.arange(-cell_size, width + cell_size + 1.0e-14, cell_size)
-    y_range = np.arange(-cell_size, height + cell_size + 1.0e-14, cell_size)
+    x_range = np.arange(
+        -cell_size_x, width + cell_size_x + 1.0e-14, cell_size_x
+    )
+    y_range = np.arange(
+        -cell_size_y, height + cell_size_y + 1.0e-14, cell_size_y
+    )
     nx = x_range.size
     ny = y_range.size
 
@@ -111,8 +126,11 @@ def as_int_list(values):
 
 def generate_mesh_variant(name: str, particles: np.ndarray):
     variant = MESH_VARIANTS[name]
-    cell_size = variant["cell_size"]
-    nodes, elements = gimp_mesh2d(WIDTH, HEIGHT, cell_size)
+    cell_size_x = variant["cell_size_x"]
+    cell_size_y = variant["cell_size_y"]
+    nodes, elements = gimp_mesh2d(
+        WIDTH, HEIGHT, cell_size_x, cell_size_y
+    )
 
     tolerance = 1.0e-10
     node_sets = [
@@ -146,7 +164,9 @@ def generate_mesh_variant(name: str, particles: np.ndarray):
         stream.write("\n")
 
     return {
-        "cell_size_m": cell_size,
+        "cell_size_x_m": cell_size_x,
+        "cell_size_y_m": cell_size_y,
+        "cell_size_min_m": min(cell_size_x, cell_size_y),
         "cells": int(elements.shape[0]),
         "nodes": int(nodes.shape[0]),
         "particles": int(particles.shape[0]),

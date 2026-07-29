@@ -19,6 +19,11 @@ MESH_VARIANTS = {
         "entity_sets_one_particle_per_cell.json",
         0.0057,
     ),
+    "one_layer_per_cell": (
+        "gimp_mesh2d_one_layer_per_cell.txt",
+        "entity_sets_one_layer_per_cell.json",
+        0.0057,
+    ),
 }
 
 

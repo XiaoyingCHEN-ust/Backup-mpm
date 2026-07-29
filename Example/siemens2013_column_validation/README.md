@@ -35,7 +35,8 @@ one cell across its width and 94 cells along its height in the original mesh.
 Standard 2 x 2 particle integration gives two particles per horizontal layer,
 188 layers, and a 5.7 mm vertical particle spacing. The r40 diagnostic uses
 the same 376 particles with a 2-by-188-cell mesh, placing one particle in each
-cell. The modeled height is 1.0716 m. Side constraints
+cell; r41 instead uses a 1-by-188-cell mesh with two particles in each cell
+and one particle layer per cell. The modeled height is 1.0716 m. Side constraints
 enforce one-dimensional flow, and the skeleton is fixed to isolate hydraulic
 liquid–gas coupling. The reduced width changes total modeled volume but not
 pressure, saturation, or wetting-front quantities defined per unit area.
@@ -1126,6 +1127,38 @@ sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
 Do not add `--bounded-pressure-transfer`.  Before any 5 s extension, compare
 the r40 `0.03 s` profile with r32 and confirm that the top-connected wet depth
 has not acquired the r39 projection bias.
+
+r40 retained the r32 wetting-front position at `0.03 s`, but the one-particle-
+per-cell discretisation is under-integrated for the two-dimensional phase
+momentum update.  In the dry zone, the maximum vertical gas velocity grew
+almost linearly from `1.37 m/s` at `0.005 s` to `14.56 m/s` at `0.05 s` while
+the gas pressure developed an alternating layer pattern.  Saturation and
+pressure remained bounded, so increasing the velocity-check threshold would
+hide a genuine numerical instability and is not acceptable.
+
+The r41 mesh therefore keeps one cell across the width and places both
+particles of each horizontal layer in that cell.  Vertically it uses 188
+cells, so no cell contains the two adjacent vertical particle layers that
+formed the original oscillatory mode.  It has 188 cells, 376 particles, two
+particles per cell, full gravity, and the same four surface-loaded particles.
+The r40 rebuild already supports this input; after pulling the new files, no
+additional rebuild is required:
+
+```bash
+python preprocess.py
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --revision r41-one-layer-per-cell-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+Again, leave the bounded pressure transfer disabled.  Only if the r41 gas
+velocity and pressure profiles remain stable will this mesh be extended past
+`0.05 s`.
 
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
