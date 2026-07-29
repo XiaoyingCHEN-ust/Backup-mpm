@@ -125,3 +125,8 @@ new opt-in `semi_implicit_pressure.projection_rate` supplies a time-step-
 invariant pressure-only relaxation toward the resolved nodal solution. The
 default is zero, so existing inputs and mechanical `PIC=0` are unchanged.
 Rebuild before the r55 projection-rate sweep.
+
+All r55 rates removed the pressure mode, but `0.5--10 1/s` altered the front-
+layer saturation history and the stronger rates delayed front advance. None
+is accepted. Reuse the binary for a weaker `0.01--0.2 1/s` sweep; no rebuild
+is required.

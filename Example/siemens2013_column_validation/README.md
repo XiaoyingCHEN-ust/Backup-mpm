@@ -1639,6 +1639,39 @@ weakest rate that removes all dry-layer sign changes without advancing the
 connected front or materially changing pressure and saturation through the
 previously valid `0--1.0 s` interval.
 
+All three r55 rates removed the dry-layer sign changes, confirming that the
+unresolved pressure-transfer mode can be damped. None is yet accepted. Even
+the weakest `0.5 1/s` rate produced a maximum saturation difference of `0.258`
+against r52 over the valid `0--1.0 s` interval: the first front layer saturated
+earlier, while the next layer reached only `S_l=0.607` instead of `0.865` at
+`1.0 s`. Rates `2` and `10 1/s` were more intrusive and prevented the
+connected front from advancing at `0.6 s`. The dry-zone gas-pressure history
+was much less affected, but preserving only that observable is insufficient.
+
+Use the same executable to test four weaker rates. No rebuild is required:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 1.2 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --pressure-projection-rates 0.01 0.05 0.1 0.2 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r56-weak-pressure-projection-1p2s
+sbatch --array=6-9%2 --time=00:45:00 run_semi_implicit_hpc4.sh
+```
+
+Tasks 6--9 use `0.01`, `0.05`, `0.1`, and `0.2 1/s`, respectively. The `%2`
+limit runs at most two 32-CPU tasks concurrently. Prefer the weakest rate with
+zero sign changes, unchanged connected-front history, maximum saturation
+error below `0.05`, and no material change in the valid dry-gas pressure
+history.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

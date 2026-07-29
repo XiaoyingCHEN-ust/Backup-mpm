@@ -176,6 +176,12 @@ relaxation toward the resolved nodal field. Its fraction per step is
 time-step refinement. A zero or omitted rate exactly preserves the prior
 incremental transfer, and mechanical `PIC` remains unchanged.
 
+Rates `0.5`, `2`, and `10 1/s` all removed the r53 sign alternation, but they
+also changed the front-layer saturation history; the two stronger rates even
+delayed the connected-front advance. They are rejected as over-stabilized.
+The next sweep tests `0.01`, `0.05`, `0.1`, and `0.2 1/s` with the unchanged
+binary.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild
