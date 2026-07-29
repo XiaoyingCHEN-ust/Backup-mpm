@@ -673,6 +673,53 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     Eigen::SparseMatrix<double> pressure_matrix(system_size, system_size);
     pressure_matrix.setFromTriplets(coefficients.begin(), coefficients.end());
     pressure_matrix.makeCompressed();
+
+    // Enforce a discrete maximum principle in each Darcy-diffusion block.
+    // GIMP gradient support can produce positive off-diagonal stiffness
+    // entries, especially for the much more conductive gas phase.  Those
+    // entries caused alternating dry and saturated layers in the confined-
+    // air column even after the pressure-storage matrix was lumped.  Remove
+    // only the positive same-phase couplings and add the same amount to both
+    // diagonals.  This is the minimum symmetric graph-Laplacian correction:
+    // it preserves every row sum and leaves storage, phase coupling, sources,
+    // and boundary terms unchanged.
+    std::vector<Triplet> monotone_correction_triplets;
+    std::size_t monotone_corrected_edges = 0;
+    double monotone_added_diffusion = 0.0;
+    for (int outer = 0; outer < pressure_matrix.outerSize(); ++outer) {
+      for (Eigen::SparseMatrix<double>::InnerIterator entry(pressure_matrix,
+                                                             outer);
+           entry; ++entry) {
+        const auto row = entry.row();
+        const auto col = entry.col();
+        if (row >= col) continue;
+        const bool liquid_block =
+            row < pressure_active_dof && col < pressure_active_dof;
+        const bool gas_block =
+            !fixed_gas_pressure && row >= pressure_active_dof &&
+            col >= pressure_active_dof;
+        if (!liquid_block && !gas_block) continue;
+        const double correction = std::max(
+            {entry.value(), pressure_matrix.coeff(col, row), 0.0});
+        if (!(correction > 0.0)) continue;
+        monotone_correction_triplets.emplace_back(row, col, -correction);
+        monotone_correction_triplets.emplace_back(col, row, -correction);
+        monotone_correction_triplets.emplace_back(row, row, correction);
+        monotone_correction_triplets.emplace_back(col, col, correction);
+        ++monotone_corrected_edges;
+        monotone_added_diffusion += correction;
+      }
+    }
+    if (!monotone_correction_triplets.empty()) {
+      Eigen::SparseMatrix<double> monotone_correction(system_size,
+                                                       system_size);
+      monotone_correction.setFromTriplets(
+          monotone_correction_triplets.begin(),
+          monotone_correction_triplets.end());
+      pressure_matrix += monotone_correction;
+      pressure_matrix.makeCompressed();
+    }
+
     Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> pressure_solver;
     pressure_solver.compute(pressure_matrix);
     if (pressure_solver.info() != Eigen::Success)
@@ -726,8 +773,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     if (log_pressure_solver_ && step_ % output_steps_ == 0)
       console_->info(
           "Semi-implicit pressure: dofs={}, mesh_active_nodes={}, "
-          "fixed_gas={}, residual={}",
+          "fixed_gas={}, monotone_edges={}, added_diffusion={}, residual={}",
           system_size, mesh_active_dof, fixed_gas_pressure,
+          monotone_corrected_edges, monotone_added_diffusion,
           relative_residual);
     return true;
   } catch (std::exception& exception) {

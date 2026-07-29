@@ -964,6 +964,37 @@ check. If the higher penalties retain a top-connected monotone profile, use
 the least stiff passing value; if all four fail, replace the weak particle
 penalty with a consistent pressure-boundary treatment before any longer run.
 
+All four r35 jobs wrote eleven outputs but failed at `4.5 s`. The isolated
+layer was at the same elevation (`y=1.04025 m`) and had nearly the same
+saturation (`0.9779--0.9798`) for penalties from `1e2` through `1e5`.
+Increasing the pressure-boundary penalty therefore does not resolve the
+oscillation and the boundary penalty is retained at `100`.
+
+The r36 solver applies a conservative monotonicity correction to each Darcy-
+diffusion block after assembly. Positive same-phase off-diagonal stiffness
+entries are set to zero and added to the corresponding diagonals as a
+symmetric graph Laplacian. This preserves each matrix row sum and changes
+neither storage and liquid--gas coupling nor sources and boundary terms. It is
+the minimum correction needed to restore a discrete maximum principle for the
+GIMP pressure operator.
+
+Rebuild, then rerun only one 5 s closed diagnostic:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 5 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --revision r36-monotone-diffusion-5s
+sbatch --array=3 --time=02:00:00 run_semi_implicit_hpc4.sh
+```
+
+The pressure-solver log now reports the number of corrected diffusion edges
+and the added graph-diffusion coefficient. Retain the Slurm standard output
+with the result so the correction can be audited.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
@@ -971,8 +1002,8 @@ two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
 smoke-test command. Do not start another experimental-time or production
-calculation until the r35 boundary diagnostic resolves the r34 wet-band
-failure.
+calculation until r36 removes the r34/r35 wet-band failure without creating a
+new range or symmetry failure.
 
 ## Post-process after both runs
 

@@ -76,6 +76,8 @@ grep -Fq "solve_semi_implicit_pressure" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "compact_liquid_pressure_increment" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "Enforce a discrete maximum principle" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 for source_file in \
   "${mpm_source}/include/particles/particle_threephase_new.tcc" \
   "${mpm_source}/include/solvers/particle_threephase_new.tcc"; do
