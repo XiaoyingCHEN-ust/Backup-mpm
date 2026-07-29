@@ -192,6 +192,12 @@ identical to r56, pressure and saturation differences were small, and both
 phase sign-change counts remained zero. Use `dt=1e-4 s` and `0.1 1/s` for the
 next three-second repeated-front diagnostic.
 
+r58 contained a temporary dry-zone ringing interval but recovered fully after
+its peak, with small velocity and saturation amplitudes and no detached front.
+The checker now distinguishes this bounded transient from persistent or
+growing alternation. The MPM source remains unchanged; extend the same rate
+only to five seconds.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

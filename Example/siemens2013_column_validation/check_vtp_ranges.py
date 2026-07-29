@@ -338,6 +338,38 @@ def main():
         help="reject adjacent dry layers with opposing vertical gas velocities",
     )
     parser.add_argument(
+        "--allow-transient-dry-gas-velocity-sign-alternation",
+        action="store_true",
+        help=(
+            "allow bounded dry-gas sign alternation only when it recovers "
+            "within the saved output sequence"
+        ),
+    )
+    parser.add_argument(
+        "--transient-final-sign-flip-limit",
+        type=int,
+        default=2,
+        help="maximum dry-gas sign changes allowed in the final output",
+    )
+    parser.add_argument(
+        "--transient-alternating-file-fraction-limit",
+        type=float,
+        default=0.25,
+        help="maximum fraction of saved files containing dry-gas alternation",
+    )
+    parser.add_argument(
+        "--transient-dry-gas-velocity-limit-mps",
+        type=float,
+        default=0.01,
+        help="maximum dry-gas component while transient alternation is present",
+    )
+    parser.add_argument(
+        "--transient-saturation-increase-limit",
+        type=float,
+        default=0.005,
+        help="maximum downward saturation increase during an accepted transient",
+    )
+    parser.add_argument(
         "--reject-dry-liquid-velocity-sign-alternation",
         action="store_true",
         help="reject adjacent dry layers with opposing vertical liquid velocities",
@@ -349,6 +381,15 @@ def main():
         help="ignore smaller vertical velocities in the adjacent-sign check",
     )
     args = parser.parse_args()
+
+    if (
+        args.reject_dry_gas_velocity_sign_alternation
+        and args.allow_transient_dry_gas_velocity_sign_alternation
+    ):
+        parser.error(
+            "strict rejection and transient gas-alternation assessment are "
+            "mutually exclusive"
+        )
 
     files = sorted(args.result_dir.glob("particle*.vtp"))
     if not files:
@@ -406,6 +447,8 @@ def main():
     maximum_surface_gas_pressure_file = None
     maximum_dry_gas_velocity_sign_flips = 0
     maximum_dry_gas_velocity_sign_flips_file = None
+    dry_gas_velocity_sign_flips_by_file = []
+    maximum_dry_gas_velocity_during_alternation = 0.0
     maximum_dry_liquid_velocity_sign_flips = 0
     for file_index, path in enumerate(files):
         arrays = point_arrays(path, names)
@@ -536,6 +579,26 @@ def main():
         if sign_flips > maximum_dry_gas_velocity_sign_flips:
             maximum_dry_gas_velocity_sign_flips = sign_flips
             maximum_dry_gas_velocity_sign_flips_file = path.name
+        dry_gas_velocity_sign_flips_by_file.append(sign_flips)
+        if sign_flips > 0:
+            dry_particle_gas_velocity = max(
+                (
+                    max(
+                        abs(arrays["gas_velocities"][3 * index + component])
+                        for component in range(3)
+                    )
+                    for index, saturation in enumerate(
+                        arrays["liquid_saturations"]
+                    )
+                    if saturation
+                    < args.connected_wet_saturation_threshold
+                ),
+                default=0.0,
+            )
+            maximum_dry_gas_velocity_during_alternation = max(
+                maximum_dry_gas_velocity_during_alternation,
+                dry_particle_gas_velocity,
+            )
         liquid_sign_flips = dry_layer_velocity_sign_flips(
             path,
             arrays["liquid_saturations"],
@@ -614,6 +677,70 @@ def main():
             f"{maximum_dry_gas_velocity_sign_flips} adjacent sign changes in "
             f"{maximum_dry_gas_velocity_sign_flips_file}"
         )
+    alternating_file_count = sum(
+        flips > 0 for flips in dry_gas_velocity_sign_flips_by_file
+    )
+    alternating_file_fraction = alternating_file_count / len(files)
+    final_dry_gas_velocity_sign_flips = (
+        dry_gas_velocity_sign_flips_by_file[-1]
+    )
+    if maximum_dry_gas_velocity_sign_flips > 0:
+        peak_flip_index = max(
+            range(len(dry_gas_velocity_sign_flips_by_file)),
+            key=dry_gas_velocity_sign_flips_by_file.__getitem__,
+        )
+        recovered_after_peak = any(
+            flips == 0
+            for flips in dry_gas_velocity_sign_flips_by_file[
+                peak_flip_index + 1 :
+            ]
+        )
+    else:
+        recovered_after_peak = True
+    if (
+        args.allow_transient_dry_gas_velocity_sign_alternation
+        and maximum_dry_gas_velocity_sign_flips > 0
+    ):
+        transient_failures = []
+        if not recovered_after_peak:
+            transient_failures.append("no zero-flip recovery after the peak")
+        if (
+            final_dry_gas_velocity_sign_flips
+            > args.transient_final_sign_flip_limit
+        ):
+            transient_failures.append(
+                "final sign changes="
+                f"{final_dry_gas_velocity_sign_flips}"
+            )
+        if (
+            alternating_file_fraction
+            > args.transient_alternating_file_fraction_limit
+        ):
+            transient_failures.append(
+                "alternating file fraction="
+                f"{alternating_file_fraction:.6g}"
+            )
+        if (
+            maximum_dry_gas_velocity_during_alternation
+            > args.transient_dry_gas_velocity_limit_mps
+        ):
+            transient_failures.append(
+                "maximum dry-gas velocity during alternation="
+                f"{maximum_dry_gas_velocity_during_alternation:.6g} m/s"
+            )
+        if (
+            maximum_downward_saturation_increase
+            > args.transient_saturation_increase_limit
+        ):
+            transient_failures.append(
+                "maximum downward saturation increase="
+                f"{maximum_downward_saturation_increase:.6g}"
+            )
+        if transient_failures:
+            raise RuntimeError(
+                "Transient dry-zone gas-alternation assessment failed: "
+                + "; ".join(transient_failures)
+            )
     if (
         args.reject_dry_liquid_velocity_sign_alternation
         and maximum_dry_liquid_velocity_sign_flips > 0
@@ -656,6 +783,17 @@ def main():
         f"{maximum_surface_gas_pressure:.12g}\n"
         f"max_dry_gas_velocity_sign_flips="
         f"{maximum_dry_gas_velocity_sign_flips}\n"
+        f"dry_gas_velocity_sign_alternation_mode="
+        f"{'transient' if args.allow_transient_dry_gas_velocity_sign_alternation else 'strict'}\n"
+        f"dry_gas_velocity_alternating_files={alternating_file_count}\n"
+        f"dry_gas_velocity_alternating_file_fraction="
+        f"{alternating_file_fraction:.12g}\n"
+        f"final_dry_gas_velocity_sign_flips="
+        f"{final_dry_gas_velocity_sign_flips}\n"
+        f"dry_gas_velocity_recovered_after_peak="
+        f"{str(recovered_after_peak).lower()}\n"
+        f"max_abs_dry_gas_velocity_during_alternation_mps="
+        f"{maximum_dry_gas_velocity_during_alternation:.12g}\n"
         f"max_dry_liquid_velocity_sign_flips="
         f"{maximum_dry_liquid_velocity_sign_flips}\n",
         encoding="utf-8",

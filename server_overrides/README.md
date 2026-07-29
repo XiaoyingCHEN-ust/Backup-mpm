@@ -140,3 +140,9 @@ The r57 half-step check passed with the same front history, zero sign changes,
 and small pressure/saturation differences. Accept `0.1 1/s` provisionally and
 return to `dt=1e-4 s` for a three-second repeated-front diagnostic. No rebuild
 is required.
+
+The r58 three-second result exhibited bounded dry-zone ringing that recovered
+after its peak without disconnecting the front or materially changing the
+layer-mean solution. The checker now permits only such recovered, low-amplitude
+transients for positive projection rates while retaining strict rejection for
+the zero-rate algorithm. Continue to five seconds without rebuilding.

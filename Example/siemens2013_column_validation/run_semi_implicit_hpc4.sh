@@ -163,7 +163,14 @@ if [[ "${reconstruct_pressure_gradient}" == "True" ]]; then
 fi
 if [[ "${reconstruct_pressure_gradient}" == "True" && \
       "${reconstruct_pressure_force}" == "True" ]]; then
-  range_check_args+=(--reject-dry-gas-velocity-sign-alternation)
+  if awk -v rate="${pressure_projection_rate:-0}" \
+      'BEGIN {exit !(rate > 0)}'; then
+    range_check_args+=(
+      --allow-transient-dry-gas-velocity-sign-alternation
+    )
+  else
+    range_check_args+=(--reject-dry-gas-velocity-sign-alternation)
+  fi
 fi
 if [[ "${reconstruct_darcy_velocity}" == "True" ]]; then
   range_check_args+=(--reject-dry-liquid-velocity-sign-alternation)

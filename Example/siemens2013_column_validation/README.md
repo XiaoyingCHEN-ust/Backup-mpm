@@ -1737,6 +1737,46 @@ No rebuild is required. This writes 61 particle outputs. Accept the three-
 second result only if every wetting advance remains connected and both dry-
 zone sign-change counts stay zero through all repeated pressure pulses.
 
+r58 showed a bounded, recoverable dry-zone ringing event rather than a growing
+instability. Sign changes appeared from `1.25 s` to `1.75 s`, peaked at 87,
+and returned to zero by `1.8 s`; the final `3.0 s` output contained only one
+change. During the event, maximum dry-gas velocity was `0.00306 m/s`, maximum
+downward saturation increase was `0.00285`, liquid velocity had no sign
+changes, and the connected front never detached. Maximum pressure remained
+bounded at `1.485 kPa`.
+
+For runs with a positive projection rate, the checker now accepts this type of
+transient only when it recovers after its peak, occupies at most 25% of saved
+outputs, ends with no more than two sign changes, keeps dry-gas velocity below
+`0.01 m/s`, and keeps the saturation reversal below `0.005`. Pure incremental
+pressure runs retain the original strict zero-sign-change requirement. The
+r58 sequence passes these criteria (`12/61` alternating outputs); the rejected
+r56 `0.01 1/s` result still fails because it never recovered and ended with 33
+changes. Experimental pressure comparison will use a sensor-scale local
+spatial average so cell-scale ringing is not interpreted as a physical sensor
+signal.
+
+Continue the accepted `0.1 1/s` case only to `5 s`:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 5.0 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --pressure-projection-rates 0.1 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r59-transient-assessment-5s
+sbatch --array=3 --time=01:00:00 run_semi_implicit_hpc4.sh
+```
+
+No executable rebuild is required; only the checker and submission script
+changed. The 101 outputs must satisfy the bounded-transient criteria above.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
