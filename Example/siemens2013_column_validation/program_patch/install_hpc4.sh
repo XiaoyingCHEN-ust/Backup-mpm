@@ -73,6 +73,10 @@ grep -Fq 'pressure_options["bounded_transfer"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq 'pressure_options["reconstruct_gradient"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq 'pressure_options["reconstruct_force"]' \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "force_gas_pressure_ : PIC_gas_pressure_" \
+  "${mpm_source}/include/particles/particle_threephase_new.tcc"
 particle_implementations=(
   "particles/particle_threephase_new.tcc"
   "solvers/particle_threephase_new.tcc"

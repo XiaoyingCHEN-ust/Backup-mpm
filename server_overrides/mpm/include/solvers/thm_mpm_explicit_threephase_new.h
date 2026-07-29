@@ -119,6 +119,8 @@ class ThermoMPMExplicitThreePhaseNew : public MPMBase<Tdim> {
   bool log_pressure_solver_{false};
   //! Reconstruct gradients from the current nodal pressure solution.
   bool reconstruct_pressure_gradient_{false};
+  //! Reconstruct only the pressure used by the phase momentum internal force.
+  bool reconstruct_pressure_force_{false};
   //! Apply the diagnostic local nodal bound to transferred pressures.
   bool bounded_pressure_transfer_{false};
   // DEBUG

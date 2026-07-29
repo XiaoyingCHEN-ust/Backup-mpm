@@ -78,6 +78,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--reconstruct-pressure-force",
+        action="store_true",
+        help=(
+            "use the current nodal pressure interpolation only for phase "
+            "momentum internal forces; particle pressure values remain FLIP"
+        ),
+    )
+    parser.add_argument(
         "--gravity-scale",
         type=float,
         default=1.0,
@@ -186,6 +194,7 @@ def main() -> None:
                 "log_solver": True,
                 "bounded_transfer": args.bounded_pressure_transfer,
                 "reconstruct_gradient": reconstruct_pressure_gradient,
+                "reconstruct_force": args.reconstruct_pressure_force,
             }
             analysis["resume"].update(
                 {
@@ -233,6 +242,9 @@ def main() -> None:
                     ),
                     "reconstruct_pressure_gradient": (
                         reconstruct_pressure_gradient
+                    ),
+                    "reconstruct_pressure_force": (
+                        args.reconstruct_pressure_force
                     ),
                 }
             )

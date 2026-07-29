@@ -70,6 +70,7 @@ bool mpm::ThreePhaseParticleNew<Tdim>::initialise_particle(const HDF5Particle& p
     this->liquid_volumetric_strain_ = particle.liquid_volumetric_strain;
     this->liquid_permeability_      = particle.liquid_permeability;
     this->PIC_liquid_pressure_      = particle.PIC_liquid_pressure;
+    this->force_liquid_pressure_    = this->PIC_liquid_pressure_;
     this->FLIP_liquid_pressure_     = particle.FLIP_liquid_pressure;
 
     // Vector properties
@@ -106,6 +107,7 @@ bool mpm::ThreePhaseParticleNew<Tdim>::initialise_particle(const HDF5Particle& p
     this->gas_pressure_              = particle.gas_pressure;
     this->gas_pressure_acceleration_ = particle.gas_pressure_acceleration;
     this->PIC_gas_pressure_          = particle.PIC_gas_pressure;
+    this->force_gas_pressure_        = this->PIC_gas_pressure_;
     this->FLIP_gas_pressure_         = particle.FLIP_gas_pressure;
     this->gas_pressure_increment_    = particle.gas_pressure_increment;
     this->gas_volumetric_strain_     = particle.gas_volumetric_strain;
@@ -165,6 +167,7 @@ void mpm::ThreePhaseParticleNew<Tdim>::initialise_liquid_gas_phases() {
     liquid_mass_ = 0.;
     liquid_mass_density_ = 0.;
     liquid_pressure_ = 0.;
+    force_liquid_pressure_ = 0.;
     liquid_pressure_acceleration_ = 0.;
     liquid_volumetric_strain_ = 0.;
     liquid_permeability_ = 1.;
@@ -182,6 +185,7 @@ void mpm::ThreePhaseParticleNew<Tdim>::initialise_liquid_gas_phases() {
     gas_mass_ = 0.;
     gas_mass_density_ = 0.;
     gas_pressure_ = 0.;
+    force_gas_pressure_ = 0.;
     gas_pressure_acceleration_ = 0.;
     gas_volumetric_strain_ = 0.;
     gas_permeability_ = 1.;
@@ -206,6 +210,7 @@ void mpm::ThreePhaseParticleNew<Tdim>::initialise_liquid_gas_phases() {
       {"suction_pressures",      [&]() {return this->suction_pressure_;}},
       {"liquid_pressures",       [&]() {return this->liquid_pressure_;}},
       {"PIC_liquid_pressures",   [&]() {return this->PIC_liquid_pressure_;}},
+      {"force_liquid_pressures", [&]() {return this->force_liquid_pressure_;}},
       {"liquid_saturations",     [&]() {return this->liquid_saturation_;}},
       {"liquid_fractions",       [&]() {return this->liquid_fraction_;}},
       {"liquid_chis",            [&]() {return this->liquid_chi_;}},
@@ -219,6 +224,7 @@ void mpm::ThreePhaseParticleNew<Tdim>::initialise_liquid_gas_phases() {
       {"liquid_critical_times",  [&]() {return this->liquid_critical_time_;}},
       {"gas_pressures",          [&]() {return this->gas_pressure_;}},
       {"PIC_gas_pressures",      [&]() {return this->PIC_gas_pressure_;}},
+      {"force_gas_pressures",    [&]() {return this->force_gas_pressure_;}},
       {"gas_saturations",        [&]() {return this->gas_saturation_;}},
       {"gas_fractions",          [&]() {return this->gas_fraction_;}},
       {"gas_densities",          [&]() {return this->gas_density_;}}, 
@@ -573,6 +579,8 @@ bool mpm::ThreePhaseParticleNew<Tdim>::assign_initial_properties() {
     this->liquid_pressure_ = this->gas_pressure_ - this->suction_pressure_;
     this->PIC_gas_pressure_ = this->gas_pressure_;
     this->PIC_liquid_pressure_ = this->liquid_pressure_;
+    this->force_gas_pressure_ = this->PIC_gas_pressure_;
+    this->force_liquid_pressure_ = this->PIC_liquid_pressure_;
     this->pore_pressure_ = liquid_saturation_ * PIC_liquid_pressure_ +
                           gas_saturation_ * PIC_gas_pressure_;
 
@@ -745,6 +753,10 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
   if (this->material_id_ != 999) {
     try {
       Eigen::Matrix<double, 2, 1> mixture_force, liquid_force, gas_force;
+      const double liquid_pressure_for_force = reconstruct_pressure_force_
+          ? force_liquid_pressure_ : PIC_liquid_pressure_;
+      const double gas_pressure_for_force = reconstruct_pressure_force_
+          ? force_gas_pressure_ : PIC_gas_pressure_;
 
       this->total_stress_ = this->stress_;
       total_stress_[0] -= this->pore_pressure_;
@@ -752,8 +764,8 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
 
       // LIQUID PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        liquid_force[0] = dn_dx_(i, 0) * this->PIC_liquid_pressure_;
-        liquid_force[1] = dn_dx_(i, 1) * this->PIC_liquid_pressure_;
+        liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_for_force;
+        liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_for_force;
 
         liquid_force *= this->volume_ * this->liquid_fraction_;
 
@@ -762,8 +774,8 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
 
       // GAS PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        gas_force[0] = dn_dx_(i, 0) * (this->PIC_gas_pressure_);
-        gas_force[1] = dn_dx_(i, 1) * (this->PIC_gas_pressure_);
+        gas_force[0] = dn_dx_(i, 0) * gas_pressure_for_force;
+        gas_force[1] = dn_dx_(i, 1) * gas_pressure_for_force;
 
         gas_force *= this->volume_ * this->gas_fraction_;
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Gas, gas_force);
@@ -808,6 +820,10 @@ void mpm::ThreePhaseParticleNew<3>::map_internal_force() {
   if (this->material_id_ != 999) {
     try {
       Eigen::Matrix<double, 3, 1> mixture_force, liquid_force, gas_force;
+      const double liquid_pressure_for_force = reconstruct_pressure_force_
+          ? force_liquid_pressure_ : liquid_pressure_;
+      const double gas_pressure_for_force = reconstruct_pressure_force_
+          ? force_gas_pressure_ : gas_pressure_;
 
       this->total_stress_ = this->stress_;
       total_stress_[0] -= this->pore_pressure_ - this->ini_pore_pressure_;
@@ -818,17 +834,17 @@ void mpm::ThreePhaseParticleNew<3>::map_internal_force() {
 
         // LIQUID PHASE
         liquid_force.setZero();
-        liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_;
-        liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_;
-        liquid_force[2] = dn_dx_(i, 2) * liquid_pressure_;
+        liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_for_force;
+        liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_for_force;
+        liquid_force[2] = dn_dx_(i, 2) * liquid_pressure_for_force;
         liquid_force *= volume_ * liquid_fraction_;
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Liquid, liquid_force);
 
         // GAS PHASE
         gas_force.setZero(); 
-        gas_force[0] = dn_dx_(i, 0) * gas_pressure_;
-        gas_force[1] = dn_dx_(i, 1) * gas_pressure_;
-        gas_force[2] = dn_dx_(i, 2) * gas_pressure_;
+        gas_force[0] = dn_dx_(i, 0) * gas_pressure_for_force;
+        gas_force[1] = dn_dx_(i, 1) * gas_pressure_for_force;
+        gas_force[2] = dn_dx_(i, 2) * gas_pressure_for_force;
         gas_force *= volume_ * gas_fraction_; 
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Gas, gas_force);
 
@@ -1176,11 +1192,15 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     const Eigen::VectorXd& nodal_gas_pressure_increment,
     const Eigen::VectorXd& nodal_liquid_pressure,
     const Eigen::VectorXd& nodal_gas_pressure,
-    bool reconstruct_pressure_gradient, bool bounded_transfer, double dt) {
+    bool reconstruct_pressure_gradient, bool reconstruct_pressure_force,
+    bool bounded_transfer, double dt) {
   if (this->material_id_ == 999) return 0;
   try {
     const double old_liquid_pressure = liquid_pressure_;
     const double old_gas_pressure = gas_pressure_;
+    reconstruct_pressure_force_ = reconstruct_pressure_force;
+    double reconstructed_liquid_pressure = 0.0;
+    double reconstructed_gas_pressure = 0.0;
     double minimum_liquid_pressure = std::numeric_limits<double>::max();
     double maximum_liquid_pressure = std::numeric_limits<double>::lowest();
     double minimum_gas_pressure = std::numeric_limits<double>::max();
@@ -1205,6 +1225,12 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
           shapefn_[i] * nodal_liquid_pressure_increment(active_id);
       gas_pressure_ +=
           shapefn_[i] * nodal_gas_pressure_increment(active_id);
+      if (reconstruct_pressure_force_) {
+        reconstructed_liquid_pressure +=
+            shapefn_[i] * nodal_liquid_pressure(active_id);
+        reconstructed_gas_pressure +=
+            shapefn_[i] * nodal_gas_pressure(active_id);
+      }
       if (reconstruct_gradient) {
         liquid_pressure_gradient_ +=
             dn_dx_.row(i).transpose() * nodal_liquid_pressure(active_id);
@@ -1313,6 +1339,14 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
                   std::string("surface_gas_pressure_ratio"), 1.0) *
               liquid_pressure_;
       }
+    }
+
+    if (reconstruct_pressure_force_ && !pressure_boundary) {
+      force_liquid_pressure_ = reconstructed_liquid_pressure;
+      force_gas_pressure_ = reconstructed_gas_pressure;
+    } else {
+      force_liquid_pressure_ = liquid_pressure_;
+      force_gas_pressure_ = gas_pressure_;
     }
 
     liquid_pressure_acceleration_ =

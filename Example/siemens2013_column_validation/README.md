@@ -1193,6 +1193,40 @@ record `reconstruct_gradient=true` and `bounded_transfer=false` separately.
 The r42 result must pass the velocity check and retain the r32 `0.03 s`
 wetting-front position before it can be extended.
 
+r42 was configured and rebuilt correctly, as confirmed by its solver log,
+but its maximum gas velocity remained `14.5617 m/s` and the hydraulic fields
+were effectively unchanged from r41. Code-path inspection explains this null
+result: the stored particle pressure-gradient vectors are not used by the
+current two-dimensional phase momentum internal force. That force is assembled
+directly from `PIC_liquid_pressure_` and `PIC_gas_pressure_` at the particles.
+
+The r43 option therefore reconstructs only the pressure used to assemble the
+liquid and gas momentum internal forces. The physical particle pressures used
+by the semi-implicit storage equation, suction, saturation, density, and
+reported gas-pressure response remain the unbounded incremental FLIP values.
+Two additional VTP fields (`force_liquid_pressures` and
+`force_gas_pressures`) expose the reconstructed force values for auditing.
+Velocity transfer remains `PIC=0`. Rebuild, then repeat the `0.05 s` closed
+test:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-force \
+  --revision r43-reconstructed-pressure-force-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+Leave both bounded pressure transfer and gradient reconstruction disabled.
+The required log combination is `reconstruct_gradient=false`,
+`reconstruct_force=true`, and `bounded_transfer=false`.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

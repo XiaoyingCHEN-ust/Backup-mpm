@@ -166,8 +166,8 @@ public:
       const Eigen::VectorXd& gas_pressure_increment,
       const Eigen::VectorXd& nodal_liquid_pressure,
       const Eigen::VectorXd& nodal_gas_pressure,
-      bool reconstruct_pressure_gradient, bool bounded_transfer,
-      double dt) override;
+      bool reconstruct_pressure_gradient, bool reconstruct_pressure_force,
+      bool bounded_transfer, double dt) override;
 
   // Calculate relative permeability
   double compute_relative_permeability(
@@ -295,6 +295,7 @@ protected:
   double liquid_permeability_;
   double liquid_source_;
   double PIC_liquid_pressure_;
+  double force_liquid_pressure_;
   double FLIP_liquid_pressure_;
   double liquid_pressure_increment_;
   double liquid_critical_time_;
@@ -334,6 +335,8 @@ protected:
   double ini_gas_pressure_;
   double gas_pressure_acceleration_;
   double PIC_gas_pressure_;
+  double force_gas_pressure_;
+  bool reconstruct_pressure_force_{false};
   double FLIP_gas_pressure_;
   double gas_pressure_increment_;
   double gas_volumetric_strain_;

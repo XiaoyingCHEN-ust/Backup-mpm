@@ -49,7 +49,8 @@ class ThreePhasePressureParticle {
       const Eigen::VectorXd& gas_pressure_increment,
       const Eigen::VectorXd& nodal_liquid_pressure,
       const Eigen::VectorXd& nodal_gas_pressure,
-      bool reconstruct_pressure_gradient, bool bounded_transfer, double dt) = 0;
+      bool reconstruct_pressure_gradient, bool reconstruct_pressure_force,
+      bool bounded_transfer, double dt) = 0;
 };
 
 }  // namespace mpm

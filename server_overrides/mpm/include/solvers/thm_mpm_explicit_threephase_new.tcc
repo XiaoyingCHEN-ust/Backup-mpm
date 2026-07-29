@@ -75,6 +75,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve() {
     if (pressure_options.find("reconstruct_gradient") != pressure_options.end())
       reconstruct_pressure_gradient_ =
           pressure_options["reconstruct_gradient"].template get<bool>();
+    if (pressure_options.find("reconstruct_force") != pressure_options.end())
+      reconstruct_pressure_force_ =
+          pressure_options["reconstruct_force"].template get<bool>();
   }
   // The historical bounded-transfer diagnostic also reconstructed gradients.
   if (bounded_pressure_transfer_) reconstruct_pressure_gradient_ = true;
@@ -738,7 +741,8 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
           const int limiter_flags = particle->update_semi_implicit_pressure(
               liquid_pressure_increment, gas_pressure_increment,
               nodal_liquid_pressure, nodal_gas_pressure,
-              reconstruct_pressure_gradient_, bounded_pressure_transfer_, dt);
+              reconstruct_pressure_gradient_, reconstruct_pressure_force_,
+              bounded_pressure_transfer_, dt);
           if (limiter_flags < 0) {
             update_status.store(false);
             return;
@@ -752,10 +756,12 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     if (log_pressure_solver_ && step_ % output_steps_ == 0)
       console_->info(
           "Semi-implicit pressure: dofs={}, mesh_active_nodes={}, "
-          "fixed_gas={}, reconstruct_gradient={}, bounded_transfer={}, "
-          "phase_limited={}, capillary_limited={}, residual={}",
+          "fixed_gas={}, reconstruct_gradient={}, reconstruct_force={}, "
+          "bounded_transfer={}, phase_limited={}, capillary_limited={}, "
+          "residual={}",
           system_size, mesh_active_dof, fixed_gas_pressure,
-          reconstruct_pressure_gradient_, bounded_pressure_transfer_,
+          reconstruct_pressure_gradient_, reconstruct_pressure_force_,
+          bounded_pressure_transfer_,
           phase_limited_particles.load(), capillary_limited_particles.load(),
           relative_residual);
     return true;

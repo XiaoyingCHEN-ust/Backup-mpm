@@ -89,10 +89,14 @@ and is therefore not accepted. The bound is retained only behind
 `semi_implicit_pressure.bounded_transfer`, whose default is `false`. The r40
 and r41 meshes showed that the short-time gas-velocity instability is
 independent of whether each horizontal layer occupies one or two cells. The
-r42 option `semi_implicit_pressure.reconstruct_gradient` therefore rebuilds
-only particle pressure gradients from the current nodal solution while
-retaining pure incremental particle pressure values. Mechanical `PIC` and
-`PIC_T` remain zero.
+r42 option `semi_implicit_pressure.reconstruct_gradient` rebuilt only particle
+pressure gradients from the current nodal solution, but code-path inspection
+showed that those vectors do not enter the two-dimensional phase momentum
+internal force and r42 consequently matched r41. The r43 option
+`semi_implicit_pressure.reconstruct_force` uses nodally reconstructed pressure
+only for that internal force. Storage, suction, saturation, density, and
+reported particle pressures remain pure incremental FLIP. Mechanical `PIC`
+and `PIC_T` remain zero.
 
 ## Apply on HPC4
 

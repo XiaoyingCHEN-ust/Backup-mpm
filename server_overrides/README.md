@@ -53,3 +53,10 @@ occupied one or two cells. The independent opt-in setting
 `semi_implicit_pressure.reconstruct_gradient` reconstructs only pressure
 gradients from the current nodal solution; particle pressure values remain
 pure incremental FLIP and are not bounded or projected.
+
+The r42 gradient-only result was unchanged because the current 2-D phase
+momentum internal force is assembled from particle pressure values rather
+than the stored pressure-gradient vectors. The independent r43 option
+`semi_implicit_pressure.reconstruct_force` supplies nodally reconstructed
+pressure only to that internal force. It does not feed the reconstructed
+value back into pressure storage, retention, saturation, or gas density.
