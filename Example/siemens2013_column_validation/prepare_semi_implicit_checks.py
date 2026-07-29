@@ -217,6 +217,16 @@ def main() -> None:
                     "output_steps": output_steps,
                 }
             )
+            if args.reconstruct_pressure_force:
+                liquid_vtk = config["post_processing"].setdefault(
+                    "liquid_vtk", []
+                )
+                for field in (
+                    "force_liquid_pressures",
+                    "force_gas_pressures",
+                ):
+                    if field not in liquid_vtk:
+                        liquid_vtk.append(field)
 
             input_path = output_dir / f"mpm_{args.revision}_{label}.json"
             input_path.write_text(

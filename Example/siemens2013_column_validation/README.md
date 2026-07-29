@@ -1227,6 +1227,36 @@ Leave both bounded pressure transfer and gradient reconstruction disabled.
 The required log combination is `reconstruct_gradient=false`,
 `reconstruct_force=true`, and `bounded_transfer=false`.
 
+r43 passed all eleven short-run checks. At `0.05 s`, the maximum gas velocity
+was reduced from r41's `14.56 m/s` to `1.274 m/s`; maximum pressure remained
+`994.734 Pa`, the saturation range was `0.03010--0.98`, and no detached or
+nonmonotone wet layer was detected. At `0.03 s`, the connected wet depth was
+`17.1 mm`, identical to r32. More importantly, r43 and r41 physical
+saturations and pressures differed by only about `1e-12`, confirming that the
+force reconstruction changes momentum forcing without smoothing the
+hydraulic solution.
+
+The remaining gas-velocity maximum still increased during the `0.05 s` test,
+so do not jump to the multi-second run. Extend only to `0.1 s` (`1000` steps)
+and output the physical and force-only pressures separately. The r43 binary
+already contains these fields; no rebuild is needed:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.1 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-force \
+  --revision r44-reconstructed-force-0p1s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+If the maximum gas velocity approaches a plateau and the force-only pressure
+remains smooth, the next duration is `0.3 s`; otherwise the remaining FLIP
+phase-velocity mode must be treated before extending the hydraulic run.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
