@@ -131,6 +131,12 @@ velocities from the same permeability/viscosity Darcy relation used by the
 semi-implicit pressure equation. It does not change solid `PIC=0`, physical
 particle pressures, or the default solver path.
 
+The r48 `0.05 s` closed-column test passed: both phase-velocity sign-change
+counts were zero, both post-startup phase maxima decayed, and the physical
+pressure and saturation fields remained unchanged to round-off. The next
+diagnostic is the unchanged option set extended only to `0.1 s`; it does not
+require another rebuild.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

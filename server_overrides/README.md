@@ -84,3 +84,9 @@ velocity null mode even with direct pressure-gradient forces. The independent
 `semi_implicit_pressure.reconstruct_darcy_velocity` option reconstructs fluid
 velocities from the Darcy relation already assumed by the semi-implicit
 pressure operator. It leaves solid `PIC=0` and defaults to `false`.
+
+The r48 `0.05 s` closed test passed with zero adjacent dry-layer velocity sign
+changes in both phases. After its first output, both phase maxima decayed, and
+physical pressure and saturation matched the pre-velocity-reconstruction
+reference to round-off. Continue with the same executable for only `0.1 s`;
+no source reinstall or rebuild is needed.

@@ -388,6 +388,8 @@ def main():
     maximum_velocity = 0.0
     maximum_liquid_velocity = 0.0
     maximum_gas_velocity = 0.0
+    post_initial_maximum_liquid_velocity = 0.0
+    post_initial_maximum_gas_velocity = 0.0
     saturation_min = math.inf
     saturation_max = -math.inf
     gas_saturation_min = math.inf
@@ -403,7 +405,7 @@ def main():
     maximum_dry_gas_velocity_sign_flips = 0
     maximum_dry_gas_velocity_sign_flips_file = None
     maximum_dry_liquid_velocity_sign_flips = 0
-    for path in files:
+    for file_index, path in enumerate(files):
         arrays = point_arrays(path, names)
         for name, values in arrays.items():
             nonfinite = sum(not math.isfinite(value) for value in values)
@@ -424,6 +426,13 @@ def main():
         gas_velocity = max(abs(value) for value in arrays["gas_velocities"])
         maximum_liquid_velocity = max(maximum_liquid_velocity, liquid_velocity)
         maximum_gas_velocity = max(maximum_gas_velocity, gas_velocity)
+        if file_index > 0:
+            post_initial_maximum_liquid_velocity = max(
+                post_initial_maximum_liquid_velocity, liquid_velocity
+            )
+            post_initial_maximum_gas_velocity = max(
+                post_initial_maximum_gas_velocity, gas_velocity
+            )
         maximum_velocity = max(
             maximum_velocity, liquid_velocity, gas_velocity
         )
@@ -589,6 +598,10 @@ def main():
         f"max_abs_liquid_velocity_component_mps="
         f"{maximum_liquid_velocity:.12g}\n"
         f"max_abs_gas_velocity_component_mps={maximum_gas_velocity:.12g}\n"
+        f"post_initial_max_abs_liquid_velocity_component_mps="
+        f"{post_initial_maximum_liquid_velocity:.12g}\n"
+        f"post_initial_max_abs_gas_velocity_component_mps="
+        f"{post_initial_maximum_gas_velocity:.12g}\n"
         f"min_phase_permeability_m2={minimum_permeability:.12g}\n"
         f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n"
         f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n"

@@ -1405,6 +1405,37 @@ automatic checker rejects adjacent sign alternation in both gas and liquid
 velocities. The physical pressure, saturation, and `0.03 s` wet depth must
 also remain unchanged before any extension.
 
+r48 passed all of those checks. The maximum dry-layer sign-change count was
+zero for both phases, and the physical pressure and saturation fields matched
+r43 to approximately `1.1e-11 Pa` and `4.3e-15`, respectively. The connected
+wet depth remained `17.1 mm`. The reported `0.0926 m/s` gas-velocity maximum
+belongs only to the first output: after that startup frame, the gas maximum
+decreased from `0.0286 m/s` at `0.005 s` to `0.0255 m/s` at `0.05 s`, while
+the liquid maximum decreased from `0.0278 m/s` to `0.0210 m/s`. The checker
+now writes separate post-initial phase maxima to make this distinction
+explicit.
+
+Extend the unchanged r48 executable only to `0.1 s` before considering a
+longer calculation. No rebuild is required:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.1 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r49-darcy-velocity-0p1s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+The task must report `gradient=true`, `force=true`, and
+`darcy_velocity=true`; the automatic range check must again report zero gas
+and liquid dry-layer sign changes.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
