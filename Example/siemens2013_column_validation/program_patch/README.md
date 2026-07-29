@@ -150,6 +150,12 @@ the upward gas velocity in the already wet front layer began increasing after
 dry-zone alternating mode. Use the unchanged binary for only a `0.5 s` check
 before extending farther.
 
+The r51 `0.5 s` run showed that increase to be a finite front-layer gas pulse:
+it peaked at `0.0832 m/s` at `0.35 s` and collapsed as the layer approached
+full saturation. The dry zone remained bounded and free of sign alternation.
+The next one-second diagnostic uses `0.05 s` output spacing to retain these
+short front events; it does not require a rebuild.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

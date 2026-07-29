@@ -46,6 +46,15 @@ def checked_steps(duration: float, dt: float) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration", type=float, default=0.05)
+    parser.add_argument(
+        "--output-interval",
+        type=float,
+        default=None,
+        help=(
+            "optional physical-time interval between VTK outputs; the "
+            "default writes ten intervals over the run"
+        ),
+    )
     parser.add_argument("--explicit-dt", type=float, default=2.5e-6)
     parser.add_argument(
         "--semi-implicit-dts",
@@ -113,6 +122,8 @@ def main() -> None:
 
     if args.duration <= 0.0:
         parser.error("--duration must be positive")
+    if args.output_interval is not None and args.output_interval <= 0.0:
+        parser.error("--output-interval must be positive")
     if args.explicit_dt <= 0.0 or any(dt <= 0.0 for dt in args.semi_implicit_dts):
         parser.error("all time steps must be positive")
     boundary_penalties = (
@@ -220,7 +231,18 @@ def main() -> None:
                     "current_time": 0.0,
                 }
             )
-            output_steps = max(1, nsteps // 10)
+            if args.output_interval is None:
+                output_steps = max(1, nsteps // 10)
+            else:
+                try:
+                    output_steps = checked_steps(args.output_interval, dt)
+                except ValueError as error:
+                    parser.error(str(error))
+                if output_steps > nsteps or nsteps % output_steps:
+                    parser.error(
+                        "--duration must contain an integer number of "
+                        "--output-interval values for every requested time step"
+                    )
             config["post_processing"].update(
                 {
                     "path": "stability_results/",

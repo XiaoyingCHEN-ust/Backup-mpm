@@ -102,3 +102,8 @@ gas velocity continued to decay, while upward gas velocity localized in the
 connected wetting-front layer rose to `0.0436 m/s`. The checker now separates
 post-initial dry- and wet-zone gas maxima. Continue with the unchanged binary
 for only `0.5 s`; no rebuild is needed.
+
+The r51 `0.5 s` result confirmed a finite wet-front gas pulse, peaking at
+`0.0832 m/s` before collapsing when that layer approached full saturation.
+Dry-zone velocities remained bounded and nonalternating. Continue to one
+second with `0.05 s` VTK output spacing; no rebuild is needed.

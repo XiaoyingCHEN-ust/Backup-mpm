@@ -1500,6 +1500,38 @@ No rebuild is required. Accept r51 only if the velocity remains bounded and
 localized at the connected front, while the dry-zone sign-change counts stay
 zero and the pressure/saturation profile remains monotone.
 
+r51 passed through `0.5 s`. The wet-front gas velocity formed one finite
+upward pulse: it reached `0.0832 m/s` at `0.35 s`, then fell to
+`4.20e-4 m/s` at `0.4 s` as that layer approached `S_l=0.98` and its gas
+permeability reached the endpoint floor. At `0.5 s`, the wet-zone gas maximum
+was `4.58e-4 m/s`, the dry-zone maximum was `0.0141 m/s`, and both dry-layer
+sign-change counts remained zero. Dry-zone mean gas pressure increased
+smoothly to `678 Pa`; the connected wetting depth remained `22.8 mm`, with no
+detached band or saturation reversal.
+
+The generator accepts `--output-interval` so longer diagnostics can retain
+the `0.05 s` sampling used to resolve that front-layer pulse. Continue with a
+one-second run using the unchanged executable:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 1.0 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r52-darcy-velocity-1s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+This produces 21 particle outputs rather than the default 11. No rebuild is
+required. Inspect each front-layer pulse and the dry-zone pressure trend
+before increasing the duration again.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
