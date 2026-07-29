@@ -161,9 +161,11 @@ public:
   ThreePhasePressureState<Tdim> semi_implicit_pressure_state() override;
 
   //! Update particle pressures and gradients from global nodal increments.
-  bool update_semi_implicit_pressure(
+  int update_semi_implicit_pressure(
       const Eigen::VectorXd& liquid_pressure_increment,
-      const Eigen::VectorXd& gas_pressure_increment, double dt) override;
+      const Eigen::VectorXd& gas_pressure_increment,
+      const Eigen::VectorXd& nodal_liquid_pressure,
+      const Eigen::VectorXd& nodal_gas_pressure, double dt) override;
 
   // Calculate relative permeability
   double compute_relative_permeability(

@@ -77,16 +77,15 @@ drag coefficient. The r30 two-time-step open check passed with an identical
 wetting-front position at every output time, and the r31 three-second open
 test remained one-dimensional and free of detached wet bands. The r32 closed
 time-step check also passed; its dry-zone gas pressure and wetting-front
-history converged at `dt=1e-4 s`. The r33 three-second closed test also passed
-with stable pressure and front histories; r34 extends only the closed case to
-the directly reported 25 s gas-pressure checkpoint. Although its gas pressure
-reached the experimental range, r34 developed disconnected saturated bands
-after 5 s and is rejected. All four r35 boundary penalties failed at the same
-layer, ruling weak surface-pressure enforcement out as the cause. The r36
-pressure assembly therefore applies a conservative graph-Laplacian correction
-only to positive
-same-phase Darcy-stiffness couplings, restoring the discrete maximum principle
-while preserving matrix row sums.
+history converged at `dt=1e-4 s`. The r33 three-second closed test stayed
+bounded, but a later adjacent-layer audit detected the onset of the same
+nonmonotone mode that invalidated r34. All four r35 boundary penalties failed
+at the same layer. The r36 diffusion correction was inactive, zero gravity
+only reduced the oscillation, and r38 still failed after halving the step. The
+current r39 patch therefore bounds only pressure-FLIP extrema outside each
+particle's local nodal liquid, gas, and capillary pressure ranges. Mechanical
+`PIC` and `PIC_T` remain zero. The solver logs the phase- and capillary-limited
+particle counts at output steps.
 
 ## Apply on HPC4
 

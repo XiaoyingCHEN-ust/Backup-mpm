@@ -41,10 +41,10 @@ liquid/gas backward-Euler pressure system. The default remains `"explicit"`.
 Its Darcy operator uses the same `permeability / viscosity` mobility implied
 by the current three-phase drag coefficient. The new integration path remains
 experimental. The r30 open time-step check, r31 three-second open test, and
-coupled-pressure r32 closed time-step check passed. The r33 three-second
-closed test also passed. The r34 25 s closed pressure checkpoint failed
-because disconnected wet bands developed after 5 s. The r35 surface-pressure
-penalty sweep did not change the failure. The r36 replacement adds a row-sum-
-preserving graph-Laplacian correction for positive off-diagonal Darcy
-stiffness entries;
-it requires a rebuild and a new 5 s closed check.
+coupled-pressure r32 short closed time-step check passed. Longer closed runs
+revealed a particle-scale alternating mode near the wetting front. Boundary-
+penalty, diffusion-matrix, gravity-removal, and time-step diagnostics did not
+eliminate that mode. The current r39 replacement retains incremental pressure
+transfer but bounds only extrema outside the local nodal liquid-, gas-, and
+capillary-pressure ranges. It logs the limited-particle counts and requires a
+rebuild followed by a short closed check.

@@ -674,52 +674,6 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     pressure_matrix.setFromTriplets(coefficients.begin(), coefficients.end());
     pressure_matrix.makeCompressed();
 
-    // Enforce a discrete maximum principle in each Darcy-diffusion block.
-    // GIMP gradient support can produce positive off-diagonal stiffness
-    // entries, especially for the much more conductive gas phase.  Those
-    // entries caused alternating dry and saturated layers in the confined-
-    // air column even after the pressure-storage matrix was lumped.  Remove
-    // only the positive same-phase couplings and add the same amount to both
-    // diagonals.  This is the minimum symmetric graph-Laplacian correction:
-    // it preserves every row sum and leaves storage, phase coupling, sources,
-    // and boundary terms unchanged.
-    std::vector<Triplet> monotone_correction_triplets;
-    std::size_t monotone_corrected_edges = 0;
-    double monotone_added_diffusion = 0.0;
-    for (int outer = 0; outer < pressure_matrix.outerSize(); ++outer) {
-      for (Eigen::SparseMatrix<double>::InnerIterator entry(pressure_matrix,
-                                                             outer);
-           entry; ++entry) {
-        const auto row = entry.row();
-        const auto col = entry.col();
-        if (row >= col) continue;
-        const bool liquid_block =
-            row < pressure_active_dof && col < pressure_active_dof;
-        const bool gas_block =
-            !fixed_gas_pressure && row >= pressure_active_dof &&
-            col >= pressure_active_dof;
-        if (!liquid_block && !gas_block) continue;
-        const double correction = std::max(
-            {entry.value(), pressure_matrix.coeff(col, row), 0.0});
-        if (!(correction > 0.0)) continue;
-        monotone_correction_triplets.emplace_back(row, col, -correction);
-        monotone_correction_triplets.emplace_back(col, row, -correction);
-        monotone_correction_triplets.emplace_back(row, row, correction);
-        monotone_correction_triplets.emplace_back(col, col, correction);
-        ++monotone_corrected_edges;
-        monotone_added_diffusion += correction;
-      }
-    }
-    if (!monotone_correction_triplets.empty()) {
-      Eigen::SparseMatrix<double> monotone_correction(system_size,
-                                                       system_size);
-      monotone_correction.setFromTriplets(
-          monotone_correction_triplets.begin(),
-          monotone_correction_triplets.end());
-      pressure_matrix += monotone_correction;
-      pressure_matrix.makeCompressed();
-    }
-
     Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> pressure_solver;
     pressure_solver.compute(pressure_matrix);
     if (pressure_solver.info() != Eigen::Success)
@@ -749,6 +703,10 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
         Eigen::VectorXd::Zero(mesh_active_dof);
     Eigen::VectorXd gas_pressure_increment =
         Eigen::VectorXd::Zero(mesh_active_dof);
+    Eigen::VectorXd nodal_liquid_pressure =
+        Eigen::VectorXd::Constant(mesh_active_dof, mean_liquid_pressure);
+    Eigen::VectorXd nodal_gas_pressure =
+        Eigen::VectorXd::Constant(mesh_active_dof, mean_gas_pressure);
     for (unsigned node_id = 0; node_id < mesh_active_dof; ++node_id) {
       const auto dof = pressure_dof[node_id];
       if (dof == invalid_dof) continue;
@@ -756,16 +714,28 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
           compact_liquid_pressure_increment(dof);
       gas_pressure_increment(node_id) =
           compact_gas_pressure_increment(dof);
+      nodal_liquid_pressure(node_id) = pressure(dof);
+      nodal_gas_pressure(node_id) =
+          fixed_gas_pressure ? old_gas_pressure(dof)
+                             : pressure(dof + pressure_active_dof);
     }
     std::atomic<bool> update_status{true};
+    std::atomic<std::size_t> phase_limited_particles{0};
+    std::atomic<std::size_t> capillary_limited_particles{0};
     mesh_->iterate_over_particles(
         [&](const std::shared_ptr<mpm::ParticleBase<Tdim>>& base_particle) {
           const auto particle = std::dynamic_pointer_cast<
               mpm::ThreePhasePressureParticle<Tdim>>(base_particle);
-          if (particle && !particle->update_semi_implicit_pressure(
-                              liquid_pressure_increment,
-                              gas_pressure_increment, dt))
+          if (!particle) return;
+          const int limiter_flags = particle->update_semi_implicit_pressure(
+              liquid_pressure_increment, gas_pressure_increment,
+              nodal_liquid_pressure, nodal_gas_pressure, dt);
+          if (limiter_flags < 0) {
             update_status.store(false);
+            return;
+          }
+          if (limiter_flags & 1) ++phase_limited_particles;
+          if (limiter_flags & 2) ++capillary_limited_particles;
         });
     if (!update_status.load())
       throw std::runtime_error("Particle pressure update failed");
@@ -773,9 +743,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     if (log_pressure_solver_ && step_ % output_steps_ == 0)
       console_->info(
           "Semi-implicit pressure: dofs={}, mesh_active_nodes={}, "
-          "fixed_gas={}, monotone_edges={}, added_diffusion={}, residual={}",
+          "fixed_gas={}, phase_limited={}, capillary_limited={}, residual={}",
           system_size, mesh_active_dof, fixed_gas_pressure,
-          monotone_corrected_edges, monotone_added_diffusion,
+          phase_limited_particles.load(), capillary_limited_particles.load(),
           relative_residual);
     return true;
   } catch (std::exception& exception) {

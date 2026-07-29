@@ -579,8 +579,9 @@ Do not submit the production chains until the r21 directory contains
 `RANGE_CHECK_PASSED.txt`. The closed case uses evolving gas pressure and does
 not need to be repeated for this source change.
 
-Each array task requests one GPU and 32 CPUs from `granularmech` under
-`comgranmech`. It exits nonzero when the executable is stale, the initial
+Each array task requests 32 CPUs and no GPU from `granularmech` under
+`comgranmech`; the TBB MPM executable and Eigen pressure solve are CPU-only.
+It exits nonzero when the executable is stale, the initial
 suction is not 972.99 Pa, saturation leaves [0, 1], or any phase pressure
 exceeds the deliberately loose 1 MPa safety bound. It also rejects non-finite
 arrays, nonpositive phase permeability, inconsistent phase saturations, and
@@ -618,7 +619,7 @@ If the dry run reports 8 open and 18 closed jobs, submit both chains once:
 python submit_production_hpc4.py
 ```
 
-Every job requests one GPU and 32 CPUs from `granularmech` under
+Every job requests 32 CPUs and no GPU from `granularmech` under
 `comgranmech`. It checks both installed source copies, rejects a stale
 executable, verifies the preceding HDF5 checkpoint and completion marker,
 runs the range checks, and writes `SEGMENT_COMPLETED.txt` only after the final
@@ -1057,6 +1058,36 @@ before accepting a production step. If it fails at the same two particle
 layers, retain physical gravity and replace the pure pressure-FLIP transfer
 with a bounded, pressure-specific transfer; the mechanical `PIC` and `PIC_T`
 settings remain zero.
+
+r38 failed at the same `4.5 s` output and the same layer
+(`y=1.04025 m`, `Sw=0.97957`). Halving the step reduced intermediate
+differences slightly but did not change the failure mechanism. The r39 patch
+therefore retains physical gravity and pure mechanical FLIP while bounding
+only the semi-implicit particle-pressure transfer. A particle keeps its FLIP
+increment unless its liquid pressure, gas pressure, or capillary pressure lies
+outside the range of the local resolved nodal solution. The gas pressure is
+preserved when a capillary correction is needed, so the experimental pore-air
+signal is not replaced by PIC smoothing. The solver log records phase- and
+capillary-limited particle counts. The ineffective r36 diffusion-edge scan is
+removed.
+
+All Siemens Slurm scripts now request CPU resources only. Rebuild first, then
+run a `0.05 s` closed smoke test (`500` steps) with full gravity:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the CPU-only rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --revision r39-bounded-pressure-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+Keep the r39 Slurm standard output with the result so the limiter counts can
+be checked before extending the run through `5 s`.
 
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it

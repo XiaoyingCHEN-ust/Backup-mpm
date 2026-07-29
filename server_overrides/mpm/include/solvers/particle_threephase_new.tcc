@@ -1171,17 +1171,30 @@ mpm::ThreePhaseParticleNew<Tdim>::semi_implicit_pressure_state() {
 // Incremental transfer avoids repeated particle-node-particle smoothing of
 // the absolute pressure when the physical pressure increment is zero.
 template <unsigned Tdim>
-bool mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
+int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     const Eigen::VectorXd& nodal_liquid_pressure_increment,
-    const Eigen::VectorXd& nodal_gas_pressure_increment, double dt) {
-  if (this->material_id_ == 999) return true;
+    const Eigen::VectorXd& nodal_gas_pressure_increment,
+    const Eigen::VectorXd& nodal_liquid_pressure,
+    const Eigen::VectorXd& nodal_gas_pressure, double dt) {
+  if (this->material_id_ == 999) return 0;
   try {
     const double old_liquid_pressure = liquid_pressure_;
     const double old_gas_pressure = gas_pressure_;
+    double minimum_liquid_pressure = std::numeric_limits<double>::max();
+    double maximum_liquid_pressure = std::numeric_limits<double>::lowest();
+    double minimum_gas_pressure = std::numeric_limits<double>::max();
+    double maximum_gas_pressure = std::numeric_limits<double>::lowest();
+    double minimum_capillary_pressure = std::numeric_limits<double>::max();
+    double maximum_capillary_pressure = std::numeric_limits<double>::lowest();
+    liquid_pressure_gradient_.setZero();
+    gas_pressure_gradient_.setZero();
     for (unsigned i = 0; i < nodes_.size(); ++i) {
       const auto active_id = nodes_[i]->active_id();
       if (active_id >=
-          static_cast<Index>(nodal_liquid_pressure_increment.size()))
+              static_cast<Index>(nodal_liquid_pressure_increment.size()) ||
+          active_id >= static_cast<Index>(nodal_gas_pressure_increment.size()) ||
+          active_id >= static_cast<Index>(nodal_liquid_pressure.size()) ||
+          active_id >= static_cast<Index>(nodal_gas_pressure.size()))
         throw std::runtime_error("Invalid active node id in pressure update");
       liquid_pressure_ +=
           shapefn_[i] * nodal_liquid_pressure_increment(active_id);
@@ -1189,16 +1202,85 @@ bool mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
           shapefn_[i] * nodal_gas_pressure_increment(active_id);
       liquid_pressure_gradient_ +=
           dn_dx_.row(i).transpose() *
-          nodal_liquid_pressure_increment(active_id);
+          nodal_liquid_pressure(active_id);
       gas_pressure_gradient_ +=
           dn_dx_.row(i).transpose() *
-          nodal_gas_pressure_increment(active_id);
+          nodal_gas_pressure(active_id);
+      minimum_liquid_pressure = std::min(
+          minimum_liquid_pressure, nodal_liquid_pressure(active_id));
+      maximum_liquid_pressure = std::max(
+          maximum_liquid_pressure, nodal_liquid_pressure(active_id));
+      minimum_gas_pressure = std::min(
+          minimum_gas_pressure, nodal_gas_pressure(active_id));
+      maximum_gas_pressure = std::max(
+          maximum_gas_pressure, nodal_gas_pressure(active_id));
+      const double capillary_pressure =
+          nodal_gas_pressure(active_id) - nodal_liquid_pressure(active_id);
+      minimum_capillary_pressure =
+          std::min(minimum_capillary_pressure, capillary_pressure);
+      maximum_capillary_pressure =
+          std::max(maximum_capillary_pressure, capillary_pressure);
     }
 
     const bool fixed_gas_pressure =
         liquid_material_->template property_or<bool>(
             std::string("fixed_gas_pressure"), false);
     if (fixed_gas_pressure) gas_pressure_ = old_gas_pressure;
+    unsigned limiter_flags = 0;
+    const bool pressure_boundary = set_pressure_constraint_ || this->free_surface();
+    if (!pressure_boundary) {
+      // Bound the FLIP pressure transfer by the local resolved nodal field.
+      // Pure incremental transfer preserves particle modes that are invisible
+      // to the pressure grid.  Gravity amplified one such two-particle mode
+      // into alternating wet and dry layers.  Clipping only new extrema keeps
+      // resolved FLIP increments unchanged and is distinct from mechanical
+      // PIC damping.
+      const double candidate_liquid_pressure = liquid_pressure_;
+      const double candidate_gas_pressure = gas_pressure_;
+      if (!fixed_gas_pressure) {
+        gas_pressure_ = std::max(
+            minimum_gas_pressure,
+            std::min(maximum_gas_pressure, gas_pressure_));
+      }
+      // Preserve the pore-air pressure where possible and project liquid
+      // pressure onto the intersection of its phase and capillary bounds.
+      const double feasible_liquid_lower = std::max(
+          minimum_liquid_pressure,
+          gas_pressure_ - maximum_capillary_pressure);
+      const double feasible_liquid_upper = std::min(
+          maximum_liquid_pressure,
+          gas_pressure_ - minimum_capillary_pressure);
+      if (feasible_liquid_lower <= feasible_liquid_upper) {
+        liquid_pressure_ = std::max(
+            feasible_liquid_lower,
+            std::min(feasible_liquid_upper, liquid_pressure_));
+      } else {
+        // The independent gas clamp can very rarely miss the coupled feasible
+        // set.  A local nodal pressure pair is feasible by construction.
+        double closest_distance = std::numeric_limits<double>::max();
+        for (unsigned i = 0; i < nodes_.size(); ++i) {
+          const auto active_id = nodes_[i]->active_id();
+          const double nodal_gas = fixed_gas_pressure
+              ? old_gas_pressure
+              : nodal_gas_pressure(active_id);
+          const double distance =
+              std::pow(nodal_liquid_pressure(active_id) -
+                           candidate_liquid_pressure, 2) +
+              std::pow(nodal_gas - candidate_gas_pressure, 2);
+          if (distance < closest_distance) {
+            closest_distance = distance;
+            liquid_pressure_ = nodal_liquid_pressure(active_id);
+            gas_pressure_ = nodal_gas;
+          }
+        }
+      }
+      if (liquid_pressure_ != candidate_liquid_pressure ||
+          gas_pressure_ != candidate_gas_pressure)
+        limiter_flags |= 1U;
+      if (gas_pressure_ - liquid_pressure_ !=
+          candidate_gas_pressure - candidate_liquid_pressure)
+        limiter_flags |= 2U;
+    }
     if (set_pressure_constraint_) {
       liquid_pressure_ = 0.0;
       gas_pressure_ = 0.0;
@@ -1230,11 +1312,13 @@ bool mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     suction_pressure_ = std::max(gas_pressure_ - liquid_pressure_, 0.0);
     pore_pressure_ = liquid_saturation_ * liquid_pressure_ +
                      gas_saturation_ * gas_pressure_;
-    return std::isfinite(liquid_pressure_) && std::isfinite(gas_pressure_);
+    if (!std::isfinite(liquid_pressure_) || !std::isfinite(gas_pressure_))
+      return -1;
+    return static_cast<int>(limiter_flags);
   } catch (std::exception& exception) {
     console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__,
                     __func__, exception.what());
-    return false;
+    return -1;
   }
 }
 
