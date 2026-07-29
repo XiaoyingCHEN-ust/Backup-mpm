@@ -224,6 +224,54 @@ def maximum_top_cell_abs_value(path: Path, values):
     return max(abs(values[index]) for index in top_cell_ids)
 
 
+def dry_layer_velocity_sign_flips(
+    path: Path,
+    saturations,
+    velocities,
+    dry_saturation_threshold,
+    velocity_threshold,
+):
+    """Count adjacent dry layers whose mean vertical velocities change sign."""
+    coordinates = point_coordinates(path)
+    if len(coordinates) != len(saturations):
+        raise ValueError(f"Coordinate/saturation count mismatch in {path}")
+    if len(velocities) != 3 * len(coordinates):
+        raise ValueError(f"Coordinate/velocity count mismatch in {path}")
+
+    layers = {}
+    for index, coordinates_i in enumerate(coordinates):
+        layers.setdefault(round(coordinates_i[1], 8), []).append(index)
+    ordered_layers = sorted(layers)
+    if not ordered_layers or any(
+        len(layers[y]) != 2 for y in ordered_layers
+    ):
+        raise RuntimeError(
+            "The reduced column checker expects exactly two particles per "
+            f"horizontal layer in {path.name}"
+        )
+
+    layer_values = []
+    for y in ordered_layers:
+        indices = layers[y]
+        mean_saturation = sum(saturations[i] for i in indices) / len(indices)
+        mean_vertical_velocity = sum(
+            velocities[3 * i + 1] for i in indices
+        ) / len(indices)
+        layer_values.append((mean_saturation, mean_vertical_velocity))
+
+    flips = 0
+    for lower, upper in zip(layer_values[:-1], layer_values[1:]):
+        if (
+            lower[0] < dry_saturation_threshold
+            and upper[0] < dry_saturation_threshold
+            and abs(lower[1]) > velocity_threshold
+            and abs(upper[1]) > velocity_threshold
+            and lower[1] * upper[1] < 0.0
+        ):
+            flips += 1
+    return flips
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=Path)
@@ -284,6 +332,17 @@ def main():
         default=1.0e-6,
         help="maximum absolute gas pressure allowed in the four top particles",
     )
+    parser.add_argument(
+        "--reject-dry-gas-velocity-sign-alternation",
+        action="store_true",
+        help="reject adjacent dry layers with opposing vertical gas velocities",
+    )
+    parser.add_argument(
+        "--velocity-sign-threshold-mps",
+        type=float,
+        default=1.0e-4,
+        help="ignore smaller vertical velocities in the adjacent-sign check",
+    )
     args = parser.parse_args()
 
     files = sorted(args.result_dir.glob("particle*.vtp"))
@@ -322,6 +381,8 @@ def main():
 
     maximum_pressure = 0.0
     maximum_velocity = 0.0
+    maximum_liquid_velocity = 0.0
+    maximum_gas_velocity = 0.0
     saturation_min = math.inf
     saturation_max = -math.inf
     gas_saturation_min = math.inf
@@ -334,6 +395,9 @@ def main():
     maximum_downward_saturation_location = (None, None, None)
     maximum_surface_gas_pressure = 0.0
     maximum_surface_gas_pressure_file = None
+    maximum_dry_gas_velocity_sign_flips = 0
+    maximum_dry_gas_velocity_sign_flips_file = None
+    maximum_dry_liquid_velocity_sign_flips = 0
     for path in files:
         arrays = point_arrays(path, names)
         for name, values in arrays.items():
@@ -351,10 +415,13 @@ def main():
             maximum_pressure = max(
                 maximum_pressure, max(abs(value) for value in arrays[name])
             )
-        for name in ("liquid_velocities", "gas_velocities"):
-            maximum_velocity = max(
-                maximum_velocity, max(abs(value) for value in arrays[name])
-            )
+        liquid_velocity = max(abs(value) for value in arrays["liquid_velocities"])
+        gas_velocity = max(abs(value) for value in arrays["gas_velocities"])
+        maximum_liquid_velocity = max(maximum_liquid_velocity, liquid_velocity)
+        maximum_gas_velocity = max(maximum_gas_velocity, gas_velocity)
+        maximum_velocity = max(
+            maximum_velocity, liquid_velocity, gas_velocity
+        )
         for name in ("liquid_permeabilities", "gas_permeabilities"):
             minimum_permeability = min(minimum_permeability, min(arrays[name]))
         low = min(arrays["liquid_saturations"])
@@ -406,6 +473,26 @@ def main():
         if surface_gas_pressure > maximum_surface_gas_pressure:
             maximum_surface_gas_pressure = surface_gas_pressure
             maximum_surface_gas_pressure_file = path.name
+        sign_flips = dry_layer_velocity_sign_flips(
+            path,
+            arrays["liquid_saturations"],
+            arrays["gas_velocities"],
+            args.connected_wet_saturation_threshold,
+            args.velocity_sign_threshold_mps,
+        )
+        if sign_flips > maximum_dry_gas_velocity_sign_flips:
+            maximum_dry_gas_velocity_sign_flips = sign_flips
+            maximum_dry_gas_velocity_sign_flips_file = path.name
+        liquid_sign_flips = dry_layer_velocity_sign_flips(
+            path,
+            arrays["liquid_saturations"],
+            arrays["liquid_velocities"],
+            args.connected_wet_saturation_threshold,
+            args.velocity_sign_threshold_mps,
+        )
+        maximum_dry_liquid_velocity_sign_flips = max(
+            maximum_dry_liquid_velocity_sign_flips, liquid_sign_flips
+        )
 
     if not (0.0 <= saturation_min <= saturation_max <= 1.0):
         raise RuntimeError(
@@ -465,6 +552,15 @@ def main():
             "Velocity stability check failed: max component="
             f"{maximum_velocity:.6g} m/s"
         )
+    if (
+        args.reject_dry_gas_velocity_sign_alternation
+        and maximum_dry_gas_velocity_sign_flips > 0
+    ):
+        raise RuntimeError(
+            "Dry-zone gas-velocity sign-alternation check failed: "
+            f"{maximum_dry_gas_velocity_sign_flips} adjacent sign changes in "
+            f"{maximum_dry_gas_velocity_sign_flips_file}"
+        )
 
     marker.write_text(
         f"files={len(files)}\n"
@@ -477,6 +573,9 @@ def main():
         f"initial_max_suction_pa={observed_suction:.12g}\n"
         f"max_abs_pressure_pa={maximum_pressure:.12g}\n"
         f"max_abs_velocity_component_mps={maximum_velocity:.12g}\n"
+        f"max_abs_liquid_velocity_component_mps="
+        f"{maximum_liquid_velocity:.12g}\n"
+        f"max_abs_gas_velocity_component_mps={maximum_gas_velocity:.12g}\n"
         f"min_phase_permeability_m2={minimum_permeability:.12g}\n"
         f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n"
         f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n"
@@ -485,7 +584,11 @@ def main():
         f"max_downward_layer_saturation_increase="
         f"{maximum_downward_saturation_increase:.12g}\n"
         f"max_abs_surface_gas_pressure_pa="
-        f"{maximum_surface_gas_pressure:.12g}\n",
+        f"{maximum_surface_gas_pressure:.12g}\n"
+        f"max_dry_gas_velocity_sign_flips="
+        f"{maximum_dry_gas_velocity_sign_flips}\n"
+        f"max_dry_liquid_velocity_sign_flips="
+        f"{maximum_dry_liquid_velocity_sign_flips}\n",
         encoding="utf-8",
     )
     print(f"PASS: {args.result_dir} (max |p|={maximum_pressure:.6g} Pa)")

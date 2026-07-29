@@ -73,3 +73,8 @@ pressure force from particle-quadrature `p grad(N)` to the directly
 reconstructed strong form `-N grad(p)`. The separate one-switch behaviours
 remain unchanged. This is an opt-in numerical diagnostic rather than a new
 default.
+
+The r46 short test preserved physical pressures and saturations to round-off
+and eliminated the dry-zone gas-velocity sign alternation. It remains an
+experimental opt-in path pending the phase-velocity trend in the subsequent
+`0.1 s` test.

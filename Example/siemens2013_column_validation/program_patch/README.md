@@ -118,6 +118,12 @@ retains its earlier behaviour. This path is opt-in and must pass the short
 hydraulic and velocity comparisons before it can be considered for a longer
 validation run.
 
+r46 passed the short hydraulic comparison: it preserved the r43 physical
+pressure, saturation, and `17.1 mm` connected wet depth to round-off while
+removing all adjacent dry-layer gas-velocity sign changes. Its gas velocity
+remained near `0.038 m/s`; the next accepted step is only a `0.1 s` extension
+because the liquid-phase velocity had not yet plateaued.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

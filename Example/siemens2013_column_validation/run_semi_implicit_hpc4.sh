@@ -138,6 +138,10 @@ fi
 if [[ "${reconstruct_pressure_gradient}" == "True" ]]; then
   range_check_args+=(--require-pressure-gradient-fields)
 fi
+if [[ "${reconstruct_pressure_gradient}" == "True" && \
+      "${reconstruct_pressure_force}" == "True" ]]; then
+  range_check_args+=(--reject-dry-gas-velocity-sign-alternation)
+fi
 python check_vtp_ranges.py "${result_dir}" "${range_check_args[@]}"
 cat > "${result_dir}/SEMI_IMPLICIT_RUN_COMPLETED.txt" <<EOF
 case=${case_name}

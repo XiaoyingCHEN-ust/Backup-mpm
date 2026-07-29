@@ -1336,6 +1336,37 @@ Accept r46 only if its gas velocity loses the adjacent-layer sign alternation
 without moving the `0.03 s` connected wet depth away from `17.1 mm` or
 changing the physical pressure/saturation solution materially.
 
+r46 passed these criteria. Across the dry region, the number of adjacent
+vertical gas-velocity sign changes fell to zero, and the maximum gas velocity
+stayed near `0.038 m/s` from `0.005 s` through `0.05 s`. The overall maximum
+velocity was `0.0585 m/s` and belonged to the liquid phase. At every common
+output through `0.05 s`, the largest r46--r43 differences were approximately
+`1.5e-11 Pa` in physical pressure and `2.5e-15` in saturation. The connected
+wet depth remained `17.1 mm` at both `0.03 s` and `0.05 s`.
+
+The gas mode is therefore controlled without PIC damping, but the liquid
+velocity still grew near the front. Extend the same configuration only to
+`0.1 s` and retain the new adjacent-layer gas-velocity rejection check. The
+r46 executable already contains the required source changes, so no rebuild is
+needed after pulling this checker update:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.1 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --revision r47-direct-gradient-force-0p1s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+The range marker now records phase-specific maximum velocities and dry-layer
+sign-change counts. Do not proceed to `0.3 s` if the liquid velocity continues
+to grow substantially, even if the gas sign-change count remains zero.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
