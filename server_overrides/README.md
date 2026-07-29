@@ -67,3 +67,9 @@ than the stored pressure-gradient vectors. The independent r43 option
 `semi_implicit_pressure.reconstruct_force` supplies nodally reconstructed
 pressure only to that internal force. It does not feed the reconstructed
 value back into pressure storage, retention, saturation, or gas density.
+
+For the r46 diagnostic, enabling both reconstruction switches maps the phase
+pressure force from particle-quadrature `p grad(N)` to the directly
+reconstructed strong form `-N grad(p)`. The separate one-switch behaviours
+remain unchanged. This is an opt-in numerical diagnostic rather than a new
+default.

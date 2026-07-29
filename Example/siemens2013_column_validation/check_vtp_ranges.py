@@ -244,6 +244,14 @@ def main():
             "force_gas_pressures diagnostic arrays"
         ),
     )
+    parser.add_argument(
+        "--require-pressure-gradient-fields",
+        action="store_true",
+        help=(
+            "require and validate the liquid_pressure_gradients and "
+            "gas_pressure_gradients diagnostic arrays"
+        ),
+    )
     parser.add_argument("--pressure-limit-pa", type=float, default=1.0e6)
     parser.add_argument("--velocity-limit-mps", type=float, default=10.0)
     parser.add_argument(
@@ -297,6 +305,8 @@ def main():
     )
     if args.require_force_pressure_fields:
         names += ("force_liquid_pressures", "force_gas_pressures")
+    if args.require_pressure_gradient_fields:
+        names += ("liquid_pressure_gradients", "gas_pressure_gradients")
     initial = point_arrays(files[0], names)
     if any(not math.isfinite(value) for value in initial["suction_pressures"]):
         raise RuntimeError("Initial suction array contains non-finite values")
@@ -460,6 +470,8 @@ def main():
         f"files={len(files)}\n"
         f"force_pressure_fields="
         f"{'required' if args.require_force_pressure_fields else 'not_required'}\n"
+        f"pressure_gradient_fields="
+        f"{'required' if args.require_pressure_gradient_fields else 'not_required'}\n"
         f"initial_suction_check="
         f"{'skipped' if args.skip_initial_suction_check else 'passed'}\n"
         f"initial_max_suction_pa={observed_suction:.12g}\n"

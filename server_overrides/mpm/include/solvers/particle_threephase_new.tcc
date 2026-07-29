@@ -757,6 +757,8 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
           ? force_liquid_pressure_ : PIC_liquid_pressure_;
       const double gas_pressure_for_force = reconstruct_pressure_force_
           ? force_gas_pressure_ : PIC_gas_pressure_;
+      const bool direct_gradient_force =
+          reconstruct_pressure_force_ && reconstruct_pressure_gradient_;
 
       this->total_stress_ = this->stress_;
       total_stress_[0] -= this->pore_pressure_;
@@ -764,8 +766,12 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
 
       // LIQUID PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_for_force;
-        liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_for_force;
+        if (direct_gradient_force) {
+          liquid_force = -shapefn_[i] * liquid_pressure_gradient_;
+        } else {
+          liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_for_force;
+          liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_for_force;
+        }
 
         liquid_force *= this->volume_ * this->liquid_fraction_;
 
@@ -774,8 +780,12 @@ void mpm::ThreePhaseParticleNew<2>::map_internal_force() {
 
       // GAS PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        gas_force[0] = dn_dx_(i, 0) * gas_pressure_for_force;
-        gas_force[1] = dn_dx_(i, 1) * gas_pressure_for_force;
+        if (direct_gradient_force) {
+          gas_force = -shapefn_[i] * gas_pressure_gradient_;
+        } else {
+          gas_force[0] = dn_dx_(i, 0) * gas_pressure_for_force;
+          gas_force[1] = dn_dx_(i, 1) * gas_pressure_for_force;
+        }
 
         gas_force *= this->volume_ * this->gas_fraction_;
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Gas, gas_force);
@@ -824,6 +834,8 @@ void mpm::ThreePhaseParticleNew<3>::map_internal_force() {
           ? force_liquid_pressure_ : liquid_pressure_;
       const double gas_pressure_for_force = reconstruct_pressure_force_
           ? force_gas_pressure_ : gas_pressure_;
+      const bool direct_gradient_force =
+          reconstruct_pressure_force_ && reconstruct_pressure_gradient_;
 
       this->total_stress_ = this->stress_;
       total_stress_[0] -= this->pore_pressure_ - this->ini_pore_pressure_;
@@ -834,17 +846,25 @@ void mpm::ThreePhaseParticleNew<3>::map_internal_force() {
 
         // LIQUID PHASE
         liquid_force.setZero();
-        liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_for_force;
-        liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_for_force;
-        liquid_force[2] = dn_dx_(i, 2) * liquid_pressure_for_force;
+        if (direct_gradient_force) {
+          liquid_force = -shapefn_[i] * liquid_pressure_gradient_;
+        } else {
+          liquid_force[0] = dn_dx_(i, 0) * liquid_pressure_for_force;
+          liquid_force[1] = dn_dx_(i, 1) * liquid_pressure_for_force;
+          liquid_force[2] = dn_dx_(i, 2) * liquid_pressure_for_force;
+        }
         liquid_force *= volume_ * liquid_fraction_;
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Liquid, liquid_force);
 
         // GAS PHASE
-        gas_force.setZero(); 
-        gas_force[0] = dn_dx_(i, 0) * gas_pressure_for_force;
-        gas_force[1] = dn_dx_(i, 1) * gas_pressure_for_force;
-        gas_force[2] = dn_dx_(i, 2) * gas_pressure_for_force;
+        gas_force.setZero();
+        if (direct_gradient_force) {
+          gas_force = -shapefn_[i] * gas_pressure_gradient_;
+        } else {
+          gas_force[0] = dn_dx_(i, 0) * gas_pressure_for_force;
+          gas_force[1] = dn_dx_(i, 1) * gas_pressure_for_force;
+          gas_force[2] = dn_dx_(i, 2) * gas_pressure_for_force;
+        }
         gas_force *= volume_ * gas_fraction_; 
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Gas, gas_force);
 
@@ -1198,6 +1218,8 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
   try {
     const double old_liquid_pressure = liquid_pressure_;
     const double old_gas_pressure = gas_pressure_;
+    reconstruct_pressure_gradient_ =
+        reconstruct_pressure_gradient || bounded_transfer;
     reconstruct_pressure_force_ = reconstruct_pressure_force;
     double reconstructed_liquid_pressure = 0.0;
     double reconstructed_gas_pressure = 0.0;
@@ -1207,8 +1229,7 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     double maximum_gas_pressure = std::numeric_limits<double>::lowest();
     double minimum_capillary_pressure = std::numeric_limits<double>::max();
     double maximum_capillary_pressure = std::numeric_limits<double>::lowest();
-    const bool reconstruct_gradient =
-        reconstruct_pressure_gradient || bounded_transfer;
+    const bool reconstruct_gradient = reconstruct_pressure_gradient_;
     if (reconstruct_gradient) {
       liquid_pressure_gradient_.setZero();
       gas_pressure_gradient_.setZero();

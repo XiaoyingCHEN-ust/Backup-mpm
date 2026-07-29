@@ -82,6 +82,8 @@ grep -Fq 'pressure_options["reconstruct_gradient"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq 'pressure_options["reconstruct_force"]' \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "direct_gradient_force" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "force_gas_pressure_ : PIC_gas_pressure_" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
@@ -118,6 +120,12 @@ for relative_path in "${particle_implementations[@]}"; do
   fi
   if grep -Fq "0.981 * liquid_viscosity_" "${source_file}"; then
     echo "Obsolete 0.981 mobility factor remains in ${source_file}" >&2
+    exit 3
+  fi
+  if ! grep -Fq \
+      "liquid_force = -shapefn_[i] * liquid_pressure_gradient_;" \
+      "${source_file}"; then
+    echo "Direct pressure-gradient force is absent from ${source_file}" >&2
     exit 3
   fi
 done

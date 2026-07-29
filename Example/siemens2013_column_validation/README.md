@@ -1300,6 +1300,42 @@ range check passes. The submission script now makes both fields mandatory
 whenever `reconstruct_force=true`, so a silently incomplete output fails the
 job automatically.
 
+r45 passed that mandatory output check and reproduced r44 exactly. At the
+final dry layer immediately below the wetting front, physical gas pressure
+alternated from `441.3 Pa` to `37.5 Pa` between adjacent layers, while the
+corresponding force-only pressure changed smoothly from `245.4 Pa` to
+`246.0 Pa`. Nevertheless, vertical gas velocity alternated from
+`-2.815 m/s` to `+3.178 m/s`. Thus reconstructed pressure values are not the
+remaining source; their subsequent particle-quadrature `p grad(N)` force map
+reintroduces a grid-scale mode.
+
+The next diagnostic uses the reconstructed nodal pressure gradients directly
+in the phase momentum force (`-N grad(p)`). This path is activated only by the
+combination `reconstruct_gradient=true` and `reconstruct_force=true`; physical
+particle pressures, saturation, storage, and `PIC=PIC_T=0` remain unchanged.
+Run only `0.05 s` first:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --revision r46-direct-gradient-force-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+The required solver log is `direct_gradient_force=true`, and the run script
+requires both pressure and pressure-gradient diagnostics in every VTP file.
+Accept r46 only if its gas velocity loses the adjacent-layer sign alternation
+without moving the `0.03 s` connected wet depth away from `17.1 mm` or
+changing the physical pressure/saturation solution materially.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

@@ -336,6 +336,7 @@ protected:
   double gas_pressure_acceleration_;
   double PIC_gas_pressure_;
   double force_gas_pressure_;
+  bool reconstruct_pressure_gradient_{false};
   bool reconstruct_pressure_force_{false};
   double FLIP_gas_pressure_;
   double gas_pressure_increment_;

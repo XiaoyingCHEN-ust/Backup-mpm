@@ -109,6 +109,15 @@ only for that internal force. Storage, suction, saturation, density, and
 reported particle pressures remain pure incremental FLIP. Mechanical `PIC`
 and `PIC_T` remain zero.
 
+The r45 diagnostics showed that reconstructed force pressures were smooth,
+but mapping them through the particle-quadrature weak form `p grad(N)` still
+generated alternating gas velocities. When both `reconstruct_gradient` and
+`reconstruct_force` are true, the r46 diagnostic instead maps the directly
+reconstructed strong-form pressure force `-N grad(p)`. Either option alone
+retains its earlier behaviour. This path is opt-in and must pass the short
+hydraulic and velocity comparisons before it can be considered for a longer
+validation run.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

@@ -757,10 +757,11 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
       console_->info(
           "Semi-implicit pressure: dofs={}, mesh_active_nodes={}, "
           "fixed_gas={}, reconstruct_gradient={}, reconstruct_force={}, "
-          "bounded_transfer={}, phase_limited={}, capillary_limited={}, "
-          "residual={}",
+          "direct_gradient_force={}, bounded_transfer={}, phase_limited={}, "
+          "capillary_limited={}, residual={}",
           system_size, mesh_active_dof, fixed_gas_pressure,
           reconstruct_pressure_gradient_, reconstruct_pressure_force_,
+          reconstruct_pressure_gradient_ && reconstruct_pressure_force_,
           bounded_pressure_transfer_,
           phase_limited_particles.load(), capillary_limited_particles.load(),
           relative_residual);

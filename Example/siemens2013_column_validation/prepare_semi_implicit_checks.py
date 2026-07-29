@@ -227,6 +227,16 @@ def main() -> None:
                 ):
                     if field not in liquid_vtk:
                         liquid_vtk.append(field)
+            if reconstruct_pressure_gradient:
+                liquid_vtk = config["post_processing"].setdefault(
+                    "liquid_vtk", []
+                )
+                for field in (
+                    "liquid_pressure_gradients",
+                    "gas_pressure_gradients",
+                ):
+                    if field not in liquid_vtk:
+                        liquid_vtk.append(field)
 
             input_path = output_dir / f"mpm_{args.revision}_{label}.json"
             input_path.write_text(

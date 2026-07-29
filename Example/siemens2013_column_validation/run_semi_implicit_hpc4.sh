@@ -80,6 +80,8 @@ grep -Fq "solve_semi_implicit_pressure" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "compact_liquid_pressure_increment" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq "direct_gradient_force" \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "Bound the FLIP pressure transfer" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
@@ -97,6 +99,12 @@ for source_file in \
     "${source_file}"
   if grep -Fq "0.981 * liquid_viscosity_" "${source_file}"; then
     echo "Obsolete 0.981 mobility factor remains in ${source_file}" >&2
+    exit 3
+  fi
+  if ! grep -Fq \
+      "liquid_force = -shapefn_[i] * liquid_pressure_gradient_;" \
+      "${source_file}"; then
+    echo "Direct pressure-gradient force is absent from ${source_file}" >&2
     exit 3
   fi
 done
@@ -126,6 +134,9 @@ if [[ "${method}" == "semi_implicit" ]]; then
 fi
 if [[ "${reconstruct_pressure_force}" == "True" ]]; then
   range_check_args+=(--require-force-pressure-fields)
+fi
+if [[ "${reconstruct_pressure_gradient}" == "True" ]]; then
+  range_check_args+=(--require-pressure-gradient-fields)
 fi
 python check_vtp_ranges.py "${result_dir}" "${range_check_args[@]}"
 cat > "${result_dir}/SEMI_IMPLICIT_RUN_COMPLETED.txt" <<EOF
