@@ -107,3 +107,8 @@ The r51 `0.5 s` result confirmed a finite wet-front gas pulse, peaking at
 `0.0832 m/s` before collapsing when that layer approached full saturation.
 Dry-zone velocities remained bounded and nonalternating. Continue to one
 second with `0.05 s` VTK output spacing; no rebuild is needed.
+
+The r52 one-second run also passed. The next layer joined the connected front
+at `0.6 s`, dry-zone gas pressure remained smooth, and both phase sign-change
+counts stayed zero. Because the second wet-layer gas pulse was still rising
+at `1.0 s`, extend only to `1.2 s` with `0.05 s` outputs. No rebuild is needed.

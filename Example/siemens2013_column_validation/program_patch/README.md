@@ -156,6 +156,12 @@ full saturation. The dry zone remained bounded and free of sign alternation.
 The next one-second diagnostic uses `0.05 s` output spacing to retain these
 short front events; it does not require a rebuild.
 
+The r52 one-second result passed. A second layer became connected at `0.6 s`;
+its saturation rose monotonically to `0.865` and its upward gas velocity was
+still increasing at `1.0 s`. Dry-zone gas pressure remained smooth and both
+phase sign-change counts stayed zero. Extend only to `1.2 s` to capture the
+completion of this second pulse.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild
