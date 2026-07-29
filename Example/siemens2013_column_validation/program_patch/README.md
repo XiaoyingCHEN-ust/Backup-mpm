@@ -182,6 +182,11 @@ delayed the connected-front advance. They are rejected as over-stabilized.
 The next sweep tests `0.01`, `0.05`, `0.1`, and `0.2 1/s` with the unchanged
 binary.
 
+In r56, `0.01` and `0.05 1/s` were too weak and retained the late dry-pressure
+mode, whereas `0.1` and `0.2 1/s` passed. The weakest passing `0.1 1/s` rate
+kept the connected-front and dry-gas pressure histories close to r52. Confirm
+it at `dt=5e-5 s` before accepting it for longer calculations.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

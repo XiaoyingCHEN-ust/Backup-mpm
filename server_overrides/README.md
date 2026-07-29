@@ -130,3 +130,8 @@ All r55 rates removed the pressure mode, but `0.5--10 1/s` altered the front-
 layer saturation history and the stronger rates delayed front advance. None
 is accepted. Reuse the binary for a weaker `0.01--0.2 1/s` sweep; no rebuild
 is required.
+
+The r56 sweep identified `0.1 1/s` as the weakest passing rate; `0.01` and
+`0.05 1/s` retained the late mode. The `0.1 1/s` connected-front history was
+unchanged and its dry-zone mean gas pressure remained close to r52. Verify it
+at `dt=5e-5 s` before extending the duration.

@@ -1672,6 +1672,38 @@ zero sign changes, unchanged connected-front history, maximum saturation
 error below `0.05`, and no material change in the valid dry-gas pressure
 history.
 
+All four r56 MPM solves completed, but only `0.1` and `0.2 1/s` passed the
+post-run profile check. Rates `0.01` and `0.05 1/s` retained 33 and 25 dry-
+layer gas-velocity sign changes at `1.2 s`, respectively. The `0.1 1/s` case
+is therefore the weakest passing rate. It retained the complete connected-
+front history, and relative to r52 over `0--1.0 s` its maximum/RMS saturation
+differences were `0.0497/0.00175`. The maximum dry-zone mean gas-pressure
+difference was only `10.5 Pa` and fell to `0.225 Pa` at `1.0 s`. The larger
+pointwise pressure differences were localized at the moving front.
+
+Before accepting `0.1 1/s`, verify the intended time-step invariance by
+halving `dt` over the same interval. The existing binary is unchanged:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 1.2 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 5e-5 \
+  --pressure-projection-rates 0.1 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r57-projection-dt-check-1p2s
+sbatch --array=3 --time=00:45:00 run_semi_implicit_hpc4.sh
+```
+
+No rebuild is required. Compare r57 directly with the r56 `0.1 1/s` result;
+both the front history and the pressure/saturation fields must converge while
+the sign-change counts remain zero.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
