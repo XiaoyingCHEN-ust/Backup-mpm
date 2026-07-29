@@ -1175,7 +1175,8 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     const Eigen::VectorXd& nodal_liquid_pressure_increment,
     const Eigen::VectorXd& nodal_gas_pressure_increment,
     const Eigen::VectorXd& nodal_liquid_pressure,
-    const Eigen::VectorXd& nodal_gas_pressure, double dt) {
+    const Eigen::VectorXd& nodal_gas_pressure, bool bounded_transfer,
+    double dt) {
   if (this->material_id_ == 999) return 0;
   try {
     const double old_liquid_pressure = liquid_pressure_;
@@ -1186,8 +1187,10 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     double maximum_gas_pressure = std::numeric_limits<double>::lowest();
     double minimum_capillary_pressure = std::numeric_limits<double>::max();
     double maximum_capillary_pressure = std::numeric_limits<double>::lowest();
-    liquid_pressure_gradient_.setZero();
-    gas_pressure_gradient_.setZero();
+    if (bounded_transfer) {
+      liquid_pressure_gradient_.setZero();
+      gas_pressure_gradient_.setZero();
+    }
     for (unsigned i = 0; i < nodes_.size(); ++i) {
       const auto active_id = nodes_[i]->active_id();
       if (active_id >=
@@ -1200,26 +1203,31 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
           shapefn_[i] * nodal_liquid_pressure_increment(active_id);
       gas_pressure_ +=
           shapefn_[i] * nodal_gas_pressure_increment(active_id);
-      liquid_pressure_gradient_ +=
-          dn_dx_.row(i).transpose() *
-          nodal_liquid_pressure(active_id);
-      gas_pressure_gradient_ +=
-          dn_dx_.row(i).transpose() *
-          nodal_gas_pressure(active_id);
-      minimum_liquid_pressure = std::min(
-          minimum_liquid_pressure, nodal_liquid_pressure(active_id));
-      maximum_liquid_pressure = std::max(
-          maximum_liquid_pressure, nodal_liquid_pressure(active_id));
-      minimum_gas_pressure = std::min(
-          minimum_gas_pressure, nodal_gas_pressure(active_id));
-      maximum_gas_pressure = std::max(
-          maximum_gas_pressure, nodal_gas_pressure(active_id));
-      const double capillary_pressure =
-          nodal_gas_pressure(active_id) - nodal_liquid_pressure(active_id);
-      minimum_capillary_pressure =
-          std::min(minimum_capillary_pressure, capillary_pressure);
-      maximum_capillary_pressure =
-          std::max(maximum_capillary_pressure, capillary_pressure);
+      if (bounded_transfer) {
+        liquid_pressure_gradient_ +=
+            dn_dx_.row(i).transpose() * nodal_liquid_pressure(active_id);
+        gas_pressure_gradient_ +=
+            dn_dx_.row(i).transpose() * nodal_gas_pressure(active_id);
+        minimum_liquid_pressure = std::min(
+            minimum_liquid_pressure, nodal_liquid_pressure(active_id));
+        maximum_liquid_pressure = std::max(
+            maximum_liquid_pressure, nodal_liquid_pressure(active_id));
+        minimum_gas_pressure = std::min(
+            minimum_gas_pressure, nodal_gas_pressure(active_id));
+        maximum_gas_pressure = std::max(
+            maximum_gas_pressure, nodal_gas_pressure(active_id));
+        const double capillary_pressure =
+            nodal_gas_pressure(active_id) - nodal_liquid_pressure(active_id);
+        minimum_capillary_pressure =
+            std::min(minimum_capillary_pressure, capillary_pressure);
+        maximum_capillary_pressure =
+            std::max(maximum_capillary_pressure, capillary_pressure);
+      } else {
+        liquid_pressure_gradient_ += dn_dx_.row(i).transpose() *
+                                     nodal_liquid_pressure_increment(active_id);
+        gas_pressure_gradient_ += dn_dx_.row(i).transpose() *
+                                  nodal_gas_pressure_increment(active_id);
+      }
     }
 
     const bool fixed_gas_pressure =
@@ -1228,7 +1236,7 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     if (fixed_gas_pressure) gas_pressure_ = old_gas_pressure;
     unsigned limiter_flags = 0;
     const bool pressure_boundary = set_pressure_constraint_ || this->free_surface();
-    if (!pressure_boundary) {
+    if (bounded_transfer && !pressure_boundary) {
       // Bound the FLIP pressure transfer by the local resolved nodal field.
       // Pure incremental transfer preserves particle modes that are invisible
       // to the pressure grid.  Gravity amplified one such two-particle mode

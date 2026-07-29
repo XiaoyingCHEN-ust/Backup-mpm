@@ -12,6 +12,15 @@ from pathlib import Path
 
 CASE_DIR = Path(__file__).resolve().parent
 
+MESH_VARIANTS = {
+    "coarse": ("gimp_mesh2d.txt", "entity_sets.json", 0.0114),
+    "one_particle_per_cell": (
+        "gimp_mesh2d_one_particle_per_cell.txt",
+        "entity_sets_one_particle_per_cell.json",
+        0.0057,
+    ),
+}
+
 
 def step_tag(value: float) -> str:
     mantissa, exponent = f"{value:.12e}".split("e")
@@ -41,6 +50,20 @@ def main() -> None:
     )
     parser.add_argument("--revision", default="r29-lumped-pressure-smoke")
     parser.add_argument("--boundary-penalty", type=float, default=1.0e6)
+    parser.add_argument(
+        "--mesh-variant",
+        choices=tuple(MESH_VARIANTS),
+        default="coarse",
+        help="background mesh; particle positions and volumes are unchanged",
+    )
+    parser.add_argument(
+        "--bounded-pressure-transfer",
+        action="store_true",
+        help=(
+            "enable the diagnostic r39 nodal pressure limiter; it is disabled "
+            "by default because it over-predicted the early wetting-front depth"
+        ),
+    )
     parser.add_argument(
         "--gravity-scale",
         type=float,
@@ -102,6 +125,21 @@ def main() -> None:
                 label += f"_penalty_{step_tag(boundary_penalty)}"
             uuid = f"siemens2013-{args.revision}-{label}"
             config = json.loads(json.dumps(source))
+            mesh_file, entity_sets_file, cell_size = MESH_VARIANTS[
+                args.mesh_variant
+            ]
+            for asset in (mesh_file, entity_sets_file):
+                if not (CASE_DIR / asset).is_file():
+                    parser.error(
+                        f"missing mesh asset {asset}; run python preprocess.py"
+                    )
+            config["mesh"].update(
+                {
+                    "mesh": mesh_file,
+                    "entity_sets": entity_sets_file,
+                    "cellsize_min": cell_size,
+                }
+            )
             source_gravity = config["external_loading_conditions"]["gravity"]
             config["external_loading_conditions"]["gravity"] = [
                 0.0
@@ -112,7 +150,8 @@ def main() -> None:
             config["title"] = (
                 f"Siemens 2013 {case_name} {method} pressure smoke test, "
                 f"dt={dt:g} s, duration={args.duration:g} s, "
-                f"gravity scale={args.gravity_scale:g}"
+                f"gravity scale={args.gravity_scale:g}, "
+                f"mesh={args.mesh_variant}"
             )
             analysis = config["analysis"]
             analysis.update(
@@ -129,6 +168,7 @@ def main() -> None:
             analysis["semi_implicit_pressure"] = {
                 "boundary_penalty": boundary_penalty,
                 "log_solver": True,
+                "bounded_transfer": args.bounded_pressure_transfer,
             }
             analysis["resume"].update(
                 {
@@ -170,6 +210,10 @@ def main() -> None:
                     "input": input_path.relative_to(CASE_DIR).as_posix(),
                     "boundary_penalty": boundary_penalty,
                     "gravity_scale": args.gravity_scale,
+                    "mesh_variant": args.mesh_variant,
+                    "bounded_pressure_transfer": (
+                        args.bounded_pressure_transfer
+                    ),
                 }
             )
 

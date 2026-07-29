@@ -44,7 +44,9 @@ experimental. The r30 open time-step check, r31 three-second open test, and
 coupled-pressure r32 short closed time-step check passed. Longer closed runs
 revealed a particle-scale alternating mode near the wetting front. Boundary-
 penalty, diffusion-matrix, gravity-removal, and time-step diagnostics did not
-eliminate that mode. The current r39 replacement retains incremental pressure
-transfer but bounds only extrema outside the local nodal liquid-, gas-, and
-capillary-pressure ranges. It logs the limited-particle counts and requires a
-rebuild followed by a short closed check.
+eliminate that mode. The r39 local pressure bound removed the oscillation but
+approximately doubled the early wetting-front depth, so it is retained only
+as an opt-in diagnostic (`semi_implicit_pressure.bounded_transfer`, default
+`false`). The r40 check keeps pure incremental pressure transfer and instead
+uses one particle per background cell while preserving two particles per
+horizontal layer and four surface-loaded particles.

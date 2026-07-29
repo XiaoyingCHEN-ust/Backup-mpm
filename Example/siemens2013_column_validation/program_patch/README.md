@@ -82,10 +82,13 @@ bounded, but a later adjacent-layer audit detected the onset of the same
 nonmonotone mode that invalidated r34. All four r35 boundary penalties failed
 at the same layer. The r36 diffusion correction was inactive, zero gravity
 only reduced the oscillation, and r38 still failed after halving the step. The
-current r39 patch therefore bounds only pressure-FLIP extrema outside each
-particle's local nodal liquid, gas, and capillary pressure ranges. Mechanical
-`PIC` and `PIC_T` remain zero. The solver logs the phase- and capillary-limited
-particle counts at output steps.
+The r39 diagnostic bounded pressure-FLIP extrema outside each particle's
+local nodal liquid, gas, and capillary pressure ranges. Although it removed
+the alternating mode, it approximately doubled the early wetting-front depth
+and is therefore not accepted. The bound is retained only behind
+`semi_implicit_pressure.bounded_transfer`, whose default is `false`. The r40
+test instead keeps pure incremental pressure transfer and uses a background
+mesh with one particle per cell; mechanical `PIC` and `PIC_T` remain zero.
 
 ## Apply on HPC4
 

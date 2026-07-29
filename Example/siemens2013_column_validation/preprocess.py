@@ -5,7 +5,9 @@ pond and the lower wet boundary in the coarse transparent-sand column. Since
 the validation targets are one-dimensional, one square cell is used across a
 representative-width slice. Two particles per horizontal layer retain the
 standard 2 x 2 particles per cell, while 188 particle layers resolve the
-approximately 1.075 m experimental interval.
+approximately 1.075 m experimental interval.  A second mesh places each
+particle in its own cell while keeping the particle locations, particle
+volumes, and four-particle surface loading region unchanged.
 """
 
 from __future__ import annotations
@@ -17,12 +19,24 @@ import numpy as np
 
 
 CASE_DIR = Path(__file__).resolve().parent
-CELL_SIZE = 0.0114
-NX = 1
-NY = 94
-WIDTH = NX * CELL_SIZE
-HEIGHT = NY * CELL_SIZE
-PARTICLE_SPACING = CELL_SIZE / 2.0
+COARSE_CELL_SIZE = 0.0114
+PARTICLE_SPACING = COARSE_CELL_SIZE / 2.0
+WIDTH = COARSE_CELL_SIZE
+HEIGHT = 94 * COARSE_CELL_SIZE
+TOP_BOUNDARY_DEPTH = COARSE_CELL_SIZE
+
+MESH_VARIANTS = {
+    "coarse": {
+        "cell_size": COARSE_CELL_SIZE,
+        "mesh": "gimp_mesh2d.txt",
+        "entity_sets": "entity_sets.json",
+    },
+    "one_particle_per_cell": {
+        "cell_size": PARTICLE_SPACING,
+        "mesh": "gimp_mesh2d_one_particle_per_cell.txt",
+        "entity_sets": "entity_sets_one_particle_per_cell.json",
+    },
+}
 
 
 def gimp_mesh2d(width: float, height: float, cell_size: float):
@@ -95,9 +109,10 @@ def as_int_list(values):
     return np.asarray(values, dtype=int).ravel().tolist()
 
 
-def main():
-    nodes, elements = gimp_mesh2d(WIDTH, HEIGHT, CELL_SIZE)
-    particles = particles2d(WIDTH, HEIGHT, PARTICLE_SPACING)
+def generate_mesh_variant(name: str, particles: np.ndarray):
+    variant = MESH_VARIANTS[name]
+    cell_size = variant["cell_size"]
+    nodes, elements = gimp_mesh2d(WIDTH, HEIGHT, cell_size)
 
     tolerance = 1.0e-10
     node_sets = [
@@ -107,9 +122,12 @@ def main():
         {"id": 3, "set": as_int_list(np.where(nodes[:, 0] >= WIDTH - tolerance))},
     ]
 
-    # Apply the imposed surface pressures to all four material points in the
-    # top cell, rather than to only the uppermost particle row.
-    top = np.where(particles[:, 1] >= HEIGHT - CELL_SIZE + tolerance)[0]
+    # Keep the imposed surface pressures on the same four material points for
+    # both meshes.  The loading depth is therefore a physical 11.4 mm and is
+    # deliberately independent of the background-cell size.
+    top = np.where(
+        particles[:, 1] >= HEIGHT - TOP_BOUNDARY_DEPTH + tolerance
+    )[0]
     bottom = np.where(particles[:, 1] <= 0.51 * PARTICLE_SPACING)[0]
     nonfree = np.setdiff1d(np.arange(particles.shape[0]), top)
     particle_sets = [
@@ -120,7 +138,26 @@ def main():
 
     entity_sets = {"node_sets": node_sets, "particle_sets": particle_sets}
 
-    write_mesh(CASE_DIR / "gimp_mesh2d.txt", nodes, elements)
+    write_mesh(CASE_DIR / variant["mesh"], nodes, elements)
+    with (CASE_DIR / variant["entity_sets"]).open(
+        "w", encoding="utf-8", newline="\n"
+    ) as stream:
+        json.dump(entity_sets, stream, indent=2)
+        stream.write("\n")
+
+    return {
+        "cell_size_m": cell_size,
+        "cells": int(elements.shape[0]),
+        "nodes": int(nodes.shape[0]),
+        "particles": int(particles.shape[0]),
+        "particles_per_cell": float(particles.shape[0] / elements.shape[0]),
+        "top_boundary_particles": int(top.size),
+        "bottom_boundary_particles": int(bottom.size),
+    }
+
+
+def main():
+    particles = particles2d(WIDTH, HEIGHT, PARTICLE_SPACING)
     write_particles(CASE_DIR / "particles.txt", particles)
     write_particle_scalar(
         CASE_DIR / "initial_temperature.txt",
@@ -130,20 +167,14 @@ def main():
         CASE_DIR / "initial_volume.txt",
         np.full(particles.shape[0], PARTICLE_SPACING**2),
     )
-    with (CASE_DIR / "entity_sets.json").open(
-        "w", encoding="utf-8", newline="\n"
-    ) as stream:
-        json.dump(entity_sets, stream, indent=2)
-        stream.write("\n")
-
     summary = {
         "width_m": WIDTH,
         "height_m": HEIGHT,
-        "cell_size_m": CELL_SIZE,
-        "cells": int(elements.shape[0]),
-        "particles": int(particles.shape[0]),
-        "top_boundary_particles": int(top.size),
-        "bottom_boundary_particles": int(bottom.size),
+        "particle_spacing_m": PARTICLE_SPACING,
+        "mesh_variants": {
+            name: generate_mesh_variant(name, particles)
+            for name in MESH_VARIANTS
+        },
     }
     print(json.dumps(summary, indent=2))
 

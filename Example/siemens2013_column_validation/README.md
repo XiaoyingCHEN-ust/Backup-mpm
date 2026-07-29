@@ -31,9 +31,11 @@ The computational domain represents the approximately 1.075 m initially
 unsaturated interval from the surface of the coarse sand to the lower wet
 boundary. Because the experiment and validation observables are one-dimensional,
 the numerical domain is a representative 11.4 mm-wide plane-strain slice with
-one cell across its width and 94 cells along its height. Standard 2 x 2 particle
-integration gives two particles per horizontal layer, 188 layers, and a 5.7 mm
-vertical particle spacing. The modeled height is 1.0716 m. Side constraints
+one cell across its width and 94 cells along its height in the original mesh.
+Standard 2 x 2 particle integration gives two particles per horizontal layer,
+188 layers, and a 5.7 mm vertical particle spacing. The r40 diagnostic uses
+the same 376 particles with a 2-by-188-cell mesh, placing one particle in each
+cell. The modeled height is 1.0716 m. Side constraints
 enforce one-dimensional flow, and the skeleton is fixed to isolate hydraulic
 liquid–gas coupling. The reduced width changes total modeled volume but not
 pressure, saturation, or wetting-front quantities defined per unit area.
@@ -64,8 +66,8 @@ is not a fitted infiltration parameter.
 
 ## Files
 
-- `preprocess.py` generates the mesh, particles, volumes, temperatures, and
-  entity sets.
+- `preprocess.py` generates both background-mesh variants, the shared
+  particles, volumes, temperatures, and corresponding entity sets.
 - `mpm_open.json` and `mpm_closed.json` are the two solver inputs.
 - `reference_data/` contains values read from Figures 7, 8, and 11 and the
   pressure range stated in the paper. The wetting-front points are approximate
@@ -1088,6 +1090,42 @@ sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
 
 Keep the r39 Slurm standard output with the result so the limiter counts can
 be checked before extending the run through `5 s`.
+
+The r39 smoke test completed all 500 steps and passed the range and profile
+checks, but it is rejected on accuracy grounds.  At `0.03 s` its continuous
+wet depth was about `34.2 mm`, compared with `17.1 mm` in the converged r32
+solution at the same time.  Thus the apparently stable local bound behaves
+as a pressure projection and approximately doubles the early front advance.
+The limiter remains available only as the diagnostic option
+`analysis.semi_implicit_pressure.bounded_transfer`; new inputs leave it
+`false`, and it must not be used for the validation calculation.
+
+The r40 diagnostic instead removes the unresolved two-particle-within-one-
+cell mode at its source.  It retains the same 376 material points, positions,
+particle volumes, column dimensions, full gravity, and `PIC=PIC_T=0`, but
+uses a `0.0057 m` background mesh.  Each cell then contains one particle and
+each horizontal layer still contains two particles.  The physical surface
+loading depth remains `0.0114 m`, so the boundary pressure still acts on
+exactly four particles.  Generate the tracked mesh and run only a `0.05 s`
+closed smoke test:
+
+```bash
+python preprocess.py
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_particle_per_cell \
+  --revision r40-one-particle-per-cell-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+Do not add `--bounded-pressure-transfer`.  Before any 5 s extension, compare
+the r40 `0.03 s` profile with r32 and confirm that the top-connected wet depth
+has not acquired the r39 projection bias.
 
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it

@@ -69,6 +69,9 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve() {
     if (pressure_options.find("log_solver") != pressure_options.end())
       log_pressure_solver_ =
           pressure_options["log_solver"].template get<bool>();
+    if (pressure_options.find("bounded_transfer") != pressure_options.end())
+      bounded_pressure_transfer_ =
+          pressure_options["bounded_transfer"].template get<bool>();
   }
   if (!(pressure_boundary_penalty_ > 0.0))
     throw std::runtime_error(
@@ -729,7 +732,8 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
           if (!particle) return;
           const int limiter_flags = particle->update_semi_implicit_pressure(
               liquid_pressure_increment, gas_pressure_increment,
-              nodal_liquid_pressure, nodal_gas_pressure, dt);
+              nodal_liquid_pressure, nodal_gas_pressure,
+              bounded_pressure_transfer_, dt);
           if (limiter_flags < 0) {
             update_status.store(false);
             return;
@@ -743,8 +747,10 @@ bool mpm::ThermoMPMExplicitThreePhaseNew<Tdim>::solve_semi_implicit_pressure(
     if (log_pressure_solver_ && step_ % output_steps_ == 0)
       console_->info(
           "Semi-implicit pressure: dofs={}, mesh_active_nodes={}, "
-          "fixed_gas={}, phase_limited={}, capillary_limited={}, residual={}",
+          "fixed_gas={}, bounded_transfer={}, phase_limited={}, "
+          "capillary_limited={}, residual={}",
           system_size, mesh_active_dof, fixed_gas_pressure,
+          bounded_pressure_transfer_,
           phase_limited_particles.load(), capillary_limited_particles.load(),
           relative_residual);
     return true;

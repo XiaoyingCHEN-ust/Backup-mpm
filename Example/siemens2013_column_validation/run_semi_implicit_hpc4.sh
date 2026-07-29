@@ -38,8 +38,9 @@ if [[ -z "${manifest_row}" ]]; then
   exit 4
 fi
 IFS=',' read -r manifest_index label case_name method dt duration nsteps \
-  output_steps uuid input boundary_penalty gravity_scale <<< "${manifest_row}"
-gravity_scale="${gravity_scale%$'\r'}"
+  output_steps uuid input boundary_penalty gravity_scale mesh_variant \
+  bounded_pressure_transfer <<< "${manifest_row}"
+bounded_pressure_transfer="${bounded_pressure_transfer%$'\r'}"
 if [[ "${manifest_index}" != "${task_index}" ]]; then
   echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
   exit 4
@@ -97,6 +98,8 @@ echo "Running ${label} on $(hostname) with ${threads} threads"
 echo "method=${method}, dt=${dt} s, duration=${duration} s, nsteps=${nsteps}"
 echo "boundary penalty=${boundary_penalty}"
 echo "gravity scale=${gravity_scale:-1}"
+echo "mesh variant=${mesh_variant:-coarse}"
+echo "bounded pressure transfer=${bounded_pressure_transfer:-False}"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
@@ -116,4 +119,6 @@ duration_s=${duration}
 nsteps=${nsteps}
 boundary_penalty=${boundary_penalty}
 gravity_scale=${gravity_scale:-1}
+mesh_variant=${mesh_variant:-coarse}
+bounded_pressure_transfer=${bounded_pressure_transfer:-False}
 EOF

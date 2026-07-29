@@ -117,6 +117,8 @@ class ThermoMPMExplicitThreePhaseNew : public MPMBase<Tdim> {
   double pressure_boundary_penalty_{1.0e6};
   //! Log the implicit pressure residual at each output step.
   bool log_pressure_solver_{false};
+  //! Apply the diagnostic local nodal bound to transferred pressures.
+  bool bounded_pressure_transfer_{false};
   // DEBUG
   bool debug_{false};
 
