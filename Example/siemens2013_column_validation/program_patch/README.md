@@ -79,7 +79,10 @@ test remained one-dimensional and free of detached wet bands. The r32 closed
 time-step check also passed; its dry-zone gas pressure and wetting-front
 history converged at `dt=1e-4 s`. The r33 three-second closed test also passed
 with stable pressure and front histories; r34 extends only the closed case to
-the directly reported 25 s gas-pressure checkpoint.
+the directly reported 25 s gas-pressure checkpoint. Although its gas pressure
+reached the experimental range, r34 developed disconnected saturated bands
+after 5 s and is rejected. The r35 short boundary-penalty sweep determines
+whether the weak surface-pressure enforcement is the cause.
 
 ## Apply on HPC4
 

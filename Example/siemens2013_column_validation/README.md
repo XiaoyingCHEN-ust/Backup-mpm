@@ -935,14 +935,44 @@ python prepare_semi_implicit_checks.py \
 sbatch --array=3 --time=04:00:00 run_semi_implicit_hpc4.sh
 ```
 
+The r34 solver wrote all eleven outputs but correctly failed the disconnected-
+wet-layer check, so it is not a validation result. At `2.5 s` the front was
+still continuous, but by `5 s` the upper profile contained alternating dry
+and wet layers (`Sw` approximately `0.03`, `0.96`, `0.63`, and `0.03`). At
+`17.5 s`, a layer at `y=1.02885 m` reached `Sw=0.98` while remaining separated
+from the prescribed surface wet region. The nominal `25 s` dry-zone gas
+pressure was about `1.21 kPa`, within the experimental envelope, but cannot be
+used because the associated saturation field is nonphysical.
+
+The oscillation is confined to the surface-pressure transition and may result
+from correcting the four boundary particles exactly after a weak nodal
+penalty solve. Before changing the solver, run a short closed-only penalty
+sweep through the first failed time. The generator creates ten rows; submit
+only closed semi-implicit rows 6--9:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 5 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalties 1e2 1e3 1e4 1e5 \
+  --revision r35-closed-boundary-penalty-5s
+sbatch --array=6-9 --time=02:00:00 run_semi_implicit_hpc4.sh
+```
+
+Download every result directory even if a task exits during its final range
+check. If the higher penalties retain a top-connected monotone profile, use
+the least stiff passing value; if all four fail, replace the weak particle
+penalty with a consistent pressure-boundary treatment before any longer run.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
 two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
-smoke-test command. Do not start the 50 s open checkpoint or a production
-calculation until r34 confirms the closed-column pressure plateau.
+smoke-test command. Do not start another experimental-time or production
+calculation until the r35 boundary diagnostic resolves the r34 wet-band
+failure.
 
 ## Post-process after both runs
 
