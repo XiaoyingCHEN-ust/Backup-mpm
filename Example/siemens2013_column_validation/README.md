@@ -1564,6 +1564,39 @@ sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
 No rebuild is required. Do not extend to several seconds unless the new wet-
 layer velocity peak remains finite and the dry-zone pressure remains smooth.
 
+r53 produced all `1.2 s` outputs, but the automatic checker correctly rejected
+the result. The second wet-layer gas pulse was finite: its velocity decreased
+from `0.0385 m/s` at `1.0 s` to `4.83e-4 m/s` at `1.1 s`. A different mode
+then appeared in the dry column. The number of adjacent gas-velocity sign
+changes increased from zero at `1.1 s` to 21 at `1.15 s` and 35 at `1.2 s`.
+Adjacent dry-layer gas pressures alternated by roughly `100--300 Pa`, while
+the maximum dry gas velocity remained only `0.00325 m/s`. The pressure and
+saturation fields still matched r52 through `1.0 s` to approximately
+`7.6e-10 Pa` and `3.2e-13`, so the new mode starts after the common interval.
+
+Do not extend r53. Test whether the late dry-pressure mode converges with time
+step by running the same `1.2 s` case at `8e-5 s` and `5e-5 s`. Both retain
+the same `0.05 s` output times:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 1.2 \
+  --output-interval 0.05 \
+  --semi-implicit-dts 8e-5 5e-5 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r54-darcy-dt-check-1p2s
+sbatch --array=4-5 --time=00:45:00 run_semi_implicit_hpc4.sh
+```
+
+Array task 4 uses `dt=8e-5 s`, and task 5 uses `dt=5e-5 s`. No rebuild is
+required. A time-step-independent onset would rule out simple temporal
+truncation and require stabilization of the pressure space instead.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

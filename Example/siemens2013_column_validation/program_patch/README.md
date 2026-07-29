@@ -162,6 +162,12 @@ still increasing at `1.0 s`. Dry-zone gas pressure remained smooth and both
 phase sign-change counts stayed zero. Extend only to `1.2 s` to capture the
 completion of this second pulse.
 
+The r53 second front pulse collapsed normally by `1.1 s`, but a dry-column
+pressure mode then appeared: gas-velocity sign changes increased to 21 at
+`1.15 s` and 35 at `1.2 s`. The result is rejected even though its amplitudes
+remain bounded. Compare `dt=8e-5 s` and `5e-5 s` over the same `1.2 s` interval
+before changing the pressure formulation.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

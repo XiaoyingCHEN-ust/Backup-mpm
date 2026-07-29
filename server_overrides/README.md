@@ -112,3 +112,9 @@ The r52 one-second run also passed. The next layer joined the connected front
 at `0.6 s`, dry-zone gas pressure remained smooth, and both phase sign-change
 counts stayed zero. Because the second wet-layer gas pulse was still rising
 at `1.0 s`, extend only to `1.2 s` with `0.05 s` outputs. No rebuild is needed.
+
+The r53 `1.2 s` result is rejected. Its second wet-front gas pulse collapsed,
+but a dry-column pressure mode appeared after `1.1 s`, reaching 35 adjacent
+gas-velocity sign changes at `1.2 s`. Run the unchanged binary at `dt=8e-5 s`
+and `5e-5 s` over the same interval to distinguish a time-step error from a
+pressure-space mode. No rebuild is needed.
