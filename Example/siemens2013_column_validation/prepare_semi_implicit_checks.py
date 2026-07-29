@@ -70,6 +70,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--reconstruct-pressure-gradient",
+        action="store_true",
+        help=(
+            "recompute particle pressure gradients from the current nodal "
+            "solution without projecting particle pressure values"
+        ),
+    )
+    parser.add_argument(
         "--gravity-scale",
         type=float,
         default=1.0,
@@ -102,6 +110,9 @@ def main() -> None:
         parser.error("--gravity-scale must be finite")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
+    reconstruct_pressure_gradient = (
+        args.reconstruct_pressure_gradient or args.bounded_pressure_transfer
+    )
 
     output_dir = CASE_DIR / "semi_implicit_inputs"
     output_dir.mkdir(exist_ok=True)
@@ -174,6 +185,7 @@ def main() -> None:
                 "boundary_penalty": boundary_penalty,
                 "log_solver": True,
                 "bounded_transfer": args.bounded_pressure_transfer,
+                "reconstruct_gradient": reconstruct_pressure_gradient,
             }
             analysis["resume"].update(
                 {
@@ -218,6 +230,9 @@ def main() -> None:
                     "mesh_variant": args.mesh_variant,
                     "bounded_pressure_transfer": (
                         args.bounded_pressure_transfer
+                    ),
+                    "reconstruct_pressure_gradient": (
+                        reconstruct_pressure_gradient
                     ),
                 }
             )

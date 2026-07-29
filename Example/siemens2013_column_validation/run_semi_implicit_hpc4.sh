@@ -39,8 +39,9 @@ if [[ -z "${manifest_row}" ]]; then
 fi
 IFS=',' read -r manifest_index label case_name method dt duration nsteps \
   output_steps uuid input boundary_penalty gravity_scale mesh_variant \
-  bounded_pressure_transfer <<< "${manifest_row}"
+  bounded_pressure_transfer reconstruct_pressure_gradient <<< "${manifest_row}"
 bounded_pressure_transfer="${bounded_pressure_transfer%$'\r'}"
+reconstruct_pressure_gradient="${reconstruct_pressure_gradient%$'\r'}"
 if [[ "${manifest_index}" != "${task_index}" ]]; then
   echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
   exit 4
@@ -100,6 +101,7 @@ echo "boundary penalty=${boundary_penalty}"
 echo "gravity scale=${gravity_scale:-1}"
 echo "mesh variant=${mesh_variant:-coarse}"
 echo "bounded pressure transfer=${bounded_pressure_transfer:-False}"
+echo "reconstruct pressure gradient=${reconstruct_pressure_gradient:-False}"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
@@ -121,4 +123,5 @@ boundary_penalty=${boundary_penalty}
 gravity_scale=${gravity_scale:-1}
 mesh_variant=${mesh_variant:-coarse}
 bounded_pressure_transfer=${bounded_pressure_transfer:-False}
+reconstruct_pressure_gradient=${reconstruct_pressure_gradient:-False}
 EOF

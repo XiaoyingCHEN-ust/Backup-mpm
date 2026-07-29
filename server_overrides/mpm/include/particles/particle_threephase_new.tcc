@@ -1175,8 +1175,8 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     const Eigen::VectorXd& nodal_liquid_pressure_increment,
     const Eigen::VectorXd& nodal_gas_pressure_increment,
     const Eigen::VectorXd& nodal_liquid_pressure,
-    const Eigen::VectorXd& nodal_gas_pressure, bool bounded_transfer,
-    double dt) {
+    const Eigen::VectorXd& nodal_gas_pressure,
+    bool reconstruct_pressure_gradient, bool bounded_transfer, double dt) {
   if (this->material_id_ == 999) return 0;
   try {
     const double old_liquid_pressure = liquid_pressure_;
@@ -1187,7 +1187,9 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     double maximum_gas_pressure = std::numeric_limits<double>::lowest();
     double minimum_capillary_pressure = std::numeric_limits<double>::max();
     double maximum_capillary_pressure = std::numeric_limits<double>::lowest();
-    if (bounded_transfer) {
+    const bool reconstruct_gradient =
+        reconstruct_pressure_gradient || bounded_transfer;
+    if (reconstruct_gradient) {
       liquid_pressure_gradient_.setZero();
       gas_pressure_gradient_.setZero();
     }
@@ -1203,11 +1205,18 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
           shapefn_[i] * nodal_liquid_pressure_increment(active_id);
       gas_pressure_ +=
           shapefn_[i] * nodal_gas_pressure_increment(active_id);
-      if (bounded_transfer) {
+      if (reconstruct_gradient) {
         liquid_pressure_gradient_ +=
             dn_dx_.row(i).transpose() * nodal_liquid_pressure(active_id);
         gas_pressure_gradient_ +=
             dn_dx_.row(i).transpose() * nodal_gas_pressure(active_id);
+      } else {
+        liquid_pressure_gradient_ += dn_dx_.row(i).transpose() *
+                                     nodal_liquid_pressure_increment(active_id);
+        gas_pressure_gradient_ += dn_dx_.row(i).transpose() *
+                                  nodal_gas_pressure_increment(active_id);
+      }
+      if (bounded_transfer) {
         minimum_liquid_pressure = std::min(
             minimum_liquid_pressure, nodal_liquid_pressure(active_id));
         maximum_liquid_pressure = std::max(
@@ -1222,11 +1231,6 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
             std::min(minimum_capillary_pressure, capillary_pressure);
         maximum_capillary_pressure =
             std::max(maximum_capillary_pressure, capillary_pressure);
-      } else {
-        liquid_pressure_gradient_ += dn_dx_.row(i).transpose() *
-                                     nodal_liquid_pressure_increment(active_id);
-        gas_pressure_gradient_ += dn_dx_.row(i).transpose() *
-                                  nodal_gas_pressure_increment(active_id);
       }
     }
 

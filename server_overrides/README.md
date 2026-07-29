@@ -47,6 +47,9 @@ penalty, diffusion-matrix, gravity-removal, and time-step diagnostics did not
 eliminate that mode. The r39 local pressure bound removed the oscillation but
 approximately doubled the early wetting-front depth, so it is retained only
 as an opt-in diagnostic (`semi_implicit_pressure.bounded_transfer`, default
-`false`). The r40 check keeps pure incremental pressure transfer and instead
-uses one particle per background cell while preserving two particles per
-horizontal layer and four surface-loaded particles.
+`false`). The r40 and r41 mesh checks retained an unstable incrementally
+accumulated gas-pressure gradient irrespective of whether a horizontal layer
+occupied one or two cells. The independent opt-in setting
+`semi_implicit_pressure.reconstruct_gradient` reconstructs only pressure
+gradients from the current nodal solution; particle pressure values remain
+pure incremental FLIP and are not bounded or projected.

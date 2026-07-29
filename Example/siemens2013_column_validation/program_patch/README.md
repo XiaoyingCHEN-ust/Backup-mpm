@@ -87,8 +87,12 @@ local nodal liquid, gas, and capillary pressure ranges. Although it removed
 the alternating mode, it approximately doubled the early wetting-front depth
 and is therefore not accepted. The bound is retained only behind
 `semi_implicit_pressure.bounded_transfer`, whose default is `false`. The r40
-test instead keeps pure incremental pressure transfer and uses a background
-mesh with one particle per cell; mechanical `PIC` and `PIC_T` remain zero.
+and r41 meshes showed that the short-time gas-velocity instability is
+independent of whether each horizontal layer occupies one or two cells. The
+r42 option `semi_implicit_pressure.reconstruct_gradient` therefore rebuilds
+only particle pressure gradients from the current nodal solution while
+retaining pure incremental particle pressure values. Mechanical `PIC` and
+`PIC_T` remain zero.
 
 ## Apply on HPC4
 

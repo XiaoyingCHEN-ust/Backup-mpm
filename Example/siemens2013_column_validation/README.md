@@ -1160,6 +1160,39 @@ Again, leave the bounded pressure transfer disabled.  Only if the r41 gas
 velocity and pressure profiles remain stable will this mesh be extended past
 `0.05 s`.
 
+r41 reproduced r40 almost exactly.  Its maximum gas velocity at `0.05 s` was
+`14.5617 m/s` (only about `0.0005 m/s` below r40), and the final gas-pressure
+difference between the two meshes was below `0.006 Pa`.  Horizontal particle
+integration is therefore not the cause.  Both tests show that incrementally
+accumulating particle pressure gradients retains an unresolved dry-zone mode
+even when adjacent vertical particle layers are assigned to different cells.
+
+The r42 option changes only the pressure-gradient transfer. Particle liquid
+and gas pressures still receive the semi-implicit nodal increments (pure
+FLIP), but their gradients are reconstructed from the current absolute nodal
+pressure solution at every step. It neither clips nor reprojects particle
+pressure values, so it avoids the mechanism that made r39's wetting front too
+fast. Rebuild and repeat the same `0.05 s` r41-mesh smoke test:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --revision r42-reconstructed-gradient-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+Do not enable bounded pressure transfer. The solver log and completion marker
+record `reconstruct_gradient=true` and `bounded_transfer=false` separately.
+The r42 result must pass the velocity check and retain the r32 `0.03 s`
+wetting-front position before it can be extended.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
