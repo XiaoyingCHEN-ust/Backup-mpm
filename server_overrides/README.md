@@ -96,3 +96,9 @@ phase maxima continued to decay through the interval where the earlier FLIP
 mode had reappeared, and the saturation profile remained connected and
 monotone. The next accepted step is an unchanged `0.3 s` closed-column run;
 it also requires no rebuild.
+
+The r50 `0.3 s` run passed the range, profile, and sign-change checks. Dry-zone
+gas velocity continued to decay, while upward gas velocity localized in the
+connected wetting-front layer rose to `0.0436 m/s`. The checker now separates
+post-initial dry- and wet-zone gas maxima. Continue with the unchanged binary
+for only `0.5 s`; no rebuild is needed.

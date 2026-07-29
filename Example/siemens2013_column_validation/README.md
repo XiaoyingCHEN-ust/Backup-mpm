@@ -1468,6 +1468,38 @@ Do not yet jump to the experimental duration. The r50 result must retain the
 zero sign-change counts, a monotone connected saturation profile, and bounded
 gas pressure before the next duration increase.
 
+r50 passed through `0.3 s`. Both phase sign-change counts remained zero, the
+maximum downward saturation increase was only `1.05e-7`, and the maximum gas
+pressure was `828 Pa`. The connected wetting depth was `22.8 mm`. The dry-zone
+gas maximum decreased continuously from `0.0256 m/s` at `0.03 s` to
+`0.00955 m/s` at `0.3 s`, confirming that the earlier dry-zone alternating
+mode did not return. The global gas maximum nevertheless rose to
+`0.0436 m/s` at `0.3 s`. It was localized in the connected wetting-front layer
+at `S_l=0.807` and directed upward as the confined gas was expelled, rather
+than alternating between dry layers. The checker now reports post-initial dry-
+and wet-zone gas maxima separately.
+
+Because the wet-layer gas velocity changed from decreasing to increasing near
+`0.24 s`, extend only to `0.5 s` before attempting a one-second run:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 0.5 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r51-darcy-velocity-0p5s
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+No rebuild is required. Accept r51 only if the velocity remains bounded and
+localized at the connected front, while the dry-zone sign-change counts stay
+zero and the pressure/saturation profile remains monotone.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

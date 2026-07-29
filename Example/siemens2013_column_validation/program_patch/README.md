@@ -143,6 +143,13 @@ decay, both sign-change counts remained zero, and the connected wetting front
 advanced by one layer without a detached band. Continue with the same binary
 for a `0.3 s` closed-column check.
 
+The r50 `0.3 s` run retained zero dry-layer sign changes and a monotone,
+connected saturation profile. Dry-zone gas velocity continued to decay, but
+the upward gas velocity in the already wet front layer began increasing after
+`0.24 s` and reached `0.0436 m/s`. This is spatially distinct from the prior
+dry-zone alternating mode. Use the unchanged binary for only a `0.5 s` check
+before extending farther.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

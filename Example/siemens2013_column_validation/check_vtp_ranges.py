@@ -390,6 +390,8 @@ def main():
     maximum_gas_velocity = 0.0
     post_initial_maximum_liquid_velocity = 0.0
     post_initial_maximum_gas_velocity = 0.0
+    post_initial_maximum_dry_gas_velocity = 0.0
+    post_initial_maximum_wet_gas_velocity = 0.0
     saturation_min = math.inf
     saturation_max = -math.inf
     gas_saturation_min = math.inf
@@ -432,6 +434,43 @@ def main():
             )
             post_initial_maximum_gas_velocity = max(
                 post_initial_maximum_gas_velocity, gas_velocity
+            )
+            particle_gas_velocity = tuple(
+                max(
+                    abs(arrays["gas_velocities"][3 * index + component])
+                    for component in range(3)
+                )
+                for index in range(len(arrays["liquid_saturations"]))
+            )
+            post_initial_maximum_dry_gas_velocity = max(
+                post_initial_maximum_dry_gas_velocity,
+                max(
+                    (
+                        velocity
+                        for saturation, velocity in zip(
+                            arrays["liquid_saturations"],
+                            particle_gas_velocity,
+                        )
+                        if saturation
+                        < args.connected_wet_saturation_threshold
+                    ),
+                    default=0.0,
+                ),
+            )
+            post_initial_maximum_wet_gas_velocity = max(
+                post_initial_maximum_wet_gas_velocity,
+                max(
+                    (
+                        velocity
+                        for saturation, velocity in zip(
+                            arrays["liquid_saturations"],
+                            particle_gas_velocity,
+                        )
+                        if saturation
+                        >= args.connected_wet_saturation_threshold
+                    ),
+                    default=0.0,
+                ),
             )
         maximum_velocity = max(
             maximum_velocity, liquid_velocity, gas_velocity
@@ -602,6 +641,10 @@ def main():
         f"{post_initial_maximum_liquid_velocity:.12g}\n"
         f"post_initial_max_abs_gas_velocity_component_mps="
         f"{post_initial_maximum_gas_velocity:.12g}\n"
+        f"post_initial_max_abs_dry_gas_velocity_component_mps="
+        f"{post_initial_maximum_dry_gas_velocity:.12g}\n"
+        f"post_initial_max_abs_wet_gas_velocity_component_mps="
+        f"{post_initial_maximum_wet_gas_velocity:.12g}\n"
         f"min_phase_permeability_m2={minimum_permeability:.12g}\n"
         f"saturation_range={saturation_min:.12g},{saturation_max:.12g}\n"
         f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n"
