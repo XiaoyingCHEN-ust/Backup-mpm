@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 from pathlib import Path
 
@@ -41,6 +42,15 @@ def main() -> None:
     parser.add_argument("--revision", default="r29-lumped-pressure-smoke")
     parser.add_argument("--boundary-penalty", type=float, default=1.0e6)
     parser.add_argument(
+        "--gravity-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "multiply the source-input gravity vector by this value; use 0 "
+            "only for a diagnostic while retaining the prescribed surface pressure"
+        ),
+    )
+    parser.add_argument(
         "--boundary-penalties",
         type=float,
         nargs="+",
@@ -60,6 +70,8 @@ def main() -> None:
     )
     if any(value <= 0.0 for value in boundary_penalties):
         parser.error("all boundary penalties must be positive")
+    if not math.isfinite(args.gravity_scale):
+        parser.error("--gravity-scale must be finite")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
 
@@ -90,9 +102,17 @@ def main() -> None:
                 label += f"_penalty_{step_tag(boundary_penalty)}"
             uuid = f"siemens2013-{args.revision}-{label}"
             config = json.loads(json.dumps(source))
+            source_gravity = config["external_loading_conditions"]["gravity"]
+            config["external_loading_conditions"]["gravity"] = [
+                0.0
+                if args.gravity_scale == 0.0
+                else args.gravity_scale * float(component)
+                for component in source_gravity
+            ]
             config["title"] = (
                 f"Siemens 2013 {case_name} {method} pressure smoke test, "
-                f"dt={dt:g} s, duration={args.duration:g} s"
+                f"dt={dt:g} s, duration={args.duration:g} s, "
+                f"gravity scale={args.gravity_scale:g}"
             )
             analysis = config["analysis"]
             analysis.update(
@@ -149,6 +169,7 @@ def main() -> None:
                     "uuid": uuid,
                     "input": input_path.relative_to(CASE_DIR).as_posix(),
                     "boundary_penalty": boundary_penalty,
+                    "gravity_scale": args.gravity_scale,
                 }
             )
 

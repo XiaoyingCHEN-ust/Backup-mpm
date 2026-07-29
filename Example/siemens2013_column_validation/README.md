@@ -995,6 +995,37 @@ The pressure-solver log now reports the number of corrected diffusion edges
 and the added graph-diffusion coefficient. Retain the Slurm standard output
 with the result so the correction can be audited.
 
+The r36 result was numerically indistinguishable from the r35 penalty-100
+result: across all saved outputs the largest saturation difference was only
+`1.13e-12` and the largest pressure difference was `3.71e-10 Pa`. It again
+failed at `4.5 s`, with a disconnected layer at `y=1.04025 m` reaching
+`Sw=0.97975`. Thus positive same-phase diffusion off-diagonals are not the
+active mechanism in this case. The corresponding Slurm output should still
+be retained to confirm the reported `monotone_edges` count.
+
+The next test isolates the gravity source term without changing the imposed
+top pressure (`994.734 Pa`) or any constitutive parameter. This is a numerical
+diagnostic only: zero gravity does not reproduce the Siemens experiment and
+must not be used for the final validation. No rebuild is required. Generate
+the zero-gravity matrix and submit only the 5 s closed semi-implicit row:
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 5 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 0 \
+  --revision r37-zero-gravity-5s
+sbatch --array=3 --time=02:00:00 run_semi_implicit_hpc4.sh
+```
+
+The generator changes gravity only in the generated inputs and leaves
+`mpm_closed.json` and `mpm_open.json` untouched. If the same layer oscillation
+remains, gravity is excluded and the next correction must target the coupled
+storage/particle-transfer formulation. If it disappears, run a short paired
+gravity refinement before deciding how the physical gravity term should be
+discretised. In either outcome, restore `gravity scale=1` for validation.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the
@@ -1002,8 +1033,8 @@ two duplicated particle sources; the current sources remain recoverable from
 the tracked replacements. Each smoke-test task performs the usual decoded-VTP
 range checks. The r23--r27 sequence above supersedes the original four-job
 smoke-test command. Do not start another experimental-time or production
-calculation until r36 removes the r34/r35 wet-band failure without creating a
-new range or symmetry failure.
+calculation until the short diagnostics remove the r34/r35 wet-band failure
+without creating a new range or symmetry failure.
 
 ## Post-process after both runs
 

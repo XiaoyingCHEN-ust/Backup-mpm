@@ -39,8 +39,8 @@ if [[ -z "${manifest_row}" ]]; then
   exit 4
 fi
 IFS=',' read -r manifest_index label case_name method dt duration nsteps \
-  output_steps uuid input boundary_penalty <<< "${manifest_row}"
-boundary_penalty="${boundary_penalty%$'\r'}"
+  output_steps uuid input boundary_penalty gravity_scale <<< "${manifest_row}"
+gravity_scale="${gravity_scale%$'\r'}"
 if [[ "${manifest_index}" != "${task_index}" ]]; then
   echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
   exit 4
@@ -97,6 +97,7 @@ fi
 echo "Running ${label} on $(hostname) with ${threads} threads"
 echo "method=${method}, dt=${dt} s, duration=${duration} s, nsteps=${nsteps}"
 echo "boundary penalty=${boundary_penalty}"
+echo "gravity scale=${gravity_scale:-1}"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
@@ -115,4 +116,5 @@ dt_s=${dt}
 duration_s=${duration}
 nsteps=${nsteps}
 boundary_penalty=${boundary_penalty}
+gravity_scale=${gravity_scale:-1}
 EOF
