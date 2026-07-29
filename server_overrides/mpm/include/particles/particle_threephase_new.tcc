@@ -1076,6 +1076,28 @@ void mpm::ThreePhaseParticleNew<Tdim>::compute_updated_velocity(
       this->liquid_acceleration_ = liquid_acceleration;
       this->gas_acceleration_ = gas_acceleration;  
 
+      if (reconstruct_darcy_velocity_) {
+        // The semi-implicit pressure equation already assumes Darcy flow.
+        // Reconstruct the phase velocities from that same constitutive
+        // relation so particle FLIP cannot retain an unresolved velocity mode.
+        const auto previous_liquid_velocity = liquid_velocity_;
+        const auto previous_gas_velocity = gas_velocity_;
+        const double liquid_mobility = liquid_permeability_ /
+            (std::max(liquid_viscosity_, 1.0e-30) *
+             std::max(liquid_fraction_, 1.0e-12));
+        const double gas_mobility = gas_permeability_ /
+            (std::max(gas_viscosity_, 1.0e-30) *
+             std::max(gas_fraction_, 1.0e-12));
+        liquid_velocity_ = velocity_ + liquid_mobility *
+            (liquid_density_ * pgravity_ - liquid_pressure_gradient_);
+        gas_velocity_ = velocity_ + gas_mobility *
+            (gas_density_ * pgravity_ - gas_pressure_gradient_);
+        liquid_acceleration_ =
+            (liquid_velocity_ - previous_liquid_velocity) / dt;
+        gas_acceleration_ = (gas_velocity_ - previous_gas_velocity) / dt;
+        return;
+      }
+
       // Get PIC velocity
       Eigen::Matrix<double, Tdim, 1> pic_liquid_velocity;
       Eigen::Matrix<double, Tdim, 1> pic_gas_velocity;
@@ -1213,14 +1235,16 @@ int mpm::ThreePhaseParticleNew<Tdim>::update_semi_implicit_pressure(
     const Eigen::VectorXd& nodal_liquid_pressure,
     const Eigen::VectorXd& nodal_gas_pressure,
     bool reconstruct_pressure_gradient, bool reconstruct_pressure_force,
-    bool bounded_transfer, double dt) {
+    bool reconstruct_darcy_velocity, bool bounded_transfer, double dt) {
   if (this->material_id_ == 999) return 0;
   try {
     const double old_liquid_pressure = liquid_pressure_;
     const double old_gas_pressure = gas_pressure_;
     reconstruct_pressure_gradient_ =
-        reconstruct_pressure_gradient || bounded_transfer;
+        reconstruct_pressure_gradient || reconstruct_darcy_velocity ||
+        bounded_transfer;
     reconstruct_pressure_force_ = reconstruct_pressure_force;
+    reconstruct_darcy_velocity_ = reconstruct_darcy_velocity;
     double reconstructed_liquid_pressure = 0.0;
     double reconstructed_gas_pressure = 0.0;
     double minimum_liquid_pressure = std::numeric_limits<double>::max();

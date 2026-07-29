@@ -1367,6 +1367,44 @@ The range marker now records phase-specific maximum velocities and dry-layer
 sign-change counts. Do not proceed to `0.3 s` if the liquid velocity continues
 to grow substantially, even if the gas sign-change count remains zero.
 
+r47 completed its numerical outputs but correctly failed the new profile
+check. The gas-velocity sign changes reappeared after `0.06 s` and reached 18
+at `0.1 s`; the maximum gas velocity was still only `0.0445 m/s`. More
+importantly, maximum liquid velocity grew almost linearly to `0.118 m/s`, with
+55 adjacent dry-layer sign changes. Physical pressures and saturations still
+matched r45 to approximately `2.7e-11 Pa` and `5.3e-15`, respectively. The
+direct pressure-gradient force therefore delayed the phase-velocity null mode
+but did not eliminate the pure-FLIP accumulation.
+
+The semi-implicit pressure equation already uses Darcy conductivity. The r48
+diagnostic reconstructs each phase velocity from that same local relation,
+`v_phase - v_solid = k/(mu*n*S) * (rho*g - grad(p))`, instead of accumulating
+fluid FLIP acceleration. This is not PIC blending: solid velocity remains
+`PIC=0`, and no pressure or velocity averaging coefficient is introduced.
+The option is independent and defaults to `false`. Rebuild and run only
+`0.05 s`:
+
+```bash
+sbatch program_patch/rebuild_hpc4.sh
+# After the rebuild succeeds:
+python prepare_semi_implicit_checks.py \
+  --duration 0.05 \
+  --semi-implicit-dts 1e-4 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --mesh-variant one_layer_per_cell \
+  --reconstruct-pressure-gradient \
+  --reconstruct-pressure-force \
+  --reconstruct-darcy-velocity \
+  --revision r48-darcy-velocity-smoke
+sbatch --array=3 --time=00:30:00 run_semi_implicit_hpc4.sh
+```
+
+The required log contains `darcy_velocity=true`. For this diagnostic, the
+automatic checker rejects adjacent sign alternation in both gas and liquid
+velocities. The physical pressure, saturation, and `0.03 s` wet depth must
+also remain unchanged before any extension.
+
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it
 also removes obsolete `.pre-siemens-validation` and `.before-*` copies of the

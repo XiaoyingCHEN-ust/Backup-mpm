@@ -338,6 +338,11 @@ def main():
         help="reject adjacent dry layers with opposing vertical gas velocities",
     )
     parser.add_argument(
+        "--reject-dry-liquid-velocity-sign-alternation",
+        action="store_true",
+        help="reject adjacent dry layers with opposing vertical liquid velocities",
+    )
+    parser.add_argument(
         "--velocity-sign-threshold-mps",
         type=float,
         default=1.0e-4,
@@ -560,6 +565,14 @@ def main():
             "Dry-zone gas-velocity sign-alternation check failed: "
             f"{maximum_dry_gas_velocity_sign_flips} adjacent sign changes in "
             f"{maximum_dry_gas_velocity_sign_flips_file}"
+        )
+    if (
+        args.reject_dry_liquid_velocity_sign_alternation
+        and maximum_dry_liquid_velocity_sign_flips > 0
+    ):
+        raise RuntimeError(
+            "Dry-zone liquid-velocity sign-alternation check failed: "
+            f"{maximum_dry_liquid_velocity_sign_flips} adjacent sign changes"
         )
 
     marker.write_text(

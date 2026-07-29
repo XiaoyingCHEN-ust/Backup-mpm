@@ -86,6 +86,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--reconstruct-darcy-velocity",
+        action="store_true",
+        help=(
+            "reconstruct phase velocities from the Darcy relation used by "
+            "the semi-implicit pressure equation instead of fluid FLIP"
+        ),
+    )
+    parser.add_argument(
         "--gravity-scale",
         type=float,
         default=1.0,
@@ -119,7 +127,9 @@ def main() -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
         parser.error("--revision may contain only letters, numbers, '_' and '-'")
     reconstruct_pressure_gradient = (
-        args.reconstruct_pressure_gradient or args.bounded_pressure_transfer
+        args.reconstruct_pressure_gradient
+        or args.reconstruct_darcy_velocity
+        or args.bounded_pressure_transfer
     )
 
     output_dir = CASE_DIR / "semi_implicit_inputs"
@@ -195,6 +205,9 @@ def main() -> None:
                 "bounded_transfer": args.bounded_pressure_transfer,
                 "reconstruct_gradient": reconstruct_pressure_gradient,
                 "reconstruct_force": args.reconstruct_pressure_force,
+                "reconstruct_darcy_velocity": (
+                    args.reconstruct_darcy_velocity
+                ),
             }
             analysis["resume"].update(
                 {
@@ -265,6 +278,9 @@ def main() -> None:
                     ),
                     "reconstruct_pressure_force": (
                         args.reconstruct_pressure_force
+                    ),
+                    "reconstruct_darcy_velocity": (
+                        args.reconstruct_darcy_velocity
                     ),
                 }
             )

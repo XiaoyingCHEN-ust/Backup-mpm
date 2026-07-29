@@ -78,3 +78,9 @@ The r46 short test preserved physical pressures and saturations to round-off
 and eliminated the dry-zone gas-velocity sign alternation. It remains an
 experimental opt-in path pending the phase-velocity trend in the subsequent
 `0.1 s` test.
+
+The r47 extension confirmed that pure particle FLIP can retain a phase-
+velocity null mode even with direct pressure-gradient forces. The independent
+`semi_implicit_pressure.reconstruct_darcy_velocity` option reconstructs fluid
+velocities from the Darcy relation already assumed by the semi-implicit
+pressure operator. It leaves solid `PIC=0` and defaults to `false`.

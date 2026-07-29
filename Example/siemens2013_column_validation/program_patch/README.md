@@ -124,6 +124,13 @@ removing all adjacent dry-layer gas-velocity sign changes. Its gas velocity
 remained near `0.038 m/s`; the next accepted step is only a `0.1 s` extension
 because the liquid-phase velocity had not yet plateaued.
 
+That r47 extension showed the particle FLIP velocity mode returning after
+`0.06 s` even though the reconstructed pressure gradients remained bounded.
+The independent r48 option `reconstruct_darcy_velocity` reconstructs phase
+velocities from the same permeability/viscosity Darcy relation used by the
+semi-implicit pressure equation. It does not change solid `PIC=0`, physical
+particle pressures, or the default solver path.
+
 ## Apply on HPC4
 
 From the Siemens case directory in the `Backup-mpm` clone, submit the rebuild

@@ -40,10 +40,11 @@ fi
 IFS=',' read -r manifest_index label case_name method dt duration nsteps \
   output_steps uuid input boundary_penalty gravity_scale mesh_variant \
   bounded_pressure_transfer reconstruct_pressure_gradient \
-  reconstruct_pressure_force <<< "${manifest_row}"
+  reconstruct_pressure_force reconstruct_darcy_velocity <<< "${manifest_row}"
 bounded_pressure_transfer="${bounded_pressure_transfer%$'\r'}"
 reconstruct_pressure_gradient="${reconstruct_pressure_gradient%$'\r'}"
 reconstruct_pressure_force="${reconstruct_pressure_force%$'\r'}"
+reconstruct_darcy_velocity="${reconstruct_darcy_velocity%$'\r'}"
 if [[ "${manifest_index}" != "${task_index}" ]]; then
   echo "Manifest index mismatch: expected ${task_index}, got ${manifest_index}" >&2
   exit 4
@@ -82,6 +83,8 @@ grep -Fq "compact_liquid_pressure_increment" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "direct_gradient_force" \
   "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
+grep -Fq 'pressure_options["reconstruct_darcy_velocity"]' \
+  "${mpm_source}/include/solvers/thm_mpm_explicit_threephase_new.tcc"
 grep -Fq "Bound the FLIP pressure transfer" \
   "${mpm_source}/include/particles/particle_threephase_new.tcc"
 grep -Fq 'liquid_vtk_allowed.emplace_back("force_liquid_pressures");' \
@@ -107,6 +110,12 @@ for source_file in \
     echo "Direct pressure-gradient force is absent from ${source_file}" >&2
     exit 3
   fi
+  if ! grep -Fq \
+      "liquid_density_ * pgravity_ - liquid_pressure_gradient_" \
+      "${source_file}"; then
+    echo "Darcy-consistent phase velocity is absent from ${source_file}" >&2
+    exit 3
+  fi
 done
 
 if [[ ! -f "${input}" ]]; then
@@ -122,6 +131,7 @@ echo "mesh variant=${mesh_variant:-coarse}"
 echo "bounded pressure transfer=${bounded_pressure_transfer:-False}"
 echo "reconstruct pressure gradient=${reconstruct_pressure_gradient:-False}"
 echo "reconstruct pressure force=${reconstruct_pressure_force:-False}"
+echo "reconstruct Darcy velocity=${reconstruct_darcy_velocity:-False}"
 "${mpm_bin}" -f "${case_dir}/" -i "${input}" -p "${threads}" 2>&1 | \
   awk '/uuid : .*Step:/ {step_count++; if (step_count % 1000 != 0) next} {print}'
 
@@ -142,6 +152,9 @@ if [[ "${reconstruct_pressure_gradient}" == "True" && \
       "${reconstruct_pressure_force}" == "True" ]]; then
   range_check_args+=(--reject-dry-gas-velocity-sign-alternation)
 fi
+if [[ "${reconstruct_darcy_velocity}" == "True" ]]; then
+  range_check_args+=(--reject-dry-liquid-velocity-sign-alternation)
+fi
 python check_vtp_ranges.py "${result_dir}" "${range_check_args[@]}"
 cat > "${result_dir}/SEMI_IMPLICIT_RUN_COMPLETED.txt" <<EOF
 case=${case_name}
@@ -155,4 +168,5 @@ mesh_variant=${mesh_variant:-coarse}
 bounded_pressure_transfer=${bounded_pressure_transfer:-False}
 reconstruct_pressure_gradient=${reconstruct_pressure_gradient:-False}
 reconstruct_pressure_force=${reconstruct_pressure_force:-False}
+reconstruct_darcy_velocity=${reconstruct_darcy_velocity:-False}
 EOF
