@@ -1,0 +1,204 @@
+"""Generate short physical-time runs for selecting a stable explicit step."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+from itertools import product
+from pathlib import Path
+
+
+CASE_DIR = Path(__file__).resolve().parent
+DEFAULT_TIME_STEPS = (5.0e-5, 5.0e-6, 1.0e-6)
+DEFAULT_DURATION_S = 0.01
+DEFAULT_REVISION = "r3-smoke"
+
+
+def step_tag(dt: float) -> str:
+    mantissa, exponent = f"{dt:.12e}".split("e")
+    mantissa = mantissa.rstrip("0").rstrip(".").replace(".", "p")
+    return f"{mantissa}e{int(exponent):+03d}".replace("+", "")
+
+
+def value_tag(value: float) -> str:
+    return f"{value:.12g}".replace(".", "p").replace("+", "")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--duration", type=float, default=DEFAULT_DURATION_S)
+    parser.add_argument(
+        "--time-steps", type=float, nargs="+", default=DEFAULT_TIME_STEPS
+    )
+    parser.add_argument(
+        "--permeability-scales",
+        type=float,
+        nargs="+",
+        default=(1.0,),
+        help=(
+            "multiply the common intrinsic permeability and shorten the "
+            "computed duration by the same factor; --duration remains the "
+            "reference physical duration"
+        ),
+    )
+    parser.add_argument("--revision", default=DEFAULT_REVISION)
+    parser.add_argument(
+        "--pic",
+        type=float,
+        default=None,
+        help="override analysis.PIC (omit to retain the source input value)",
+    )
+    parser.add_argument(
+        "--pic-t",
+        type=float,
+        default=None,
+        help="override analysis.PIC_T (omit to retain the source input value)",
+    )
+    parser.add_argument(
+        "--pressure-smoothing",
+        choices=("source", "true", "false"),
+        default="source",
+        help="override step-based liquid-pressure smoothing",
+    )
+    args = parser.parse_args()
+
+    if args.duration <= 0.0:
+        parser.error("--duration must be positive")
+    if any(dt <= 0.0 for dt in args.time_steps):
+        parser.error("every time step must be positive")
+    if any(scale <= 0.0 for scale in args.permeability_scales):
+        parser.error("every permeability scale must be positive")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", args.revision):
+        parser.error("--revision may contain only letters, numbers, '_' and '-'")
+    if args.pic is not None and not 0.0 <= args.pic <= 1.0:
+        parser.error("--pic must be between 0 and 1")
+    if args.pic_t is not None and not 0.0 <= args.pic_t <= 1.0:
+        parser.error("--pic-t must be between 0 and 1")
+
+    input_dir = CASE_DIR / "stability_inputs"
+    input_dir.mkdir(exist_ok=True)
+    manifest = input_dir / "manifest.csv"
+    # A failed preparation must not leave a submit script pointing at an old
+    # revision. The manifest is recreated only after every source is loaded
+    # and all requested inputs have been written successfully.
+    manifest.unlink(missing_ok=True)
+
+    sources = {}
+    for case_name in ("open", "closed"):
+        source_path = CASE_DIR / f"mpm_{case_name}.json"
+        if not source_path.is_file():
+            parser.error(f"missing source input: {source_path}")
+        with source_path.open(encoding="utf-8") as stream:
+            sources[case_name] = json.load(stream)
+
+    rows = []
+
+    for case_name, source in sources.items():
+        for permeability_scale, dt in product(
+            args.permeability_scales, args.time_steps
+        ):
+            computed_duration = args.duration / permeability_scale
+            if dt > computed_duration:
+                parser.error(
+                    f"dt {dt:g} exceeds the computed duration "
+                    f"{computed_duration:g} for k scale {permeability_scale:g}"
+                )
+            tag = step_tag(dt)
+            scale_tag = value_tag(permeability_scale)
+            label = (
+                f"{case_name}_{tag}"
+                if permeability_scale == 1.0
+                else f"{case_name}_k{scale_tag}x_{tag}"
+            )
+            uuid = f"siemens2013-stability-{args.revision}-{label}"
+            nsteps = round(computed_duration / dt)
+            duration_tolerance = max(1.0e-12, 1.0e-10 * computed_duration)
+            if not abs(nsteps * dt - computed_duration) <= duration_tolerance:
+                parser.error(
+                    f"computed duration {computed_duration:g} is not an "
+                    f"integer multiple of dt {dt:g}"
+                )
+            output_steps = max(1, nsteps // 20)
+
+            config = json.loads(json.dumps(source))
+            permeability_materials = [
+                material
+                for material in config["materials"]
+                if "intrinsic_permeability" in material
+            ]
+            if len(permeability_materials) != 1:
+                parser.error(
+                    f"expected one intrinsic-permeability material for {case_name}, "
+                    f"found {len(permeability_materials)}"
+                )
+            permeability_materials[0]["intrinsic_permeability"] *= (
+                permeability_scale
+            )
+            if args.pic is not None:
+                config["analysis"]["PIC"] = args.pic
+            if args.pic_t is not None:
+                config["analysis"]["PIC_T"] = args.pic_t
+            if args.pressure_smoothing != "source":
+                config["analysis"]["pressure_smoothing"] = (
+                    args.pressure_smoothing == "true"
+                )
+            pic = config["analysis"]["PIC"]
+            pic_t = config["analysis"]["PIC_T"]
+            smoothing = config["analysis"]["pressure_smoothing"]
+            config["title"] = (
+                f"Siemens 2013 {case_name} stability check, "
+                f"dt={dt:g} s, computed duration={computed_duration:g} s, "
+                f"reference duration={args.duration:g} s, "
+                f"permeability scale={permeability_scale:g}, "
+                f"PIC={pic:g}, PIC_T={pic_t:g}, pressure_smoothing={smoothing}"
+            )
+            config["analysis"]["dt"] = dt
+            config["analysis"]["nsteps"] = nsteps
+            config["analysis"]["uuid"] = uuid
+            config["analysis"]["resume"].update(
+                {"resume": False, "uuid": uuid, "step": 0, "nsteps": 0}
+            )
+            config["analysis"]["validation_time_scaling"] = {
+                "permeability_scale": permeability_scale,
+                "reference_duration_s": args.duration,
+                "computed_duration_s": computed_duration,
+            }
+            config["post_processing"]["path"] = "stability_results/"
+            config["post_processing"]["write_hdf5"] = False
+            config["post_processing"]["output_steps"] = output_steps
+
+            output_path = input_dir / f"mpm_{args.revision}_{label}.json"
+            with output_path.open("w", encoding="utf-8") as stream:
+                json.dump(config, stream, indent=2)
+                stream.write("\n")
+
+            rows.append(
+                {
+                    "array_index": len(rows),
+                    "label": label,
+                    "case": case_name,
+                    "dt_s": dt,
+                    "duration_s": computed_duration,
+                    "nsteps": nsteps,
+                    "output_steps": output_steps,
+                    "uuid": uuid,
+                    "input": output_path.relative_to(CASE_DIR).as_posix(),
+                    "permeability_scale": permeability_scale,
+                    "reference_duration_s": args.duration,
+                }
+            )
+
+    with manifest.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(
+        f"Wrote {len(rows)} stability inputs for revision {args.revision} "
+        f"and {manifest}"
+    )
+
+
+if __name__ == "__main__":
+    main()

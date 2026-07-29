@@ -67,6 +67,12 @@ def main() -> None:
         default="all",
     )
     parser.add_argument(
+        "--gas-model",
+        choices=("all", "variable", "fixed"),
+        default="all",
+        help="Run only the selected gas-pressure formulation",
+    )
+    parser.add_argument(
         "--rerun",
         action="store_true",
         help="Run even when the result directory already exists",
@@ -94,6 +100,8 @@ def main() -> None:
         rows = [
             row for row in rows if args.family in row["families"].split("+")
         ]
+    if args.gas_model != "all":
+        rows = [row for row in rows if row["gas_model"] == args.gas_model]
     if args.skip_legacy_reference:
         rows = [
             row

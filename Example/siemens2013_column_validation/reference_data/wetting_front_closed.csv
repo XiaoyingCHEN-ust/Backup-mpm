@@ -1,0 +1,8 @@
+time_s,elevation_above_column_base_mm,wetting_depth_from_surface_mm
+0,1275,0
+130,1080,195
+315,880,395
+495,680,595
+660,480,795
+850,220,1055
+875,200,1075
