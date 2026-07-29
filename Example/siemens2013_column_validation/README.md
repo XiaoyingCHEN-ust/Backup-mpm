@@ -910,15 +910,17 @@ python prepare_semi_implicit_checks.py \
 sbatch --array=3 run_semi_implicit_hpc4.sh
 ```
 
-The r33 closed run produced all eleven outputs through `3 s` and passed every
-range check. Its top-connected front reached `22.8 mm`, compared with
-`45.6 mm` in r31 open, while the dry-zone mean gas pressure rose smoothly to
-`0.904 kPa`. The gas-pressure standard deviation in the dry zone was only
+The r33 closed run produced all eleven outputs through `3 s` and passed the
+checks available at that stage. Its top-connected front reached `22.8 mm`,
+compared with `45.6 mm` in r31 open, while the dry-zone mean gas pressure rose
+smoothly to `0.904 kPa`. The gas-pressure standard deviation in the dry zone was only
 `4.57 Pa` at `3 s`, and the imposed surface gas pressure remained exactly
 zero. The maximum gas-phase particle speed (`5.66 m/s`) occurred in the highly
 gas-permeable dry region while pressure was rapidly equalising, peaked at
-`2.1 s`, and then declined to `5.07 m/s`; pressure, saturation, and front
-motion remained bounded and monotone.
+`2.1 s`, and then declined to `5.07 m/s`. A later adjacent-layer monotonicity
+audit found a `0.0917` downward saturation increase at `3 s`, however, so r33
+is retained as a bounded preliminary run rather than an accepted validation
+result.
 
 The next run stops at the first direct experimental gas-pressure checkpoint.
 At `25 s`, Siemens et al. report a nearly uniform `1.2--1.6 kPa` excess pore-
@@ -1025,6 +1027,36 @@ remains, gravity is excluded and the next correction must target the coupled
 storage/particle-transfer formulation. If it disappears, run a short paired
 gravity refinement before deciding how the physical gravity term should be
 discretised. In either outcome, restore `gravity scale=1` for validation.
+
+The original r37 checker passed all eleven zero-gravity outputs because the
+wet region remained connected to the surface. A stricter adjacent-layer audit
+showed that it was still not physically acceptable: at `5 s`, the lower layer
+at `y=1.04025 m` reached `Sw=0.671`, while the immediately overlying layer at
+`y=1.04595 m` had `Sw=0.533`. This `0.138` downward increase is a weakened form
+of the same within-cell mode seen with gravity. The range checker now rejects
+an adjacent downward saturation increase greater than `0.05`; r31 open and
+r32 closed convergence results still pass this added test.
+
+Restore the complete physical gravity and halve the semi-implicit step before
+adding a pressure-transfer stabilisation. This distinguishes a nonlinear
+time-step instability from a persistent particle pressure mode. No rebuild is
+required; submit only the 5 s closed semi-implicit row (`100,000` steps):
+
+```bash
+python prepare_semi_implicit_checks.py \
+  --duration 5 \
+  --semi-implicit-dts 5e-5 \
+  --boundary-penalty 100 \
+  --gravity-scale 1 \
+  --revision r38-physical-gravity-dt5e-5-5s
+sbatch --array=3 --time=02:00:00 run_semi_implicit_hpc4.sh
+```
+
+If r38 passes the new monotonicity check, compare it with a `2.5e-5 s` run
+before accepting a production step. If it fails at the same two particle
+layers, retain physical gravity and replace the pure pressure-FLIP transfer
+with a bounded, pressure-specific transfer; the mechanical `PIC` and `PIC_T`
+settings remain zero.
 
 The rebuild installs the tracked particle headers and implementations plus
 the pressure-solver header and implementation. After a successful build it

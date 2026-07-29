@@ -170,6 +170,37 @@ def maximum_unconnected_layer_saturation(path: Path, values, wet_threshold):
     return interior[local_index], ordered_layers[layer_index]
 
 
+def maximum_downward_layer_saturation_increase(path: Path, values):
+    """Return the largest saturation increase from one layer to the one below."""
+    coordinates = point_coordinates(path)
+    if len(coordinates) != len(values):
+        raise ValueError(f"Coordinate/value count mismatch in {path}")
+
+    layers = {}
+    for coordinates_i, value in zip(coordinates, values):
+        layers.setdefault(round(coordinates_i[1], 8), []).append(value)
+    ordered_layers = sorted(layers)
+    if len(ordered_layers) < 2 or any(
+        len(layers[y]) != 2 for y in ordered_layers
+    ):
+        raise RuntimeError(
+            "The reduced column checker expects exactly two particles per "
+            f"horizontal layer in {path.name}"
+        )
+
+    layer_saturations = [
+        sum(layers[y]) / len(layers[y]) for y in ordered_layers
+    ]
+    increase, lower_index = max(
+        (layer_saturations[index] - layer_saturations[index + 1], index)
+        for index in range(len(layer_saturations) - 1)
+    )
+    return max(increase, 0.0), (
+        ordered_layers[lower_index],
+        ordered_layers[lower_index + 1],
+    )
+
+
 def maximum_top_cell_abs_value(path: Path, values):
     """Return the maximum absolute scalar value in the four top particles."""
     coordinates = point_coordinates(path)
@@ -223,6 +254,15 @@ def main():
         ),
     )
     parser.add_argument(
+        "--downward-saturation-increase-limit",
+        type=float,
+        default=0.05,
+        help=(
+            "maximum allowed increase in layer-mean saturation from an upper "
+            "layer to the adjacent lower layer"
+        ),
+    )
+    parser.add_argument(
         "--surface-gas-pressure-limit-pa",
         type=float,
         default=1.0e-6,
@@ -270,6 +310,8 @@ def main():
     layer_saturation_spread = 0.0
     maximum_unconnected_saturation = 0.0
     maximum_unconnected_location = (None, None)
+    maximum_downward_saturation_increase = 0.0
+    maximum_downward_saturation_location = (None, None, None)
     maximum_surface_gas_pressure = 0.0
     maximum_surface_gas_pressure_file = None
     for path in files:
@@ -321,6 +363,18 @@ def main():
         if unconnected_saturation > maximum_unconnected_saturation:
             maximum_unconnected_saturation = unconnected_saturation
             maximum_unconnected_location = (path.name, unconnected_y)
+        downward_increase, adjacent_y = (
+            maximum_downward_layer_saturation_increase(
+                path, arrays["liquid_saturations"]
+            )
+        )
+        if downward_increase > maximum_downward_saturation_increase:
+            maximum_downward_saturation_increase = downward_increase
+            maximum_downward_saturation_location = (
+                path.name,
+                adjacent_y[0],
+                adjacent_y[1],
+            )
         surface_gas_pressure = maximum_top_cell_abs_value(
             path, arrays["gas_pressures"]
         )
@@ -358,6 +412,18 @@ def main():
             f"{layer_y:.6g} m in {filename}; threshold="
             f"{args.connected_wet_saturation_threshold:.6g}"
         )
+    if (
+        maximum_downward_saturation_increase
+        > args.downward_saturation_increase_limit
+    ):
+        filename, lower_y, upper_y = maximum_downward_saturation_location
+        raise RuntimeError(
+            "Nonmonotone wetting-profile check failed: layer-mean saturation "
+            f"increased downward by {maximum_downward_saturation_increase:.6g} "
+            f"between upper y={upper_y:.6g} m and lower y={lower_y:.6g} m "
+            f"in {filename}; limit="
+            f"{args.downward_saturation_increase_limit:.6g}"
+        )
     if maximum_surface_gas_pressure > args.surface_gas_pressure_limit_pa:
         raise RuntimeError(
             "Atmospheric surface gas-pressure check failed: maximum |p_g|="
@@ -387,6 +453,8 @@ def main():
         f"max_layer_saturation_spread={layer_saturation_spread:.12g}\n"
         f"max_unconnected_layer_saturation="
         f"{maximum_unconnected_saturation:.12g}\n"
+        f"max_downward_layer_saturation_increase="
+        f"{maximum_downward_saturation_increase:.12g}\n"
         f"max_abs_surface_gas_pressure_pa="
         f"{maximum_surface_gas_pressure:.12g}\n",
         encoding="utf-8",
