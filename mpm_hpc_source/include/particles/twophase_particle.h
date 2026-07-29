@@ -1,0 +1,348 @@
+#ifndef MPM_TWOPHASE_PARTICLE_H_
+#define MPM_TWOPHASE_PARTICLE_H_
+
+#include <array>
+#include <limits>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "logger.h"
+#include "particle.h"
+
+namespace mpm {
+
+// TwoPhaseParticle class
+template <unsigned Tdim>
+class TwoPhaseParticle : public mpm::Particle<Tdim> {
+
+  public:
+    // Define a vector of size dimension
+    using VectorDim = Eigen::Matrix<double, Tdim, 1>;
+
+    //============================================================================
+    // CONSTRUCT AND DESTRUCT A PARTICLE
+
+    // Construct a particle with id and coordinates
+    TwoPhaseParticle(Index id, const VectorDim& coord);
+
+    // Destructor
+    ~TwoPhaseParticle() override{};
+
+    // Delete copy constructor
+    TwoPhaseParticle(const TwoPhaseParticle<Tdim>&) = delete;
+
+    // Delete assignment operator
+    TwoPhaseParticle& operator=(const TwoPhaseParticle<Tdim>&) = delete;
+
+    //============================================================================
+    // ASSIGN INITIAL CONDITIONS
+
+    // Initialise particle from HDF5 data
+    bool initialise_particle(const HDF5Particle& particle) override;
+
+    // Initialise particle HDF5 data and material
+    bool initialise_particle(
+        const HDF5Particle& particle,
+        const std::shared_ptr<Material<Tdim>>& material) override;
+
+    // Initialise liquid phase
+    void initialise_liquid_phase() override;
+
+    // Retrun particle data as HDF5
+    HDF5Particle hdf5() override;
+
+    // Assign material
+    bool assign_liquid_material(
+        const std::shared_ptr<Material<Tdim>>& material) override;
+
+    // Compute both solid and liquid mass
+    void compute_mass() override;
+
+    // Initial pore pressure
+    void initial_pore_pressure(double pore_pressure) override {
+      this->pore_pressure_ = pore_pressure;
+    }
+
+    // Assign particles initial pore pressure by watertable
+    bool initialise_pore_pressure_watertable(
+        const unsigned dir_v, const unsigned dir_h,
+        std::map<double, double>& refernece_points);    
+
+    //============================================================================
+    // APPLY BOUNDARY CONDITIONS
+
+    // Assign traction to the particle
+    bool assign_particle_traction(unsigned direction, double traction) override;
+
+    // Assign contact to the particle
+    bool assign_particle_contact(unsigned dir, double normal) override;    
+
+    // Assign particle liquid phase velocity constraints
+    bool assign_particle_liquid_velocity_constraint(unsigned dir,
+                                                    double velocity) override;
+
+    // Apply particle liquid phase velocity constraints
+    void apply_particle_liquid_velocity_constraints() override;
+
+    // Assign particle pressure constraints
+    bool assign_particle_pore_pressure_constraint(double pressure) override;
+
+    // Apply particle pore pressure constraints
+    void apply_particle_pore_pressure_constraints(double pore_pressure) override;
+
+    //============================================================================
+    // MAP PARTICLE INFORMATION TO NODES
+
+    // Map particle mass and momentum to nodes (both solid and liquid)
+    void map_mass_momentum_to_nodes() noexcept override;
+
+    // Map particle mass and pressure to nodes
+    void map_mass_pressure_to_nodes() override;
+
+    // Map body force
+    void map_external_force(const VectorDim& pgravity) override;
+
+    // Map traction force
+    void map_traction_force() noexcept override;
+
+    // Map internal force
+    void map_internal_force() override;
+
+    // Map internal force
+    void map_internal_force_semi(double beta) override;
+
+    // Assign pore pressure to nodes
+    bool map_pore_pressure_to_nodes(double current_time = 0.) noexcept override;
+
+    // Map drag force coefficient
+    void map_drag_force_coefficient() override;
+
+    // Map particle heat capacity and heat to nodes
+    void map_heat_to_nodes() override;
+
+    // Map particle heat conduction to node
+    void map_heat_conduction() override;
+
+    // Map particle hydraulic conduction to node
+    void map_hydraulic_conduction() override;
+    
+    // Map heat convection of mixture
+    void map_heat_convection() override;
+
+    // Map reaction direction to nodes
+    void map_moving_rigid_velocity_to_nodes(unsigned dir, 
+                                            double velocity, 
+                                            double dt) noexcept override;
+
+    // Map moving rigid velocity and surface normal to nodes
+    void map_rigid_mass_momentum_to_nodes() noexcept override;
+
+    //------------------------------------------------------------
+    // Implict mpm
+    // Map MTT element matrix to cell
+    bool map_MTT_to_cell() override;
+
+    // Map KTT element matrix to cell
+    bool map_KTT_to_cell() override;
+
+    //------------------------------------------------------------
+    // Semi-implict mpm
+    // Map K inter element matrix to cell
+    bool map_K_inter_to_cell() override;
+
+    // Map laplacian element matrix to cell
+    bool map_L_to_cell(double dt, double alpha) override;
+
+    // Map F element matrix to cell (used in poisson equation RHS)
+    bool map_F_to_cell() override;
+
+    // Map T element matrix to cell (used in poisson equation RHS)
+    bool map_T_to_cell() override;
+
+    // Map T element matrix to cell (used in poisson equation RHS)
+    bool map_P_to_cell(double beta) override;
+
+    // Map K_cor element matrix to cell
+    bool map_K_cor_to_cell(double dt, double alpha) override;
+
+    //==========================================================================
+    // UPDATE PARTICLE INFORMATION
+
+    // Compute updated velocity and position of the particle
+    void compute_updated_velocity(double dt, double pic = 0,
+                                  double damping_factor = 0) override;                          
+
+    // compute updated pore pressure - Semi-implicit
+    bool compute_updated_pore_pressure(double beta) override;
+
+    // compute updated pore pressure
+    void update_particle_pore_pressure(double dt, double pic_t) noexcept override;
+
+    // Compute pore pressure - Explicit
+    void compute_pore_pressure(double dt) override;
+    
+    // Compute pore pressure (thermal)
+    void compute_thermal_pore_pressure (double dt) noexcept override;
+
+    // Compute pore pressure somoothening by interpolating nodal pressure
+    bool compute_pore_pressure_smoothing() noexcept override;
+
+    // Update particle permeability
+    void update_permeability() override;
+
+    // Update density of the particle
+    void update_particle_density(double dt) override;
+
+    // Update particle volume 
+    void update_particle_volume()  override;    
+
+    //============================================================================
+    // RETURN PARTICLE DATA
+
+    // Return liquid pore pressure
+    double pore_pressure() const override { return pore_pressure_; }
+
+  protected:
+
+    // Using the this pointer is necessary when there is no using declaration.
+    // Inherit properties from ParticleBase class 
+    using ParticleBase<Tdim>::id_;
+    using ParticleBase<Tdim>::coordinates_;
+    using ParticleBase<Tdim>::cell_;
+    using ParticleBase<Tdim>::nodes_;
+
+    // Inherit properties from Particle class 
+    using Particle<Tdim>::material_;
+    using Particle<Tdim>::shapefn_;
+    using Particle<Tdim>::shapefn_centroid_;
+    using Particle<Tdim>::dn_dx_;  
+    using Particle<Tdim>::dn_dx_centroid_; 
+    using Particle<Tdim>::is_axisymmetric_; 
+    using Particle<Tdim>::volume_;
+    using Particle<Tdim>::density_;
+    using Particle<Tdim>::mass_;  
+    using Particle<Tdim>::mass_density_;
+    using Particle<Tdim>::porosity_;
+    using Particle<Tdim>::solid_fraction_;
+    using Particle<Tdim>::temperature_;
+    using Particle<Tdim>::PIC_temperature_; 
+    using Particle<Tdim>::temperature_increment_;
+    using Particle<Tdim>::temperature_increment_cent_;    
+    using Particle<Tdim>::temperature_gradient_;   
+    using Particle<Tdim>::temperature_acceleration_;
+    using Particle<Tdim>::volumetric_strain_;     
+    using Particle<Tdim>::dthermal_strain_;
+    using Particle<Tdim>::dthermal_volumetric_strain_;
+    using Particle<Tdim>::thermal_strain_;
+    using Particle<Tdim>::thermal_volumetric_strain_;  
+    using Particle<Tdim>::stress_;
+    using Particle<Tdim>::strain_rate_;
+    using Particle<Tdim>::velocity_;
+    // To be deleted
+    using Particle<Tdim>::contact_normal_;
+    using Particle<Tdim>::contact_tangential_;
+    using Particle<Tdim>::set_contact_;  
+
+    // Liquid Material
+    std::shared_ptr<Material<Tdim>> liquid_material_;
+    unsigned liquid_material_id_{std::numeric_limits<unsigned>::max()};
+
+    // Scalar property
+    double liquid_density_;
+    double liquid_fraction_;
+    double liquid_mass_density_;
+    double liquid_mass_;
+    double pore_pressure_;
+    double permeability_;
+    double viscosity_;
+    double PIC_pore_pressure_;
+    double FLIP_pore_pressure_;
+    double pore_pressure_acceleration_;
+    double pore_pressure_increment_;
+    double liquid_volumetric_strain_;
+    double liquid_dvolumetric_strain_;
+
+    // Vector property
+    Eigen::Matrix<double, Tdim, 1> liquid_velocity_;
+    Eigen::Matrix<double, Tdim, 1> liquid_flux_;
+    Eigen::Matrix<double, Tdim, 1> pressure_gradient_;
+    Eigen::Matrix<double, 6, 1> liquid_strain_rate_;
+    Eigen::Matrix<double, 6, 1> liquid_strain_;
+
+    // Boundary conditions
+    bool set_liquid_traction_;
+    bool set_mixture_traction_;
+    bool set_pressure_constraint_;
+    Eigen::Matrix<double, Tdim, 1> liquid_traction_;
+    Eigen::Matrix<double, Tdim, 1> mixture_traction_;
+    std::map<unsigned, double> liquid_velocity_constraints_;
+    double pore_pressure_constraint_{std::numeric_limits<unsigned>::max()};  
+
+    // Logger
+    std::unique_ptr<spdlog::logger> console_;
+
+  protected:
+
+    // Map particle hydraulic conduction to node
+    inline Eigen::Matrix<double, Tdim, 1> compute_pressure_gradient(
+      unsigned phase) noexcept;
+
+  private:
+
+    // Assign particle permeability
+    virtual bool assign_permeability();
+
+    // Compute liquid mass
+    virtual void compute_liquid_mass() noexcept;
+
+    // Assign liquid traction
+    virtual bool assign_liquid_traction(unsigned direction, double traction);
+
+    // Assign mixture traction
+    virtual bool assign_mixture_traction(unsigned direction, double traction);
+
+    // Assign liquid mass and momentum to nodes
+    virtual void map_liquid_mass_momentum_to_nodes() noexcept;
+
+    // Map two phase mixture body force
+    virtual void map_mixture_body_force(unsigned mixture,
+                                        const VectorDim& pgravity) noexcept;
+
+    // Map liquid body force
+    virtual void map_liquid_body_force(const VectorDim& pgravity) noexcept;
+
+    // Map liquid phase traction force
+    virtual void map_liquid_traction_force() noexcept;
+
+    // Map two phase mixture traction force
+    virtual void map_mixture_traction_force(unsigned mixture) noexcept;
+
+    // Map liquid internal force
+    virtual void map_liquid_internal_force(double beta = 1);
+
+    // Map two phase mixture internal force
+    virtual void map_mixture_internal_force(unsigned mixture, double beta = 1);
+
+    // Map liquid heat capacity and heat to nodes
+    virtual void map_liquid_heat_to_nodes() noexcept;
+
+    // Map liquid phase heat conduction 
+    virtual void map_liquid_heat_conduction() noexcept;
+    
+    // Compute updated velocity of the particle based on nodal velocity
+    virtual void compute_updated_liquid_velocity(
+        double dt, double pic = 0., double damping_factor = 0.);
+
+    // update liquid density of the particle
+    virtual void update_liquid_density() noexcept;
+
+    // update liquid mass of particle
+    virtual void update_liquid_mass() noexcept;
+
+};  // TwoPhaseParticle class
+}  // namespace mpm
+
+#include "twophase_particle.tcc"
+
+#endif  // MPM_TWOPHASE_PARTICLE_H__
