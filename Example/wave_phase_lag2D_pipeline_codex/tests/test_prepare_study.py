@@ -125,6 +125,27 @@ class PrepareStudyTest(unittest.TestCase):
                 ("matched-pressure constitutive ablation", "HD"),
             )
 
+    def test_equilibrium_ids_are_accepted_and_written_by_base_solver(self):
+        source_path = (
+            CASE_DIR.parents[1]
+            / "mpm_hpc_source"
+            / "include"
+            / "solvers"
+            / "mpm_base.tcc"
+        )
+        source = source_path.read_text(encoding="utf-8")
+        initialise = source[
+            source.index("bool mpm::MPMBase<Tdim>::initialise_vtk()") :
+            source.index("bool mpm::MPMBase<Tdim>::initialise_vtk_twophase()")
+        ]
+        writer = source[source.index("void mpm::MPMBase<Tdim>::write_vtk(") :]
+        scalar_list = writer[
+            writer.index("std::vector<std::string> vtk_scalar_data") :
+            writer.index("//! VTK vector variable")
+        ]
+        self.assertIn('"ids"', initialise)
+        self.assertIn('"ids"', scalar_list)
+
     def test_validator_rejects_old_slash_apic_key(self):
         config = study.equilibrium_config(
             "TEST",

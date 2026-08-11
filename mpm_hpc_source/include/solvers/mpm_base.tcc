@@ -456,7 +456,8 @@ bool mpm::MPMBase<Tdim>::initialise_vtk() {
   bool status = true;
 
   // Default VTK attributes for single phase
-  std::vector<std::string> vtk = {"current_time",      
+  std::vector<std::string> vtk = {"ids",
+                                  "current_time",
                                   "porosities",
                                   "PIC_porosities",
                                   "volumes",
@@ -732,7 +733,8 @@ void mpm::MPMBase<Tdim>::write_vtk(mpm::Index step, mpm::Index max_steps) {
   const unsigned soil_skeleton = mpm::ParticlePhase::Solid;
 
   //! VTK scalar variable, 1 component
-  std::vector<std::string> vtk_scalar_data = {"porosities",
+  std::vector<std::string> vtk_scalar_data = {"ids",
+                                              "porosities",
                                               "PIC_porosities",
                                               "volumetric_strains",
                                               "dvolumetric_strains",
