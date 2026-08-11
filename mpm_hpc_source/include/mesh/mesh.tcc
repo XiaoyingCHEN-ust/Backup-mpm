@@ -1717,32 +1717,52 @@ bool mpm::Mesh<Tdim>::read_particles_hdf5(unsigned phase,
   // Throw an error if file can't be found
   if (file_id < 0) throw std::runtime_error("HDF5 particle file is not found");
 
-  // Calculate the size and the offsets of our struct members in memory
-  const unsigned nparticles = this->nparticles();
-  const hsize_t NRECORDS = nparticles;
+  try {
+    // Validate the on-disk table before passing memory-layout arrays to HDF5.
+    hsize_t table_fields = 0;
+    hsize_t table_records = 0;
+    if (H5TBget_table_info(file_id, "table", &table_fields, &table_records) <
+        0)
+      throw std::runtime_error(
+          "Cannot read HDF5 particle table metadata");
 
-  const hsize_t NFIELDS = mpm::hdf5::particle::NFIELDS;
+    const unsigned nparticles = this->nparticles();
+    mpm::hdf5::particle::validate_table_metadata(
+        table_fields, table_records, static_cast<hsize_t>(nparticles));
 
-  std::vector<HDF5Particle> dst_buf(nparticles);
-  // Read the table
-  H5TBread_table(file_id, "table", mpm::hdf5::particle::dst_size,
-                 mpm::hdf5::particle::dst_offset,
-                 mpm::hdf5::particle::dst_sizes, dst_buf.data());
+    std::vector<HDF5Particle> dst_buf(nparticles);
+    const herr_t read_status = H5TBread_table(
+        file_id, "table", mpm::hdf5::particle::dst_size,
+        mpm::hdf5::particle::dst_offset,
+        mpm::hdf5::particle::dst_sizes, dst_buf.data());
+    if (read_status < 0)
+      throw std::runtime_error("Cannot read HDF5 particle table data");
 
-  unsigned i = 0;
-  for (auto pitr = particles_.cbegin(); pitr != particles_.cend(); ++pitr) {
-    HDF5Particle particle = dst_buf[i];
-    const auto material_override = particle_material_ids_.find((*pitr)->id());
-    if (material_override != particle_material_ids_.end())
-      particle.material_id = material_override->second;
-    // Get particle's material from list of materials
-    auto material = materials_.at(particle.material_id);
-    // Initialise particle with HDF5 data
-    (*pitr)->initialise_particle(particle, material);
-    ++i;
+    // A legacy 159-field table contains only svars_0..svars_5. Do not let a
+    // material declaring more history silently restart with zero-filled state.
+    mpm::hdf5::particle::validate_legacy_state_variables(
+        table_fields, dst_buf.data(), dst_buf.size());
+
+    unsigned i = 0;
+    for (auto pitr = particles_.cbegin(); pitr != particles_.cend(); ++pitr) {
+      HDF5Particle particle = dst_buf[i];
+      const auto material_override =
+          particle_material_ids_.find((*pitr)->id());
+      if (material_override != particle_material_ids_.end())
+        particle.material_id = material_override->second;
+      // Get particle's material from list of materials
+      auto material = materials_.at(particle.material_id);
+      // Initialise particle with HDF5 data
+      (*pitr)->initialise_particle(particle, material);
+      ++i;
+    }
+  } catch (...) {
+    H5Fclose(file_id);
+    throw;
   }
-  // close the file
-  H5Fclose(file_id);
+
+  if (H5Fclose(file_id) < 0)
+    throw std::runtime_error("Cannot close HDF5 particle file after reading");
   return true;
 }
 

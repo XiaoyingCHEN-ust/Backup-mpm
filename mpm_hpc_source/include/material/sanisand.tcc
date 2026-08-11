@@ -1,3 +1,23 @@
+namespace mpm::sanisand::detail {
+
+inline double equivalent_plastic_deviatoric_strain(
+    const Eigen::Matrix<double, 6, 1>& plastic_strain) {
+  auto deviatoric = plastic_strain;
+  const double mean_normal_strain =
+      (plastic_strain[0] + plastic_strain[1] + plastic_strain[2]) / 3.;
+  for (unsigned i = 0; i < 3; ++i) deviatoric[i] -= mean_normal_strain;
+  // MPM stores engineering shear strains gamma_ij = 2 epsilon_ij in the
+  // last three Voigt components.  Hence e_dev:e_dev contains one half of
+  // their squared engineering values, not their unweighted squared norm.
+  const double tensor_double_contraction =
+      deviatoric.head<3>().squaredNorm() +
+      0.5 * deviatoric.tail<3>().squaredNorm();
+  return std::sqrt(
+      std::max(0., 2. / 3. * tensor_double_contraction));
+}
+
+}  // namespace mpm::sanisand::detail
+
 template <unsigned Tdim>
 double mpm::Sanisand<Tdim>::require_finite(const Json& properties,
                                            const std::string& key) {
@@ -414,14 +434,11 @@ mpm::Sanisand<Tdim>::compute_increment(
                      plastic_multiplier * (elastic * flow);
   increment.alpha = plastic_multiplier * hardening.first;
 
+  const Vector6d plastic_strain = plastic_multiplier * flow;
   const double plastic_volumetric =
-      plastic_multiplier * (flow[0] + flow[1] + flow[2]);
-  Vector6d identity;
-  identity << 1., 1., 1., 0., 0., 0.;
-  const Vector6d deviatoric_plastic =
-      plastic_multiplier * flow - plastic_volumetric * identity;
+      plastic_strain[0] + plastic_strain[1] + plastic_strain[2];
   increment.eps_p_q =
-      std::sqrt(std::max(0., 2. / 3. * deviatoric_plastic.squaredNorm()));
+      sanisand::detail::equivalent_plastic_deviatoric_strain(plastic_strain);
 
   const double fabric_factor = -cz_ * std::max(-plastic_volumetric, 0.);
   increment.fabric =

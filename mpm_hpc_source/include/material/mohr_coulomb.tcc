@@ -84,6 +84,17 @@ mpm::dense_map mpm::MohrCoulomb<Tdim>::initialise_state_variables() {
   return state_vars;
 }
 
+//! Initialise state variables for an explicit cross-model checkpoint handoff
+template <unsigned Tdim>
+mpm::dense_map
+mpm::MohrCoulomb<Tdim>::initialise_state_variables_from_particle(
+    double porosity) {
+  if (!std::isfinite(porosity) || porosity <= 0. || porosity >= 1.)
+    throw std::invalid_argument(
+        "Mohr-Coulomb restored porosity must be between zero and one");
+  return this->initialise_state_variables();
+}
+
 //! Compute elastic tensor
 template <unsigned Tdim>
 bool mpm::MohrCoulomb<Tdim>::compute_elastic_tensor() {
@@ -705,5 +716,4 @@ Eigen::Matrix<double, 6, 1> mpm::MohrCoulomb<Tdim>::compute_stress(
 
   return updated_stress;
 }
-
 

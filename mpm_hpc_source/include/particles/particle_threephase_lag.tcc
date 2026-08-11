@@ -598,30 +598,43 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
                                     const double excess_pore_pressure = this->PIC_pore_pressure_ -
                                         this->ini_pore_pressure_;
                                     if (excess_pore_pressure <= 0.0 ||
-                                        this->ini_vertical_effective_stress_ <= 1.e-12)
+                                        std::fabs(this->ini_vertical_effective_stress_) <= 1.e-12)
                                       return 0.0;
                                     return excess_pore_pressure /
-                                           this->ini_vertical_effective_stress_;
+                                           std::fabs(this->ini_vertical_effective_stress_);
                                   }},
       {"initial_vertical_effective_stresses",
                                   [&]() {return this->ini_vertical_effective_stress_;}},
       {"dynamic_vertical_effective_stresses",
                                   [&]() {return this->stress_[1] -
                                                  this->ini_vertical_effective_stress_;}},
+      {"vertical_effective_stress_remaining_ratios", [&]() {
+                                    if (std::fabs(this->ini_vertical_effective_stress_) <=
+                                        1.e-12)
+                                      return 1.0;
+                                    return this->stress_[1] /
+                                           this->ini_vertical_effective_stress_;
+                                  }},
       {"liquefaction_potentials", [&]() {
-                                    if (this->ini_vertical_effective_stress_ <= 1.e-12)
+                                    if (std::fabs(this->ini_vertical_effective_stress_) <=
+                                        1.e-12)
                                       return 0.0;
+                                    // Legacy vertical-effective-stress-loss
+                                    // diagnostic; this is not the seepage-force
+                                    // liquefaction index (LI).
                                     return std::max(
                                         0.0, 1.0 - this->stress_[1] /
                                                        this->ini_vertical_effective_stress_);
                                   }},
       {"momentary_liquefied",     [&]() {
-                                    if (this->ini_vertical_effective_stress_ <= 1.e-12)
+                                    if (std::fabs(this->ini_vertical_effective_stress_) <=
+                                        1.e-12)
                                       return 0.0;
                                     // Treat a 95% loss of the initial vertical
                                     // effective stress as momentary liquefaction.
-                                    return (this->stress_[1] <=
-                                            0.05 * this->ini_vertical_effective_stress_) ?
+                                    return (this->stress_[1] /
+                                                this->ini_vertical_effective_stress_ <=
+                                            0.05) ?
                                                1.0 : 0.0;
                                   }},
       {"gamma_sub",               [&]() {

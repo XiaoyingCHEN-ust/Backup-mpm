@@ -267,6 +267,29 @@ if(MPM_BUILD_TESTING)
     ${mpm_SOURCE_DIR}/src/io/logger.cc)
   add_test(NAME sanisand_material_test COMMAND sanisand_material_test)
 
+  add_executable(sanisand_low_pressure_driver
+    ${mpm_SOURCE_DIR}/tests/materials/sanisand_low_pressure_driver.cc
+    ${mpm_SOURCE_DIR}/src/material.cc
+    ${mpm_SOURCE_DIR}/src/io/logger.cc)
+
+  add_executable(mohr_coulomb_handoff_test
+    ${mpm_SOURCE_DIR}/tests/materials/mohr_coulomb_handoff_test.cc
+    ${mpm_SOURCE_DIR}/src/material.cc
+    ${mpm_SOURCE_DIR}/src/io/logger.cc)
+  add_test(NAME mohr_coulomb_handoff_test COMMAND mohr_coulomb_handoff_test)
+
+  if(HDF5_FOUND)
+    add_executable(hdf5_particle_test
+      ${mpm_SOURCE_DIR}/tests/io/hdf5_particle_test.cc
+      ${mpm_SOURCE_DIR}/src/hdf5_particle.cc)
+    add_test(NAME hdf5_particle_test COMMAND hdf5_particle_test)
+  endif()
+
+  add_executable(prescribed_pressure_validation_test
+    ${mpm_SOURCE_DIR}/tests/solvers/prescribed_pressure_validation_test.cc)
+  add_test(NAME prescribed_pressure_validation_test
+    COMMAND prescribed_pressure_validation_test)
+
   # Three-DOF rigid-pipeline section and contact regression tests.
   add_executable(rigid_pipeline2d_test
     ${mpm_SOURCE_DIR}/tests/pipeline/rigid_pipeline2d_test.cc)

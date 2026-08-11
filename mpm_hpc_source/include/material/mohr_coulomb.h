@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <limits>
+#include <stdexcept>
 
 #include "Eigen/Dense"
 
@@ -44,6 +45,14 @@ class MohrCoulomb : public Material<Tdim> {
   //! Initialise history variables
   //! \retval state_vars State variables with history
   mpm::dense_map initialise_state_variables() override;
+
+  //! Initialise a fresh MC history from a restored equilibrium particle
+  //! \param[in] porosity Restored particle porosity (validated for handoff)
+  //! \details Mohr-Coulomb has no porosity-dependent internal variables, but
+  //! this explicit opt-in makes a LinearElastic-to-MC checkpoint handoff
+  //! auditable and prevents accidental state-size fallback.
+  mpm::dense_map initialise_state_variables_from_particle(
+      double porosity) override;
 
   //! Compute stress
   //! \param[in] stress Stress

@@ -81,6 +81,31 @@ TEST_CASE("SANISAND initial state has twenty values") {
   REQUIRE(state.at("void_ratio") == Approx(0.3 / 0.7));
 }
 
+TEST_CASE("SANISAND eps_p_q removes one third of the plastic strain trace") {
+  using Vector6d = mpm::Sanisand<2>::Vector6d;
+
+  Vector6d hydrostatic;
+  hydrostatic << 3., 3., 3., 0., 0., 0.;
+  REQUIRE(mpm::sanisand::detail::equivalent_plastic_deviatoric_strain(
+              hydrostatic) == Approx(0.).margin(1.E-15));
+
+  Vector6d plastic_strain;
+  plastic_strain << 4., 1., 1., 0., 0., 0.;
+  const double equivalent =
+      mpm::sanisand::detail::equivalent_plastic_deviatoric_strain(
+          plastic_strain);
+  REQUIRE(equivalent == Approx(2.));
+
+  Vector6d shifted = plastic_strain + 7. * hydrostatic;
+  REQUIRE(mpm::sanisand::detail::equivalent_plastic_deviatoric_strain(
+              shifted) == Approx(equivalent));
+
+  Vector6d pure_engineering_shear = Vector6d::Zero();
+  pure_engineering_shear[5] = 3.;
+  REQUIRE(mpm::sanisand::detail::equivalent_plastic_deviatoric_strain(
+              pure_engineering_shear) == Approx(std::sqrt(3.)));
+}
+
 TEST_CASE("SANISAND rejects missing and invalid parameters") {
   SECTION("missing Patm") {
     auto properties = sanisand_properties();

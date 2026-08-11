@@ -1,6 +1,8 @@
 #ifndef MPM_HDF5_H_
 #define MPM_HDF5_H_
 
+#include <cstddef>
+
 // HDF5
 #include "hdf5.h"
 #include "hdf5_hl.h"
@@ -172,7 +174,12 @@ typedef struct HDF5Particle {
 } HDF5Particle;
 
 namespace hdf5::particle {
-const hsize_t NFIELDS = 159;
+// Keep the compound-table schema append-only so older checkpoints retain the
+// same field positions. Fourteen SANISAND state-variable fields are appended
+// after the original 159 fields in hdf5_particle.cc.
+const hsize_t LEGACY_NFIELDS = 159;
+const hsize_t NFIELDS = 173;
+const unsigned LEGACY_NSTATE_VARS = 6;
 
 const size_t dst_size = sizeof(HDF5Particle);
 
@@ -187,6 +194,15 @@ extern const char* field_names[NFIELDS];
 
 // Initialise field types
 extern const hid_t field_type[NFIELDS];
+
+//! Validate checkpoint table dimensions before reading into HDF5Particle
+void validate_table_metadata(hsize_t field_count, hsize_t record_count,
+                             hsize_t expected_records);
+
+//! Reject legacy checkpoints that claim state variables absent from disk
+void validate_legacy_state_variables(hsize_t field_count,
+                                     const HDF5Particle* particles,
+                                     std::size_t particle_count);
 
 }  // namespace hdf5::particle
 

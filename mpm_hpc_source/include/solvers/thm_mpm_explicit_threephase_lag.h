@@ -6,6 +6,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "solvers/mpm_base.h"
+#include "solvers/prescribed_pressure_validation.h"
 #include "pipeline/rigid_pipeline2d.h"
 #ifdef USE_VTK
 #include "vtk_writer.h"
@@ -163,13 +165,25 @@ class ThermoMPMExplicitThreePhaseLag : public MPMBase<Tdim> {
   mpm::Index prescribed_pressure_max_step_{0};
   double prescribed_pressure_coordinate_bin_size_{0.02};
   std::size_t prescribed_pressure_particle_count_{0};
+  //! V1 databases stored source frame zero after the first source update.
+  bool prescribed_pressure_legacy_step_offset_{false};
   std::vector<PressureSample> prescribed_pressure_samples_;
   std::unordered_map<mpm::Index, std::size_t> prescribed_pressure_id_to_sample_;
+  //! Stable dynamic-particle id to pressure-database sample binding. This is
+  //! built once after checkpoint resume so large deformation cannot change the
+  //! pressure history assigned to a material point.
+  std::unordered_map<mpm::Index, std::size_t>
+      prescribed_pressure_particle_to_sample_;
   std::unordered_map<long long, std::vector<std::size_t>>
       prescribed_pressure_coordinate_bins_;
   Eigen::Matrix<double, Tdim, 1> prescribed_pressure_min_coordinates_ =
       Eigen::Matrix<double, Tdim, 1>::Zero();
   bool prescribed_pressure_has_spatial_index_{false};
+  //! Two-frame LRU cache used by temporal interpolation.
+  std::array<PressureFrame, 2> prescribed_pressure_frame_cache_;
+  std::array<bool, 2> prescribed_pressure_frame_cache_valid_{{false, false}};
+  std::array<std::uint64_t, 2> prescribed_pressure_frame_cache_use_{{0, 0}};
+  std::uint64_t prescribed_pressure_frame_cache_counter_{0};
 
   std::chrono::time_point<std::chrono::steady_clock> solver_begin;
 
@@ -181,9 +195,14 @@ class ThermoMPMExplicitThreePhaseLag : public MPMBase<Tdim> {
   void read_prescribed_pressure_points();
   void validate_prescribed_pressure_binary_header();
   void write_prescribed_pressure_frame(mpm::Index source_step);
-  PressureFrame prescribed_pressure_frame(mpm::Index source_step);
+  const PressureFrame& prescribed_pressure_frame(mpm::Index source_step);
   PressureFrame read_prescribed_pressure_frame(mpm::Index source_step);
   void build_prescribed_pressure_spatial_index();
+  void bind_prescribed_pressure_samples();
+  bool initial_pressure_sample_index(
+      mpm::Index particle_id,
+      const Eigen::Matrix<double, Tdim, 1>& particle_coordinates,
+      std::size_t* sample_index) const;
   bool pressure_sample_index(
       const std::shared_ptr<mpm::ParticleBase<Tdim>>& particle,
       std::size_t* sample_index) const;

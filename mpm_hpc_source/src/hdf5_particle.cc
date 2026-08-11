@@ -1,4 +1,8 @@
 #include "hdf5_particle.h"
+
+#include <stdexcept>
+#include <string>
+
 namespace mpm {
 namespace hdf5::particle {
 const size_t dst_offset[NFIELDS] = {
@@ -172,7 +176,23 @@ const size_t dst_offset[NFIELDS] = {
 
     // ===== WAVE: new fields =====
     HOFFSET(HDF5Particle, wave_pressure),
-    HOFFSET(HDF5Particle, gamma_b)
+    HOFFSET(HDF5Particle, gamma_b),
+
+    // ===== STATE VARIABLES: append-only checkpoint extension =====
+    HOFFSET(HDF5Particle, svars[6]),
+    HOFFSET(HDF5Particle, svars[7]),
+    HOFFSET(HDF5Particle, svars[8]),
+    HOFFSET(HDF5Particle, svars[9]),
+    HOFFSET(HDF5Particle, svars[10]),
+    HOFFSET(HDF5Particle, svars[11]),
+    HOFFSET(HDF5Particle, svars[12]),
+    HOFFSET(HDF5Particle, svars[13]),
+    HOFFSET(HDF5Particle, svars[14]),
+    HOFFSET(HDF5Particle, svars[15]),
+    HOFFSET(HDF5Particle, svars[16]),
+    HOFFSET(HDF5Particle, svars[17]),
+    HOFFSET(HDF5Particle, svars[18]),
+    HOFFSET(HDF5Particle, svars[19])
 };
 
 // Get size of particle
@@ -342,7 +362,23 @@ const size_t dst_sizes[NFIELDS] = {
     sizeof(particle.gas_volumetric_strain),
     // ===== WAVE: new fields =====
     sizeof(particle.wave_pressure),
-    sizeof(particle.gamma_b) 
+    sizeof(particle.gamma_b),
+
+    // ===== STATE VARIABLES: append-only checkpoint extension =====
+    sizeof(particle.svars[6]),
+    sizeof(particle.svars[7]),
+    sizeof(particle.svars[8]),
+    sizeof(particle.svars[9]),
+    sizeof(particle.svars[10]),
+    sizeof(particle.svars[11]),
+    sizeof(particle.svars[12]),
+    sizeof(particle.svars[13]),
+    sizeof(particle.svars[14]),
+    sizeof(particle.svars[15]),
+    sizeof(particle.svars[16]),
+    sizeof(particle.svars[17]),
+    sizeof(particle.svars[18]),
+    sizeof(particle.svars[19])
 };
 
 // Define particle field information
@@ -511,7 +547,23 @@ const char* field_names[NFIELDS] = {
     "gas_volumetric_strain",
     // ===== WAVE: new fields =====
     "wave_pressure",
-    "gamma_b"
+    "gamma_b",
+
+    // ===== STATE VARIABLES: append-only checkpoint extension =====
+    "svars_6",
+    "svars_7",
+    "svars_8",
+    "svars_9",
+    "svars_10",
+    "svars_11",
+    "svars_12",
+    "svars_13",
+    "svars_14",
+    "svars_15",
+    "svars_16",
+    "svars_17",
+    "svars_18",
+    "svars_19"
     };
 
 // Initialise field types
@@ -681,7 +733,60 @@ const hid_t field_type[NFIELDS] = {
     // ===== WAVE: new fields (2) =====
     H5T_NATIVE_HBOOL, // wave_pressure
     H5T_NATIVE_DOUBLE, // gamma_b
+
+    // ===== STATE VARIABLES: append-only checkpoint extension (14) =====
+    H5T_NATIVE_DOUBLE, // svars_6
+    H5T_NATIVE_DOUBLE, // svars_7
+    H5T_NATIVE_DOUBLE, // svars_8
+    H5T_NATIVE_DOUBLE, // svars_9
+    H5T_NATIVE_DOUBLE, // svars_10
+    H5T_NATIVE_DOUBLE, // svars_11
+    H5T_NATIVE_DOUBLE, // svars_12
+    H5T_NATIVE_DOUBLE, // svars_13
+    H5T_NATIVE_DOUBLE, // svars_14
+    H5T_NATIVE_DOUBLE, // svars_15
+    H5T_NATIVE_DOUBLE, // svars_16
+    H5T_NATIVE_DOUBLE, // svars_17
+    H5T_NATIVE_DOUBLE, // svars_18
+    H5T_NATIVE_DOUBLE, // svars_19
     };         
+
+void validate_table_metadata(hsize_t field_count, hsize_t record_count,
+                             hsize_t expected_records) {
+  if (field_count != LEGACY_NFIELDS && field_count != NFIELDS)
+    throw std::runtime_error(
+        "Unsupported HDF5 particle schema: field_count=" +
+        std::to_string(field_count) + ", expected " +
+        std::to_string(LEGACY_NFIELDS) + " (legacy) or " +
+        std::to_string(NFIELDS));
+  if (record_count != expected_records)
+    throw std::runtime_error(
+        "HDF5 particle record count mismatch: file=" +
+        std::to_string(record_count) +
+        ", mesh=" + std::to_string(expected_records));
+}
+
+void validate_legacy_state_variables(hsize_t field_count,
+                                     const HDF5Particle* particles,
+                                     std::size_t particle_count) {
+  if (field_count == NFIELDS) return;
+  if (field_count != LEGACY_NFIELDS)
+    throw std::runtime_error(
+        "Cannot validate state variables for an unsupported HDF5 particle "
+        "schema");
+  if (particles == nullptr && particle_count != 0)
+    throw std::invalid_argument("HDF5 particle buffer is null");
+
+  for (std::size_t i = 0; i < particle_count; ++i) {
+    if (particles[i].nstate_vars > LEGACY_NSTATE_VARS)
+      throw std::runtime_error(
+          "Legacy HDF5 particle schema stores only svars_0..svars_5, but "
+          "particle " +
+          std::to_string(particles[i].id) + " declares " +
+          std::to_string(particles[i].nstate_vars) +
+          " state variables; refusing a lossy restart");
+  }
+}
 }  // namespace hdf5::particle
 }  // namespace mpm
 
