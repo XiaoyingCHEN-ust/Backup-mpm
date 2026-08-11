@@ -98,6 +98,20 @@ def completion_path(config: dict[str, Any]) -> Path:
     return result_directory(config) / COMPLETION_FILENAME
 
 
+def prepare_output_base(config_path: Path) -> Path:
+    """Create the configured output base recursively inside the case tree."""
+
+    config_path = checked_case_path(config_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    output_base = checked_case_path(
+        resolve_case_path(config["post_processing"].get("path", "results/"))
+    )
+    if output_base.exists() and not output_base.is_dir():
+        raise ValueError(f"Configured output path is not a directory: {output_base}")
+    output_base.mkdir(parents=True, exist_ok=True)
+    return output_base
+
+
 def clear_case_completion(config_path: Path) -> Path:
     """Remove only this config's audited sentinel before a new solver run."""
 
@@ -552,6 +566,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="after validation, remove only this case's old completion before rerunning",
     )
+    parser.add_argument(
+        "--prepare-output",
+        action="store_true",
+        help="recursively create this case's configured output base before launch",
+    )
     return parser
 
 
@@ -560,8 +579,12 @@ def main() -> int:
     paths = config_paths(args)
     if not paths:
         raise FileNotFoundError("No study configurations were selected")
-    if (args.write_completion or args.clear_completion) and len(paths) != 1:
-        raise ValueError("Completion operations require exactly one configuration")
+    if (
+        args.write_completion
+        or args.clear_completion
+        or args.prepare_output
+    ) and len(paths) != 1:
+        raise ValueError("Per-case operations require exactly one configuration")
     if args.write_completion and args.clear_completion:
         raise ValueError("Cannot write and clear a completion in the same invocation")
     runtime = args.runtime or args.write_completion
@@ -571,6 +594,9 @@ def main() -> int:
     if args.write_completion:
         sentinel = write_case_completion(paths[0])
         print(f"Published completion sentinel: {sentinel}")
+    if args.prepare_output:
+        output_base = prepare_output_base(paths[0])
+        print(f"Prepared output base: {output_base}")
     if args.clear_completion:
         sentinel = clear_case_completion(paths[0])
         print(f"Cleared prior completion sentinel if present: {sentinel}")

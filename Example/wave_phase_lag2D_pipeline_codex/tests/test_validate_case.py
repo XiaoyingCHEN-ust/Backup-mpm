@@ -45,6 +45,27 @@ EQUILIBRIUM_VTP = """<?xml version="1.0"?>
 
 
 class ValidateCaseTest(unittest.TestCase):
+    def test_output_base_is_created_recursively_and_cannot_escape_case(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "configs" / "case.json"
+            config_path.parent.mkdir(parents=True)
+            config = {
+                "analysis": {"uuid": "TEST", "nsteps": 1},
+                "post_processing": {"path": "results/screen/"},
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            with patch.object(validate, "CASE_ROOT", root):
+                output_base = validate.prepare_output_base(config_path)
+                self.assertEqual(output_base, (root / "results" / "screen").resolve())
+                self.assertTrue(output_base.is_dir())
+
+                config["post_processing"]["path"] = "../outside/"
+                config_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "escapes the case directory"):
+                    validate.prepare_output_base(config_path)
+
     def test_checkpoint_filename_uses_solver_padding(self):
         config = study.equilibrium_config(
             "TEST", 0.94, "results/test/", ".", 0.02, 0.01, 0.12

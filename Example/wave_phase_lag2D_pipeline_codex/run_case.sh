@@ -28,7 +28,8 @@ if [[ ! -x "${mpm_bin}" ]]; then
   exit 2
 fi
 
-python validate_case.py "${config_abs}" --runtime --clear-completion
+python validate_case.py "${config_abs}" \
+  --runtime --prepare-output --clear-completion
 export OMP_NUM_THREADS="${threads}"
 export TBB_NUM_THREADS="${threads}"
 "${mpm_bin}" -p "${threads}" -f ./ -i "${config_relative}"
