@@ -41,6 +41,37 @@ def first_count(path: Path) -> int:
         return int(stream.readline().strip())
 
 
+def read_ascii_table(path: Path, columns: int) -> np.ndarray:
+    """Read a counted MPM ASCII table and reject silently ignored columns."""
+    rows: list[list[float]] = []
+    declared_count: int | None = None
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", "!")):
+                continue
+            if declared_count is None:
+                declared_count = int(stripped)
+                continue
+            values = stripped.split()
+            if len(values) != columns:
+                raise ValueError(
+                    f"{path} row has {len(values)} columns; expected {columns}: "
+                    f"{stripped}"
+                )
+            rows.append([float(value) for value in values])
+    if declared_count is None:
+        raise ValueError(f"{path} has no declared row count")
+    values = np.asarray(rows, dtype=float)
+    if values.shape != (declared_count, columns):
+        raise ValueError(
+            f"{path} declares {declared_count} rows but contains {values.shape[0]}"
+        )
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{path} contains non-finite values")
+    return values
+
+
 def mesh_counts(path: Path) -> tuple[int, int]:
     with path.open(encoding="utf-8") as stream:
         for line in stream:
@@ -326,6 +357,71 @@ def validate_geometry(config: dict[str, Any]) -> list[str]:
     if temperature_count != particle_count:
         raise ValueError(
             f"Temperature count {temperature_count} != particle count {particle_count}"
+        )
+    temperatures = read_ascii_table(required["temperatures"], 1)[:, 0]
+    if not np.allclose(temperatures, 0.0, rtol=0.0, atol=1.0e-12):
+        raise ValueError("Initial particle temperatures must be zero")
+
+    initial_stress_name = mesh.get("particles_stresses")
+    initial_pressure_spec = mesh.get("particles_pore_pressures")
+    if bool(initial_stress_name) != bool(initial_pressure_spec):
+        raise ValueError("Initial stress and liquid-pressure fields must be paired")
+    if initial_stress_name:
+        stress_path = resolve_case_path(initial_stress_name)
+        pressure_path = resolve_case_path(initial_pressure_spec.get("file", ""))
+        for description, path in (
+            ("initial effective stresses", stress_path),
+            ("initial liquid pressures", pressure_path),
+        ):
+            if not path.is_file():
+                raise FileNotFoundError(f"Missing {description} input {path}")
+        coordinates = read_ascii_table(required["particles"], 2)
+        stresses = read_ascii_table(stress_path, 6)
+        liquid_pressures = read_ascii_table(pressure_path, 1)[:, 0]
+        if stresses.shape[0] != particle_count or liquid_pressures.size != particle_count:
+            raise ValueError("Initial-field count differs from particle count")
+
+        soil, fluid = config["materials"]
+        gravity = 9.81
+        liquid_density = float(fluid["density"])
+        expected_pressure = liquid_density * gravity * np.maximum(
+            float(fluid["sea_level"]) - coordinates[:, 1], 0.0
+        )
+        if not np.allclose(
+            liquid_pressures, expected_pressure, rtol=0.0, atol=1.0e-6
+        ):
+            raise ValueError("Initial liquid-pressure file is not hydrostatic")
+
+        porosity = float(soil["porosity"])
+        liquid_saturation = float(fluid["liquid_saturation"])
+        gas_saturation = float(fluid["gas_saturation"])
+        gas_density = (
+            float(fluid["gas_molar_mass"])
+            * float(soil["p_ref"])
+            / float(fluid["gas_constant"])
+            / (273.15 + float(soil["initial_temperature"]))
+        )
+        mixture_density = (
+            (1.0 - porosity) * float(soil["density"])
+            + porosity
+            * (
+                liquid_saturation * liquid_density
+                + gas_saturation * gas_density
+            )
+        )
+        effective_unit_weight = (mixture_density - liquid_density) * gravity
+        seabed = float(fluid["sea_level"]) - float(fluid["depth_left"])
+        burial_depth = np.maximum(seabed - coordinates[:, 1], 0.0)
+        expected_yy = -effective_unit_weight * burial_depth
+        expected_xx = study.INITIAL_EFFECTIVE_K0 * expected_yy
+        if not np.allclose(stresses[:, 1], expected_yy, rtol=0.0, atol=1.0e-6):
+            raise ValueError("Initial vertical stress is not effective overburden")
+        if not np.allclose(stresses[:, 0], expected_xx, rtol=0.0, atol=1.0e-6):
+            raise ValueError("Initial horizontal effective stress has stale K0")
+        if not np.allclose(stresses[:, 2:], 0.0, rtol=0.0, atol=1.0e-12):
+            raise ValueError("Initial out-of-plane/shear stresses must be zero")
+        messages.append(
+            "initial state: hydrostatic liquid pressure + effective self-weight stress"
         )
     entity_sets = json.loads(required["entity sets"].read_text(encoding="utf-8"))
     node_ids = [int(value) for item in entity_sets["node_sets"] for value in item["set"]]

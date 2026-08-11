@@ -72,15 +72,14 @@ public:
   // pre-compute pf for wave
   bool build_wave_pf_context() override;
 
-    // Initial pore pressure
+  // Store an initial liquid pressure read before compute_mass().  The
+  // three-phase properties (including suction) are not available until the
+  // material initialisation performed by compute_mass(), so the value is
+  // applied there rather than being discarded.
   void initial_pore_pressure(double pore_pressure) override {
-    // this->pore_pressure_ = pore_pressure;
-    // this->liquid_pressure_ = pore_pressure;
-    // this->gas_pressure_ = pore_pressure;
-    // this->PIC_liquid_pressure_ = pore_pressure;
-    // this->PIC_gas_pressure_ = pore_pressure;
-
-  };
+    this->input_initial_liquid_pressure_ = pore_pressure;
+    this->has_input_initial_liquid_pressure_ = true;
+  }
 
   //============================================================================
   // APPLY BOUNDARY CONDITIONS
@@ -285,6 +284,8 @@ protected:
   unsigned liquid_material_id_{std::numeric_limits<unsigned>::max()};
   double pore_pressure_;
   double ini_pore_pressure_;
+  double input_initial_liquid_pressure_{0.};
+  bool has_input_initial_liquid_pressure_{false};
   double suction_pressure_;
   double mixture_mass_;
   double ini_porosity_;

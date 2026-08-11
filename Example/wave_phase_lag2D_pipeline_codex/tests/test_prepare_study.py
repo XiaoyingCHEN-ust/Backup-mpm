@@ -62,9 +62,29 @@ class PrepareStudyTest(unittest.TestCase):
             high = load("02_HS.json")
             mc = load("02_HM.json")
             equilibrium = load("01_EQ_LS.json")
+            equilibrium_high = load("01_EQ_HS.json")
             for config in (equilibrium, low, high, mc):
                 self.assertIn("volumes", config["post_processing"]["vtk"])
                 self.assertIn("ids", config["post_processing"]["vtk"])
+            self.assertEqual(equilibrium["materials"][0]["type"], "LinearElastic2D")
+            self.assertEqual(equilibrium["analysis"]["PIC"], 1.0)
+            self.assertGreater(
+                equilibrium["analysis"]["damping"]["damping_factor"], 0.0
+            )
+            self.assertEqual(
+                equilibrium["mesh"]["particles_stresses"],
+                "initial_effective_stresses_LS.txt",
+            )
+            self.assertEqual(
+                equilibrium_high["mesh"]["particles_stresses"],
+                "initial_effective_stresses_HS.txt",
+            )
+            self.assertEqual(
+                equilibrium["mesh"]["particles_pore_pressures"],
+                {"file": "initial_liquid_pressures.txt"},
+            )
+            self.assertNotIn("particles_stresses", low["mesh"])
+            self.assertNotIn("particles_pore_pressures", low["mesh"])
             for config in (low, high, mc):
                 self.assertIn(
                     "vertical_effective_stress_remaining_ratios",
@@ -145,6 +165,25 @@ class PrepareStudyTest(unittest.TestCase):
         ]
         self.assertIn('"ids"', initialise)
         self.assertIn('"ids"', scalar_list)
+
+    def test_threephase_initial_pressure_survives_compute_mass_initialisation(self):
+        header = (
+            CASE_DIR.parents[1]
+            / "mpm_hpc_source"
+            / "include"
+            / "particles"
+            / "particle_threephase_lag.h"
+        ).read_text(encoding="utf-8")
+        source = (
+            CASE_DIR.parents[1]
+            / "mpm_hpc_source"
+            / "include"
+            / "particles"
+            / "particle_threephase_lag.tcc"
+        ).read_text(encoding="utf-8")
+        self.assertIn("has_input_initial_liquid_pressure_ = true", header)
+        self.assertIn("has_input_initial_liquid_pressure_ ?", source)
+        self.assertIn("input_initial_liquid_pressure_", source)
 
     def test_validator_rejects_old_slash_apic_key(self):
         config = study.equilibrium_config(

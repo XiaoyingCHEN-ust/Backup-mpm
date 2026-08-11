@@ -58,6 +58,14 @@ python submit_study_sbatch.py screen --prepare --build --analyze \
   --cpus 16 --gres gpu:1 --nodelist gpu30
 ```
 
+The two equilibrium jobs deliberately use `LinearElastic2D`, `PIC=1.0`, a
+fixed pipe and positive Cundall damping.  `mesh.py` also generates a
+hydrostatic liquid-pressure profile for every particle plus separate LS/HS
+effective self-weight stress fields.  Validation checks the single-column MPM
+pressure format and the stress/pressure values before a job is submitted.  The
+dynamic jobs then restore the successful equilibrium HDF5 and switch to
+SANISAND or Mohr-Coulomb as registered in the study matrix.
+
 The submitter uses `sbatch --parsable` and records the dependency graph and job
 IDs under `submissions/`.  Every job is forced onto
 `--partition=granularmech --account=comgranmech`; the defaults also request

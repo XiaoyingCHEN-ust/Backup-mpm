@@ -31,6 +31,8 @@ VTK_INTERVAL = STEPS_PER_CYCLE // 20
 EQUILIBRIUM_STEPS = 10_000
 POROSITY = 0.485
 PERMEABILITY = 9.79e-12
+LOW_LAG_SATURATION = 0.999
+HIGH_LAG_SATURATION = 0.94
 PIPE_RADIUS = 0.06
 PIPE_DIAMETER = 2.0 * PIPE_RADIUS
 PIPE_COVER_RATIO = 0.25
@@ -42,6 +44,7 @@ SANISAND_G0 = 125.0
 SANISAND_K0 = 150.0
 SANISAND_PATM = 100_000.0
 MC_STIFFNESS_REFERENCE_PRESSURE = 3_000.0
+INITIAL_EFFECTIVE_K0 = 0.72
 
 
 def sanisand_elastic_moduli(
@@ -427,6 +430,20 @@ def equilibrium_config(
     wave_height: float,
 ) -> dict[str, Any]:
     config = base_config(mesh_directory, cell_size, particle_spacing)
+    if math.isclose(saturation, LOW_LAG_SATURATION, abs_tol=1.0e-12):
+        stress_state = "LS"
+    elif math.isclose(saturation, HIGH_LAG_SATURATION, abs_tol=1.0e-12):
+        stress_state = "HS"
+    else:
+        raise ValueError(
+            "Equilibrium saturation has no registered initial effective-stress field"
+        )
+    config["mesh"]["particles_stresses"] = prefixed(
+        mesh_directory, f"initial_effective_stresses_{stress_state}.txt"
+    )
+    config["mesh"]["particles_pore_pressures"] = {
+        "file": prefixed(mesh_directory, "initial_liquid_pressures.txt")
+    }
     uuid = f"PLP_{code}_EQ"
     config.update(
         {
@@ -551,6 +568,21 @@ def validate_config(config: dict[str, Any]) -> None:
     pipeline = analysis["rigid_pipeline"]
     if "/APIC" in analysis or analysis.get("APIC") is not True:
         raise ValueError(f"{analysis['uuid']}: APIC key is absent or malformed")
+    if not analysis["resume"].get("resume"):
+        if soil["type"] != "LinearElastic2D" or float(analysis["PIC"]) != 1.0:
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium must use LinearElastic2D and PIC=1"
+            )
+        if float(analysis["damping"].get("damping_factor", 0.0)) <= 0.0:
+            raise ValueError(f"{analysis['uuid']}: equilibrium damping is disabled")
+        initial_stress = config["mesh"].get("particles_stresses", "")
+        initial_pressure = config["mesh"].get(
+            "particles_pore_pressures", {}
+        ).get("file", "")
+        if not initial_stress or not initial_pressure:
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium initial stress/pressure field is absent"
+            )
     if abs(float(soil["intrinsic_permeability"]) - PERMEABILITY) > 1.0e-20:
         raise ValueError(f"{analysis['uuid']}: permeability changed")
     saturation_sum = float(fluid["liquid_saturation"]) + float(fluid["gas_saturation"])
@@ -638,7 +670,7 @@ def generate_tier(
     configs: dict[str, dict[str, Any]] = {
         "EQ_LS": equilibrium_config(
             low_eq_code,
-            0.999,
+            LOW_LAG_SATURATION,
             result_path,
             mesh_directory,
             cell_size,
@@ -647,7 +679,7 @@ def generate_tier(
         ),
         "EQ_HS": equilibrium_config(
             high_eq_code,
-            0.94,
+            HIGH_LAG_SATURATION,
             result_path,
             mesh_directory,
             cell_size,
@@ -668,7 +700,7 @@ def generate_tier(
             "LS": dynamic_config(
                 code=f"{tier.upper()}{label_code}_LS_SANI",
                 title="LS physical low-lag reference: near saturated SANISAND",
-                saturation=0.999,
+                saturation=LOW_LAG_SATURATION,
                 material_type="SANISAND2D",
                 equilibrium_uuid=low_eq_uuid,
                 physical_wave=True,
@@ -677,7 +709,7 @@ def generate_tier(
             "HS": dynamic_config(
                 code=f"{tier.upper()}{label_code}_HS_SANI",
                 title="HS physical high-lag main case: S=0.94 SANISAND",
-                saturation=0.94,
+                saturation=HIGH_LAG_SATURATION,
                 material_type="SANISAND2D",
                 equilibrium_uuid=high_eq_uuid,
                 physical_wave=True,
@@ -686,7 +718,7 @@ def generate_tier(
             "HM": dynamic_config(
                 code=f"{tier.upper()}{label_code}_HS_MC",
                 title="HM fully coupled high-lag Mohr-Coulomb context",
-                saturation=0.94,
+                saturation=HIGH_LAG_SATURATION,
                 material_type="MohrCoulomb2D",
                 equilibrium_uuid=high_eq_uuid,
                 physical_wave=True,
@@ -695,7 +727,7 @@ def generate_tier(
             "HD": dynamic_config(
                 code=f"{tier.upper()}{label_code}_HD_DRIVER",
                 title="HD fixed-pipe high-lag pressure database driver",
-                saturation=0.94,
+                saturation=HIGH_LAG_SATURATION,
                 material_type="SANISAND2D",
                 equilibrium_uuid=high_eq_uuid,
                 physical_wave=True,
@@ -708,7 +740,7 @@ def generate_tier(
             "RL": dynamic_config(
                 code=f"{tier.upper()}{label_code}_RL_SANI",
                 title="RL one-way replay control: original lag, SANISAND",
-                saturation=0.94,
+                saturation=HIGH_LAG_SATURATION,
                 material_type="SANISAND2D",
                 equilibrium_uuid=high_eq_uuid,
                 physical_wave=False,
@@ -723,7 +755,7 @@ def generate_tier(
                     "RM matched-pressure constitutive ablation: original lag, "
                     "Mohr-Coulomb"
                 ),
-                saturation=0.94,
+                saturation=HIGH_LAG_SATURATION,
                 material_type="MohrCoulomb2D",
                 equilibrium_uuid=high_eq_uuid,
                 physical_wave=False,
@@ -735,7 +767,7 @@ def generate_tier(
             "RE": dynamic_config(
                 code=f"{tier.upper()}{label_code}_RE_SANI",
                 title="RE one-way counterfactual: fundamental phase erased",
-                saturation=0.94,
+                saturation=HIGH_LAG_SATURATION,
                 material_type="SANISAND2D",
                 equilibrium_uuid=high_eq_uuid,
                 physical_wave=False,

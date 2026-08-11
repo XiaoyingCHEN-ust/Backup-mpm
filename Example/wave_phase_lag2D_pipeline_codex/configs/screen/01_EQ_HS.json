@@ -93,6 +93,10 @@
           "temperature": 0.0
         }
       ]
+    },
+    "particles_stresses": "initial_effective_stresses_HS.txt",
+    "particles_pore_pressures": {
+      "file": "initial_liquid_pressures.txt"
     }
   },
   "particles": [

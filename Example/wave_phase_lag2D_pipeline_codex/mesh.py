@@ -413,13 +413,15 @@ def save_entries_oneline(index, name):
             f.write(', '.join(str(i) for i in entries))
             f.write('\n')
 
-def save_scalers(scalers, name):
-    file_name = OUTPUT_DIR / (name+".txt")
-    f = open(file_name, "w")
-    head = '{}\n'.format(scalers.shape[0])
-    f.write(head)
-    numpy.savetxt(f, scalers, fmt="%i", delimiter="\t")
-    f.close()
+def save_scalars(values, name):
+    """Write the one-value-per-particle format expected by IOMeshAscii."""
+    values = numpy.asarray(values, dtype=float)
+    if values.ndim != 1 or not numpy.all(numpy.isfinite(values)):
+        raise ValueError("{} must be a finite one-dimensional array".format(name))
+    file_name = OUTPUT_DIR / (name + ".txt")
+    with open(file_name, "w") as f:
+        f.write('{}\n'.format(values.shape[0]))
+        numpy.savetxt(f, values, fmt="%.10f")
 
 def save_stresses(stresses, name):
     file_name = OUTPUT_DIR / (name + ".txt")
@@ -641,24 +643,13 @@ save_entity_sets(
         (3, tunnel_boundary_particle_ids),
     ])
 
-temperatures = numpy.zeros_like(particles)
-temperatures[:, 0] = 0
-# temperatures[:, 0][particles[:, 0] >= 3] = 10
-save_scalers(temperatures, "initial_temperature")
+temperatures = numpy.zeros(particles.shape[0])
+save_scalars(temperatures, "initial_temperature")
 
-porepressure = numpy.zeros_like(particles)
-porepressure[:, 0] = (numpy.arange(0, len(particles))).astype(int)
-porepressure[:, 1][particles[:, 0] < 3] = 0
-porepressure[:, 1][particles[:, 0] >= 3] = 0
-save_scalers(porepressure, "initial_porepressure")
-
-# Initial stress field for the self-weight stabilisation stage.
-# Compression is written as negative, matching the solver's stress convention.
-# ThreePhaseParticleLag later uses:
-#   total_stress = stress - (pore_pressure - ini_pore_pressure)
-# so the initial file must contain the in-situ total stress. The vertical
-# component is built from the total overburden, while the horizontal component
-# is calibrated to the previously equilibrated field (about 0.72 * sigma_yy).
+# Hydrostatic pressure is stored as liquid pressure. ThreePhaseParticleLag
+# combines it with the saturation-dependent suction after its liquid material
+# has been initialised. Keeping every particle on this profile avoids the
+# artificial bottom-only pressure jump that destabilises nearly saturated soil.
 soil_density = 2650.0
 water_density = 1000.0
 porosity = 0.485
@@ -666,43 +657,43 @@ gravity = 9.81
 sea_level = 1.0
 depth_left = 0.5
 depth_right = 0.5
-liquid_saturation = 0.993
-gas_saturation = 0.007
-liquid_saturation_res = 0.001
-gas_saturation_res = 0.001
-para_p0 = 1000.0
-para_m = 0.5
+liquid_pressure = water_density * gravity * numpy.maximum(sea_level - particles[:, 1], 0.0)
+save_scalars(liquid_pressure, "initial_liquid_pressures")
 
+# Initial skeleton stresses for the PIC=1, LinearElastic2D stabilisation stage.
+# The solver stores compression as negative and subtracts pore pressure when it
+# assembles total mixture stress, so these files must contain EFFECTIVE stress,
+# not total stress. Separate fields account for the small saturation-dependent
+# difference in mixture unit weight while retaining the same geometry/loading.
 water_depth = depth_left + (depth_right - depth_left) * (particles[:, 0] / 1.5)
 seabed_elevation = sea_level - water_depth
 burial_depth = numpy.maximum(seabed_elevation - particles[:, 1], 0.0)
-
-gamma_sub = (1.0 - porosity) * (soil_density - water_density) * gravity
-sigma_v_eff = gamma_sub * burial_depth
-
-effective_saturation = numpy.clip(
-    (liquid_saturation - liquid_saturation_res)
-    / (1.0 - liquid_saturation_res - gas_saturation_res),
-    0.0,
-    1.0,
+gas_molar_mass = 0.029
+gas_constant = 8.314
+reference_pressure = 100000.0
+reference_temperature = 273.15
+gas_density = (
+    gas_molar_mass * reference_pressure / gas_constant / reference_temperature
 )
-suction_pressure = para_p0 * (
-    (effective_saturation ** (-1.0 / para_m) - 1.0) ** (1.0 - para_m)
-)
-liquid_pressure = water_density * gravity * numpy.maximum(sea_level - particles[:, 1], 0.0)
-ini_pore_pressure = (
-    liquid_saturation * liquid_pressure
-    + gas_saturation * (liquid_pressure + suction_pressure)
-)
-
-sigma_yy = -(sigma_v_eff + ini_pore_pressure)
-K0_total = 0.72
-sigma_xx = K0_total * sigma_yy
-
-stresses = numpy.zeros((particles.shape[0], 6))
-stresses[:, 0] = sigma_xx
-stresses[:, 1] = sigma_yy
-save_stresses(stresses, "initial_stresses")
+initial_saturations = {"LS": 0.999, "HS": 0.94}
+K0_effective = 0.72
+initial_effective_unit_weights = {}
+for state, liquid_saturation in initial_saturations.items():
+    gas_saturation = 1.0 - liquid_saturation
+    mixture_density = (
+        (1.0 - porosity) * soil_density
+        + porosity
+        * (liquid_saturation * water_density + gas_saturation * gas_density)
+    )
+    effective_unit_weight = (mixture_density - water_density) * gravity
+    if effective_unit_weight <= 0.0:
+        raise RuntimeError("Initial effective unit weight must be positive")
+    sigma_yy = -effective_unit_weight * burial_depth
+    stresses = numpy.zeros((particles.shape[0], 6))
+    stresses[:, 0] = K0_effective * sigma_yy
+    stresses[:, 1] = sigma_yy
+    save_stresses(stresses, "initial_effective_stresses_{}".format(state))
+    initial_effective_unit_weights[state] = effective_unit_weight
 
 # Basic consistency checks catch stale ids before a long server run.
 for name, ids, upper_bound in (
@@ -747,6 +738,13 @@ summary = {
     "pipeline_friction_coefficient": pipeline_friction,
     "smooth_pipeline_surface_segments": pipeline_surface_nsegments,
     "smooth_pipeline_max_radius_error": maximum_radius_error,
+    "initial_liquid_pressure_file": "initial_liquid_pressures.txt",
+    "initial_effective_stress_files": {
+        state: "initial_effective_stresses_{}.txt".format(state)
+        for state in initial_saturations
+    },
+    "initial_effective_unit_weights_n_per_m3": initial_effective_unit_weights,
+    "initial_effective_stress_K0": K0_effective,
 }
 with open(OUTPUT_DIR / "generation_summary.json", "w") as f:
     json.dump(summary, f, indent=4)

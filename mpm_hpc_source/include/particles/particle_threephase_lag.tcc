@@ -981,7 +981,12 @@ bool mpm::ThreePhaseParticleLag<Tdim>::assign_initial_properties() {
     // this->suction_pressure_ = para_p0 * std::pow(effective_saturation_, -1. / para_m);
     this->suction_pressure_ = para_p0 * 
           std::pow(std::pow(this->effective_saturation_, -1. / para_m) - 1., 1. - para_m);
-    this->liquid_pressure_ = 0.0;
+    // MPMBase reads the optional particle pressure field before compute_mass.
+    // Preserve that hydrostatic liquid pressure while deriving the gas and
+    // saturation-weighted pore pressures from the now-available materials.
+    this->liquid_pressure_ = this->has_input_initial_liquid_pressure_ ?
+                                 this->input_initial_liquid_pressure_ :
+                                 0.0;
     this->gas_pressure_ = this->suction_pressure_ + this->liquid_pressure_;
     this->PIC_gas_pressure_ = this->gas_pressure_;
     this->PIC_liquid_pressure_ = this->liquid_pressure_;
@@ -2326,24 +2331,25 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_pore_pressure_watertable(
     if (left_boundary != std::numeric_limits<double>::lowest()) {
       // Particle with left and right boundary
       if (right_boundary != std::numeric_limits<double>::max()) {
-        this->liquid_pressure_ =
+        this->input_initial_liquid_pressure_ =
             ((h0_right - h0_left) / (right_boundary - left_boundary) *
                  (position - left_boundary) +
              h0_left - this->coordinates_(dir_v)) *
             1000 * 9.81;
       } else
         // Particle with only left boundary
-        this->liquid_pressure_ =
+        this->input_initial_liquid_pressure_ =
             (h0_left - this->coordinates_(dir_v)) * 1000 * 9.81;
     }
     // Particle with only right boundary
     else if (right_boundary != std::numeric_limits<double>::max())
-      this->liquid_pressure_ =
+      this->input_initial_liquid_pressure_ =
           (h0_right - this->coordinates_(dir_v)) * 1000 * 9.81;
 
     else
       throw std::runtime_error(
           "Particle pore pressure can not be initialised by water table");
+    this->has_input_initial_liquid_pressure_ = true;
   } catch (std::exception& exception) {
     console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
     status = false;

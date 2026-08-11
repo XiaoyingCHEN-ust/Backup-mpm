@@ -45,6 +45,13 @@ EQUILIBRIUM_VTP = """<?xml version="1.0"?>
 
 
 class ValidateCaseTest(unittest.TestCase):
+    def test_ascii_scalar_reader_rejects_legacy_id_value_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "pressures.txt"
+            path.write_text("2\n0 9810\n1 9712\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "2 columns; expected 1"):
+                validate.read_ascii_table(path, 1)
+
     def test_output_base_is_created_recursively_and_cannot_escape_case(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
