@@ -675,7 +675,7 @@ reference_temperature = 273.15
 gas_density = (
     gas_molar_mass * reference_pressure / gas_constant / reference_temperature
 )
-initial_saturations = {"LS": 0.999, "HS": 0.94}
+initial_saturations = {"LS": 0.993, "HS": 0.94}
 K0_effective = 0.72
 initial_effective_unit_weights = {}
 for state, liquid_saturation in initial_saturations.items():

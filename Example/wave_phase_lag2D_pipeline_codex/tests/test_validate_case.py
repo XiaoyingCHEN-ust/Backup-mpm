@@ -80,7 +80,7 @@ class ValidateCaseTest(unittest.TestCase):
         config["analysis"]["resume"]["resume"] = True
         config["analysis"]["resume"]["uuid"] = "EQ"
         path = validate.checkpoint_path(config)
-        self.assertEqual(path.name, "particles10000.h5")
+        self.assertEqual(path.name, "particles40000.h5")
         self.assertEqual(path.parent.name, "EQ")
 
     def test_generated_manifest_selects_nine_cases(self):

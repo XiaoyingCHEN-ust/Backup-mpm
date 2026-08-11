@@ -169,7 +169,7 @@
       "name": "water",
       "type": "Newtonian2D",
       "density": 1000.0,
-      "liquid_saturation": 0.999,
+      "liquid_saturation": 0.993,
       "liquid_viscosity": 0.001,
       "bulk_modulus": 2200000000.0,
       "mu": 0.001,
@@ -189,7 +189,7 @@
       "gas_constant": 8.314,
       "gas_molar_mass": 0.029,
       "gas_saturation_res": 0.001,
-      "gas_saturation": 0.0010000000000000009,
+      "gas_saturation": 0.007000000000000006,
       "gas_viscosity": 1e-05,
       "constant_mg": 3.0,
       "para_p0": 1000.0,
@@ -253,8 +253,8 @@
     "resume": {
       "resume": true,
       "uuid": "PLP_PRODUCTION_LS_EQ",
-      "step": 10000,
-      "nsteps": 10000,
+      "step": 40000,
+      "nsteps": 40000,
       "start_from_this_step": false,
       "this_step": 0,
       "current_time": 0.0

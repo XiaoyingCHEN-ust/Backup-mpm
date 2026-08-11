@@ -253,8 +253,8 @@
     "resume": {
       "resume": true,
       "uuid": "PLP_PRODUCTION_HS_EQ",
-      "step": 10000,
-      "nsteps": 10000,
+      "step": 40000,
+      "nsteps": 40000,
       "start_from_this_step": false,
       "this_step": 0,
       "current_time": 0.0

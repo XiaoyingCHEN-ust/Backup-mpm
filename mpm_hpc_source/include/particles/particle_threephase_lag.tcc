@@ -1630,6 +1630,11 @@ void mpm::ThreePhaseParticleLag<Tdim>::compute_updated_velocity(
       liquid_acceleration -= damping_factor * this->liquid_velocity_;
       gas_acceleration -= damping_factor * this->gas_velocity_;
 
+      // Keep damping active for pure PIC equilibrium runs. Without these
+      // increments, the damped FLIP velocities receive zero weight at PIC=1.
+      pic_liquid_velocity -= damping_factor * this->liquid_velocity_ * dt;
+      pic_gas_velocity -= damping_factor * this->gas_velocity_ * dt;
+
       // Get FLIP velocity
       Eigen::Matrix<double, Tdim, 1> flip_liquid_velocity =
                 this->liquid_velocity_ + liquid_acceleration * dt;

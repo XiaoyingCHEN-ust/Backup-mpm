@@ -1163,6 +1163,12 @@ void mpm::Particle<Tdim>::compute_updated_velocity(
     // Applying particle damping
     nodal_acceleration -= damping_factor * this->velocity_;
 
+    // The damping acceleration above contributes to the FLIP update, but it
+    // would otherwise be discarded by a pure PIC update (pic == 1). Apply the
+    // same first-order damping increment to the PIC velocity so that Cundall
+    // damping remains effective during PIC equilibrium initialization.
+    pic_velocity -= damping_factor * this->velocity_ * dt;
+
     this->acceleration_ = nodal_acceleration;
 
     // Get FLIP velocity

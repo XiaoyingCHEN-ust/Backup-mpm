@@ -68,8 +68,14 @@ class PrepareStudyTest(unittest.TestCase):
                 self.assertIn("ids", config["post_processing"]["vtk"])
             self.assertEqual(equilibrium["materials"][0]["type"], "LinearElastic2D")
             self.assertEqual(equilibrium["analysis"]["PIC"], 1.0)
-            self.assertGreater(
-                equilibrium["analysis"]["damping"]["damping_factor"], 0.0
+            self.assertEqual(
+                equilibrium["analysis"]["damping"]["damping_factor"],
+                study.EQUILIBRIUM_DAMPING_FACTOR,
+            )
+            self.assertEqual(equilibrium["analysis"]["nsteps"], 40_000)
+            self.assertEqual(
+                low["materials"][1]["liquid_saturation"],
+                study.LOW_LAG_SATURATION,
             )
             self.assertEqual(
                 equilibrium["mesh"]["particles_stresses"],
@@ -113,6 +119,14 @@ class PrepareStudyTest(unittest.TestCase):
             self.assertEqual(
                 manifest_data["constants"]["mc_stiffness_calibration"],
                 study.mc_stiffness_calibration(),
+            )
+            self.assertEqual(
+                manifest_data["constants"]["equilibrium_steps"],
+                study.EQUILIBRIUM_STEPS,
+            )
+            self.assertEqual(
+                manifest_data["constants"]["equilibrium_damping_factor_per_s"],
+                study.EQUILIBRIUM_DAMPING_FACTOR,
             )
 
             lagged = load("04_RL.json")
@@ -184,6 +198,34 @@ class PrepareStudyTest(unittest.TestCase):
         self.assertIn("has_input_initial_liquid_pressure_ = true", header)
         self.assertIn("has_input_initial_liquid_pressure_ ?", source)
         self.assertIn("input_initial_liquid_pressure_", source)
+
+    def test_cundall_damping_is_applied_to_pure_pic_velocities(self):
+        particle_source = (
+            CASE_DIR.parents[1]
+            / "mpm_hpc_source"
+            / "include"
+            / "particles"
+            / "particle.tcc"
+        ).read_text(encoding="utf-8")
+        threephase_source = (
+            CASE_DIR.parents[1]
+            / "mpm_hpc_source"
+            / "include"
+            / "particles"
+            / "particle_threephase_lag.tcc"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "pic_velocity -= damping_factor * this->velocity_ * dt",
+            particle_source,
+        )
+        self.assertIn(
+            "pic_liquid_velocity -= damping_factor * this->liquid_velocity_ * dt",
+            threephase_source,
+        )
+        self.assertIn(
+            "pic_gas_velocity -= damping_factor * this->gas_velocity_ * dt",
+            threephase_source,
+        )
 
     def test_validator_rejects_old_slash_apic_key(self):
         config = study.equilibrium_config(

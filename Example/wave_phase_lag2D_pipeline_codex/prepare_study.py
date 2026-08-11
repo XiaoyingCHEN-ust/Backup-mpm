@@ -28,10 +28,11 @@ DT = 1.0e-4
 STEPS_PER_CYCLE = int(round(PERIOD / DT))
 PRESSURE_INTERVAL = STEPS_PER_CYCLE // 100
 VTK_INTERVAL = STEPS_PER_CYCLE // 20
-EQUILIBRIUM_STEPS = 10_000
+EQUILIBRIUM_STEPS = 40_000
+EQUILIBRIUM_DAMPING_FACTOR = 5.0
 POROSITY = 0.485
 PERMEABILITY = 9.79e-12
-LOW_LAG_SATURATION = 0.999
+LOW_LAG_SATURATION = 0.993
 HIGH_LAG_SATURATION = 0.94
 PIPE_RADIUS = 0.06
 PIPE_DIAMETER = 2.0 * PIPE_RADIUS
@@ -462,7 +463,10 @@ def equilibrium_config(
                     "free_surface_particle": "assign",
                     "volume_tolerance": 0.25,
                 },
-                "damping": {"type": "Cundall", "damping_factor": 0.05},
+                "damping": {
+                    "type": "Cundall",
+                    "damping_factor": EQUILIBRIUM_DAMPING_FACTOR,
+                },
                 "pressure_smoothing": True,
                 "pressure_smoothing_iterations": 1,
                 "pressure_smoothing_in_loop": False,
@@ -573,8 +577,18 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"{analysis['uuid']}: equilibrium must use LinearElastic2D and PIC=1"
             )
-        if float(analysis["damping"].get("damping_factor", 0.0)) <= 0.0:
-            raise ValueError(f"{analysis['uuid']}: equilibrium damping is disabled")
+        if int(analysis["nsteps"]) != EQUILIBRIUM_STEPS:
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium must run {EQUILIBRIUM_STEPS} steps"
+            )
+        damping_factor = float(analysis["damping"].get("damping_factor", 0.0))
+        if not math.isclose(
+            damping_factor, EQUILIBRIUM_DAMPING_FACTOR, abs_tol=1.0e-12
+        ):
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium damping must be "
+                f"{EQUILIBRIUM_DAMPING_FACTOR:g} 1/s"
+            )
         initial_stress = config["mesh"].get("particles_stresses", "")
         initial_pressure = config["mesh"].get(
             "particles_pore_pressures", {}
@@ -805,6 +819,10 @@ def generate_tier(
             "cycles": settings["cycles"],
             "release_time_s": RELEASE_TIME,
             "post_release_cycles": settings["cycles"] - 3,
+            "equilibrium_steps": EQUILIBRIUM_STEPS,
+            "equilibrium_duration_s": EQUILIBRIUM_STEPS * DT,
+            "equilibrium_pic": 1.0,
+            "equilibrium_damping_factor_per_s": EQUILIBRIUM_DAMPING_FACTOR,
             "porosity": POROSITY,
             "intrinsic_permeability_m2": PERMEABILITY,
             "hydraulic_conductivity_approx_m_s": PERMEABILITY * 1000.0 * 9.81 / 1.0e-3,

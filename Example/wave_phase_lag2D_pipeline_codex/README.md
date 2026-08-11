@@ -19,7 +19,7 @@ not monotonic.
 
 | Code | Phase input | Soil model | Status and purpose |
 |---|---|---|---|
-| LS | Fully coupled, near-saturated `Sw=0.999` | SANISAND | Physical low-lag reference; report the measured lag, never call it exact zero |
+| LS | Fully coupled, near-saturated `Sw=0.993` | SANISAND | Physical low-lag reference; report the measured lag, never call it exact zero |
 | HS | Fully coupled, `Sw=0.94` | SANISAND | Physical high-lag main case |
 | HM | Fully coupled, `Sw=0.94` | Mohr-Coulomb | Simple constitutive ablation against HS |
 | HD | Fully coupled, fixed pipe, `Sw=0.94` | SANISAND | Generates the pressure database |
@@ -59,7 +59,10 @@ python submit_study_sbatch.py screen --prepare --build --analyze \
 ```
 
 The two equilibrium jobs deliberately use `LinearElastic2D`, `PIC=1.0`, a
-fixed pipe and positive Cundall damping.  `mesh.py` also generates a
+fixed pipe and Cundall damping of `5 s^-1` for 4 s.  The particle update keeps
+this damping active in the pure-PIC branch; dynamic cases use zero damping.
+The low-lag case uses `Sw=0.993`, avoiding the singular near-saturated endpoint
+while retaining the previously demonstrated low-lag regime.  `mesh.py` also generates a
 hydrostatic liquid-pressure profile for every particle plus separate LS/HS
 effective self-weight stress fields.  Validation checks the single-column MPM
 pressure format and the stress/pressure values before a job is submitted.  The
