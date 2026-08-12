@@ -7,7 +7,15 @@
 
 set -eo pipefail
 
-case_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Slurm copies the submitted script into its spool before execution, so
+# BASH_SOURCE points at the spool copy rather than this case directory.  sbatch
+# exports the directory from which it was invoked as SLURM_SUBMIT_DIR; the
+# Python submitter always invokes sbatch with this case directory as cwd.
+if [[ -z "${SLURM_SUBMIT_DIR:-}" ]]; then
+  printf 'SLURM_SUBMIT_DIR is unavailable; submit this wrapper through sbatch.\n' >&2
+  exit 2
+fi
+case_dir=$(cd "${SLURM_SUBMIT_DIR}" && pwd -P)
 cd "${case_dir}"
 
 if [[ "$#" -eq 0 ]]; then

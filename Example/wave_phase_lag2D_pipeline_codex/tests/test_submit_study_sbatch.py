@@ -188,6 +188,8 @@ class SbatchWorkflowTest(unittest.TestCase):
         wrapper = (CASE_DIR / runner.RUN_TASK).read_text(encoding="utf-8")
         self.assertIn("#SBATCH --partition=granularmech", wrapper)
         self.assertIn("#SBATCH --account=comgranmech", wrapper)
+        self.assertIn('case_dir=$(cd "${SLURM_SUBMIT_DIR}" && pwd -P)', wrapper)
+        self.assertNotIn('dirname "${BASH_SOURCE[0]}"', wrapper)
         self.assertIn('exec "$@"', wrapper)
 
     def test_case_wrapper_publishes_completion_only_after_solver(self):
