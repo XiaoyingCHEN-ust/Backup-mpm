@@ -52,3 +52,74 @@ TEST_CASE("Mohr-Coulomb handoff rejects invalid restored porosity") {
   REQUIRE_THROWS(material.initialise_state_variables_from_particle(
       std::numeric_limits<double>::quiet_NaN()));
 }
+
+TEST_CASE("Mohr-Coulomb zero-cohesion apex remains finite") {
+  mpm::MohrCoulomb<2> material(0, mohr_coulomb_properties());
+  auto state = material.initialise_state_variables_from_particle(0.485);
+  const Eigen::Matrix<double, 6, 1> stress =
+      Eigen::Matrix<double, 6, 1>::Zero();
+  const Eigen::Matrix<double, 6, 1> dstrain =
+      Eigen::Matrix<double, 6, 1>::Zero();
+
+  const auto updated =
+      material.compute_stress(stress, dstrain, nullptr, &state);
+
+  REQUIRE(updated.allFinite());
+  REQUIRE(updated.norm() == Approx(0.0).margin(1.E-14));
+  REQUIRE(std::isfinite(state.at("pdstrain")));
+  REQUIRE(state.at("pdstrain") == Approx(0.0));
+}
+
+TEST_CASE("Mohr-Coulomb states adjacent to zero pressure remain finite") {
+  mpm::MohrCoulomb<2> material(0, mohr_coulomb_properties());
+
+  SECTION("sub-tolerance strain increment at the apex") {
+    auto state = material.initialise_state_variables_from_particle(0.485);
+    const Eigen::Matrix<double, 6, 1> stress =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    Eigen::Matrix<double, 6, 1> dstrain =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    dstrain(0) = -1.E-14;
+
+    const auto updated =
+        material.compute_stress(stress, dstrain, nullptr, &state);
+    REQUIRE(updated.allFinite());
+    REQUIRE(updated.norm() < 1.E-6);
+    REQUIRE(std::isfinite(state.at("pdstrain")));
+  }
+
+  SECTION("representative hydrostatic compression") {
+    auto state = material.initialise_state_variables_from_particle(0.485);
+    Eigen::Matrix<double, 6, 1> stress =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    stress(0) = stress(1) = stress(2) = -1.;
+    const Eigen::Matrix<double, 6, 1> dstrain =
+        Eigen::Matrix<double, 6, 1>::Zero();
+
+    const auto updated =
+        material.compute_stress(stress, dstrain, nullptr, &state);
+    REQUIRE(updated.allFinite());
+    REQUIRE((updated - stress).norm() == Approx(0.0).margin(1.E-14));
+    REQUIRE(std::isfinite(state.at("pdstrain")));
+  }
+
+  SECTION("small hydrostatic tension returns from the apex") {
+    auto state = material.initialise_state_variables_from_particle(0.485);
+    Eigen::Matrix<double, 6, 1> stress =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    stress(0) = stress(1) = stress(2) = 1.E-5;
+    const Eigen::Matrix<double, 6, 1> dstrain =
+        Eigen::Matrix<double, 6, 1>::Zero();
+
+    const auto updated =
+        material.compute_stress(stress, dstrain, nullptr, &state);
+    REQUIRE(updated.allFinite());
+    REQUIRE(updated.cwiseAbs().maxCoeff() <= 1.E-6);
+    Eigen::Matrix<double, 2, 1> yield_function;
+    material.compute_stress_invariants(updated, &state);
+    material.compute_yield_state(&yield_function, state);
+    REQUIRE(yield_function(0) < 1.E-6);
+    REQUIRE(yield_function(1) < 1.E-6);
+    REQUIRE(std::isfinite(state.at("pdstrain")));
+  }
+}

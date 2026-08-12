@@ -856,8 +856,26 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
     // Locate particles
     auto unlocatable_particles = mesh_->locate_particles_mesh();
 
-    if (!unlocatable_particles.empty())
-      throw std::runtime_error("Particle outside the mesh domain");
+    if (!unlocatable_particles.empty()) {
+      std::ostringstream message;
+      message << "Particle outside the mesh domain: count="
+              << unlocatable_particles.size() << ", step=" << step_
+              << ", time=" << current_time_;
+      const std::size_t diagnostic_count =
+          std::min<std::size_t>(unlocatable_particles.size(), 8);
+      for (std::size_t i = 0; i < diagnostic_count; ++i) {
+        const auto& particle = unlocatable_particles[i];
+        const auto coordinates = particle->coordinates();
+        const auto velocity = particle->vector_data("velocities");
+        message << "; particle[id=" << particle->id() << ", coordinates=("
+                << coordinates.transpose() << "), velocity=("
+                << velocity.transpose() << "), finite="
+                << (coordinates.allFinite() && velocity.allFinite() ? "yes"
+                                                                     : "no")
+                << "]";
+      }
+      throw std::runtime_error(message.str());
+    }
 
     this->write_rigid_pipeline_output(
         rigid_pipeline_contact, rigid_pipeline_total_force,
