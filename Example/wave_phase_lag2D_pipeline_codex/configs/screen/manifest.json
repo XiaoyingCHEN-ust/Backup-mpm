@@ -2,7 +2,7 @@
   "schema": "pipeline-phase-lag-study-v1",
   "tier": "screen",
   "label": "baseline",
-  "scientific_scope": "LS/HS/HM are fully coupled physical cases; RL/RM/RE are one-way diagnostic replays and must not be described as physical solutions",
+  "scientific_scope": "MC_EQ is numerical handoff relaxation and not a comparison case; LS/HS/HM are fully coupled physical cases; RL/RM/RE are one-way diagnostic replays and must not be described as physical solutions",
   "constants": {
     "wave_height_m": 0.12,
     "wave_period_s": 1.3,
@@ -14,12 +14,17 @@
     "equilibrium_duration_s": 4.0,
     "equilibrium_pic": 1.0,
     "equilibrium_damping_factor_per_s": 5.0,
+    "mc_handoff_steps": 40000,
+    "mc_handoff_duration_s": 4.0,
+    "stability_max_velocity_m_s": 0.001,
+    "stability_max_displacement_m": 0.02,
     "porosity": 0.485,
     "intrinsic_permeability_m2": 9.79e-12,
     "hydraulic_conductivity_approx_m_s": 9.603989999999999e-05,
     "pipe_diameter_m": 0.12,
     "cover_over_diameter": 0.25,
     "pipe_invert_depth_m": 0.14999999999999997,
+    "submerged_surface_traction_pa": -4905.0,
     "mc_friction_deg_from_Mc": 31.14738992150898,
     "mc_stiffness_calibration": {
       "method": "SANISAND initial elastic tangent at reference mean effective stress",
@@ -58,6 +63,14 @@
       "uuid": "PLP_SCREEN_HS_EQ"
     },
     {
+      "code": "MC_EQ",
+      "run_order": 2,
+      "role": "MC handoff relaxation",
+      "dependency": "EQ_HS",
+      "config": "02_MC_EQ.json",
+      "uuid": "PLP_SCREEN_HS_MC_RELAX"
+    },
+    {
       "code": "LS",
       "run_order": 2,
       "role": "physical low-lag reference",
@@ -75,10 +88,10 @@
     },
     {
       "code": "HM",
-      "run_order": 2,
+      "run_order": 3,
       "role": "fully-coupled MC context",
-      "dependency": "EQ_HS",
-      "config": "02_HM.json",
+      "dependency": "MC_EQ",
+      "config": "03_HM.json",
       "uuid": "PLP_SCREEN_HS_MC"
     },
     {
@@ -101,7 +114,7 @@
       "code": "RM",
       "run_order": 4,
       "role": "matched-pressure constitutive ablation",
-      "dependency": "HD",
+      "dependency": "HD + MC_EQ",
       "config": "04_RM.json",
       "uuid": "PLP_SCREEN_RM_MC"
     },

@@ -19,6 +19,7 @@ not monotonic.
 
 | Code | Phase input | Soil model | Status and purpose |
 |---|---|---|---|
+| MC_EQ | No wave; resumes stable EQ_HS | Mohr-Coulomb | Pure-PIC, damped, fixed-pipe handoff relaxation; numerical staging only |
 | LS | Fully coupled, near-saturated `Sw=0.993` | SANISAND | Physical low-lag reference; report the measured lag, never call it exact zero |
 | HS | Fully coupled, `Sw=0.94` | SANISAND | Physical high-lag main case |
 | HM | Fully coupled, `Sw=0.94` | Mohr-Coulomb | Simple constitutive ablation against HS |
@@ -43,7 +44,9 @@ is matched to the implemented SANISAND tangent at the pipe-relevant reference
 state `p'=3 kPa`, `n=0.485`: `G=4.58693 MPa`, `K=2.98605 MPa`, giving
 `E=9.10081 MPa` and `nu=-0.0079625`.  This is a local reference-state match;
 SANISAND remains pressure dependent.  The generated JSON records the formulas
-and calibration values.
+and calibration values.  The separate `critical_timestep_modulus=23.8 MPa` is
+only a conservative wave-speed bound for the explicit time-step audit; it is
+not used by the SANISAND stress update.
 
 ## Server workflow
 
@@ -58,24 +61,39 @@ python submit_study_sbatch.py screen --prepare --build --analyze \
   --cpus 16 --gres gpu:1 --nodelist gpu30
 ```
 
-The two equilibrium jobs deliberately use `LinearElastic2D`, `PIC=1.0`, a
-fixed pipe and Cundall damping of `5 s^-1` for 4 s.  The particle update keeps
-this damping active in the pure-PIC branch; dynamic cases use zero damping.
+The two primary equilibrium jobs deliberately use `LinearElastic2D`, pure
+`PIC=1.0` with `APIC=false`, a fixed pipe and Cundall damping of `5 s^-1`
+for 4 s.  The particle update keeps this damping active in the pure-PIC branch;
+dynamic cases use zero damping.
+The equilibrium elastic constants use the same `E=9.10081 MPa`,
+`nu=-0.0079625` reference tangent as the registered Mohr-Coulomb ablation;
+the plane-strain initial state sets both horizontal effective stresses to
+`K0 sigma_yy`.  The separate `23.8 MPa` timestep modulus remains a conservative
+numerical bound.
 The low-lag case uses `Sw=0.993`, avoiding the singular near-saturated endpoint
 while retaining the previously demonstrated low-lag regime.  `mesh.py` also generates a
 hydrostatic liquid-pressure profile for every particle plus separate LS/HS
-effective self-weight stress fields.  Validation checks the single-column MPM
-pressure format and the stress/pressure values before a job is submitted.  The
-dynamic jobs then restore the successful equilibrium HDF5 and switch to
-SANISAND or Mohr-Coulomb as registered in the study matrix.
+effective self-weight stress fields.  The submerged bed surface carries the
+matching downward `4.905 kPa` water-column traction; it is assigned only to the
+top particle row, while the two-row set remains reserved for free-surface
+detection.  Validation checks the single-column MPM
+pressure format and the stress/pressure values before a job is submitted.
+SANISAND dynamics restore the successful LinearElastic2D HDF5 directly.  The
+zero-cohesion MC comparison instead passes through the explicit `MC_EQ` stage:
+it restores EQ_HS, switches to Mohr-Coulomb, retains pure PIC, damping
+`5 s^-1`, the fixed pipe and zero wave loading for another 4 s, and writes a
+new checkpoint.  This stage is numerical handoff relaxation, not a scientific
+comparison result.  HM/RM restore that MC checkpoint and only then return to
+`APIC=true`, `PIC=0`, zero damping and their registered dynamic loading.
 
 The submitter uses `sbatch --parsable` and records the dependency graph and job
 IDs under `submissions/`.  Every job is forced onto
 `--partition=granularmech --account=comgranmech`; the defaults also request
-`gpu30`, 16 CPU and `gres:gpu:1`.  It submits both equilibria, physical cases,
-the fixed-pipe driver, phase transform, replays and analysis with `afterok`
-dependencies, then returns so the terminal may be disconnected or reused for
-Code Tunnel.  Completed final VTP/HDF5 outputs are skipped unless `--force` is
+`gpu30`, 16 CPU and `gres:gpu:1`.  It submits both primary equilibria, MC_EQ,
+physical cases, the fixed-pipe driver, phase transform, replays and analysis
+with `afterok` dependencies, then returns so the terminal may be disconnected
+or reused for Code Tunnel.  HM depends on MC_EQ; RM depends jointly on MC_EQ
+and HD.  Completed final VTP/HDF5 outputs are skipped unless `--force` is
 specified.  A file is not considered complete merely because it exists:
 `run_case.sh` publishes `pipeline_completion.json` atomically only after the
 solver exits successfully and the final VTP, required HDF5, configuration hash
@@ -91,12 +109,14 @@ when its metadata hashes still match both the transformed output and the current
 lagged source database.  The cases use the locally built
 `../../mpm_hpc_source/build-pipeline/mpm`; set `MPM_BIN` before the run to
 use another executable.  Every dynamic job verifies that the requested HDF5
-checkpoint exists and that its final equilibrium VTP has finite fields,
-`max|v| <= 1e-3 m/s`, displacement below one coarse cell, and valid porosity;
-failure stops the dependent job.  The server build also rejects a legacy
+checkpoint exists and that its final QA VTP has finite fields,
+`max|v| <= 1e-3 m/s`, displacement below one coarse cell, and valid porosity.
+Both LinearElastic2D equilibrium jobs and MC_EQ apply this unchanged gate while
+publishing their own completion sentinel; failure makes the job fail and stops
+all dependent `afterok` jobs.  The server build also rejects a legacy
 159-field SANISAND checkpoint that declares more history variables than it
 actually stores; the registered workflow always creates a fresh linear-elastic
-equilibrium checkpoint before the SANISAND/MC handoff.
+equilibrium checkpoint before either constitutive handoff.
 Each batch job writes `logs/<job-name>-<job-id>.out/.err`.
 The submit command returns after queueing; monitor later with `squeue -u "$USER"`
 or inspect the saved `submissions/<group>-<UTC timestamp>.json` while using Code

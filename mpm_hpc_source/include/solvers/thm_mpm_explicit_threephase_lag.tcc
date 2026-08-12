@@ -1796,13 +1796,20 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::compute_critical_timestep_size(d
   // Solid Material parameters 
   auto materials =  materials_.at(soil_skeleton);
   double porosity = materials->template property<double>(std::string("porosity"));
-  double youngs_modulus = materials->template property<double>(std::string("youngs_modulus"));
-  double poisson_ratio = materials->template property<double>(std::string("poisson_ratio"));
+  double critical_timestep_modulus =
+      materials->template property_or<double>(
+          std::string("critical_timestep_modulus"), 0.);
+  if (critical_timestep_modulus <= 0.)
+    critical_timestep_modulus =
+        materials->template property<double>(std::string("youngs_modulus"));
+  if (!std::isfinite(critical_timestep_modulus) ||
+      critical_timestep_modulus <= 0.)
+    throw std::runtime_error("Critical timestep modulus must be finite and positive");
   double density = materials->template property<double>(std::string("density"));
   double specific_heat = materials->template property<double>(std::string("specific_heat"));
   double thermal_conductivity = materials->template property<double>(std::string("thermal_conductivity"));
   // Compute timestep fpor one phase MPM                              
-  double critical_dt = cellsize_min / std::pow(youngs_modulus/density/(1 - porosity), 0.5);
+  double critical_dt = cellsize_min / std::pow(critical_timestep_modulus/density/(1 - porosity), 0.5);
   console_->info("Critical time step size is {} s", critical_dt);
   // Liquid Material parameters 
   auto liquid_materials =  materials_.at(pore_liquid);
@@ -1813,8 +1820,8 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::compute_critical_timestep_size(d
   // Compute timestep for momentum eqaution 
   double density_mixture1 = (1 - porosity) * density;
   double density_mixture2 = (1 - porosity) * density + porosity * liquid_density;
-  double critical_dt11 = cellsize_min / std::pow(youngs_modulus/density_mixture1, 0.5);
-  double critical_dt12 = cellsize_min / std::pow(youngs_modulus/density_mixture2, 0.5);
+  double critical_dt11 = cellsize_min / std::pow(critical_timestep_modulus/density_mixture1, 0.5);
+  double critical_dt12 = cellsize_min / std::pow(critical_timestep_modulus/density_mixture2, 0.5);
   console_->info("Critical time step size for elastic wave propagation (solid base) is {} s", critical_dt11);
   console_->info("Critical time step size for elastic wave propagation (liquid base) is {} s", critical_dt12);
 

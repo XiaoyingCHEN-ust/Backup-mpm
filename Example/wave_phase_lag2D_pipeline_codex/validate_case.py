@@ -300,6 +300,11 @@ def write_case_completion(config_path: Path) -> Path:
     if final_hdf5 is not None:
         validate_final_hdf5(final_hdf5)
         artifacts["final_hdf5"] = artifact_audit(final_hdf5)
+    stability_qa = None
+    if config["analysis"].get("stability_gate"):
+        if final_hdf5 is None:
+            raise ValueError("A stability-gated stage must write an HDF5 checkpoint")
+        stability_qa = validate_equilibrium_vtp(final_hdf5)
     pressure_database = written_pressure_database_audit(config)
     if pressure_database is not None:
         artifacts["written_pressure_database"] = pressure_database
@@ -317,6 +322,8 @@ def write_case_completion(config_path: Path) -> Path:
         "artifacts": artifacts,
         "runtime_dependencies": runtime_dependencies,
     }
+    if stability_qa is not None:
+        payload["stability_qa"] = stability_qa
     sentinel = completion_path(config)
     sentinel.parent.mkdir(parents=True, exist_ok=True)
     temporary = sentinel.with_name(f".{sentinel.name}.{os.getpid()}.tmp")
@@ -418,8 +425,10 @@ def validate_geometry(config: dict[str, Any]) -> list[str]:
             raise ValueError("Initial vertical stress is not effective overburden")
         if not np.allclose(stresses[:, 0], expected_xx, rtol=0.0, atol=1.0e-6):
             raise ValueError("Initial horizontal effective stress has stale K0")
-        if not np.allclose(stresses[:, 2:], 0.0, rtol=0.0, atol=1.0e-12):
-            raise ValueError("Initial out-of-plane/shear stresses must be zero")
+        if not np.allclose(stresses[:, 2], expected_xx, rtol=0.0, atol=1.0e-6):
+            raise ValueError("Initial out-of-plane effective stress has stale K0")
+        if not np.allclose(stresses[:, 3:], 0.0, rtol=0.0, atol=1.0e-12):
+            raise ValueError("Initial shear stresses must be zero")
         messages.append(
             "initial state: hydrostatic liquid pressure + effective self-weight stress"
         )
@@ -483,11 +492,11 @@ def validate_equilibrium_vtp(checkpoint: Path) -> str:
     )
     porosity_min = float(np.min(arrays["porosities"]))
     porosity_max = float(np.max(arrays["porosities"]))
-    if maximum_velocity > 1.0e-3:
+    if maximum_velocity > study.STABILITY_MAX_VELOCITY:
         raise ValueError(
             f"Equilibrium max velocity {maximum_velocity:.3e} m/s exceeds 1e-3 m/s"
         )
-    if maximum_displacement > 2.0e-2:
+    if maximum_displacement > study.STABILITY_MAX_DISPLACEMENT:
         raise ValueError(
             f"Equilibrium max displacement {maximum_displacement:.3e} m exceeds one cell"
         )

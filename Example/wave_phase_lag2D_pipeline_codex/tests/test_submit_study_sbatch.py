@@ -53,10 +53,13 @@ class SbatchWorkflowTest(unittest.TestCase):
 
         self.assertEqual(queue.jobs["build"].dependency_keys, ["prepare"])
         self.assertEqual(queue.jobs["LS"].dependency_keys, ["EQ_LS"])
-        for key in ("HS", "HM", "HD"):
+        for key in ("HS", "HD"):
             self.assertEqual(queue.jobs[key].dependency_keys, ["EQ_HS"])
-        for key in ("phase", "RL", "RM"):
+        self.assertEqual(queue.jobs["MC_EQ"].dependency_keys, ["EQ_HS"])
+        self.assertEqual(queue.jobs["HM"].dependency_keys, ["MC_EQ"])
+        for key in ("phase", "RL"):
             self.assertEqual(queue.jobs[key].dependency_keys, ["HD"])
+        self.assertEqual(queue.jobs["RM"].dependency_keys, ["HD", "MC_EQ"])
         self.assertEqual(queue.jobs["RE"].dependency_keys, ["phase"])
         self.assertEqual(
             queue.jobs["analysis"].dependency_keys,
@@ -70,10 +73,29 @@ class SbatchWorkflowTest(unittest.TestCase):
         queue = runner.submit_workflow(args)
         self.assertIn("RM", queue.jobs)
         self.assertEqual(
+            queue.jobs["MC_EQ"].command[-1],
+            "configs/screen_not_generated_yet/02_MC_EQ.json",
+        )
+        self.assertEqual(
             queue.jobs["RM"].command[-1],
             "configs/screen_not_generated_yet/04_RM.json",
         )
-        for code in ("EQ_LS", "EQ_HS", "LS", "HS", "HM", "HD", "RL", "RM", "RE"):
+        self.assertEqual(
+            queue.jobs["HM"].command[-1],
+            "configs/screen_not_generated_yet/03_HM.json",
+        )
+        for code in (
+            "EQ_LS",
+            "EQ_HS",
+            "MC_EQ",
+            "LS",
+            "HS",
+            "HM",
+            "HD",
+            "RL",
+            "RM",
+            "RE",
+        ):
             config_argument = Path(queue.jobs[code].command[-1])
             self.assertFalse(config_argument.is_absolute())
             self.assertTrue(config_argument.as_posix().startswith("configs/"))
@@ -91,7 +113,17 @@ class SbatchWorkflowTest(unittest.TestCase):
         self.assertIn("EQ_LS", queue.jobs)
         self.assertIn("LS", queue.jobs)
         self.assertEqual(queue.jobs["LS"].dependency_keys, ["EQ_LS"])
-        for code in ("EQ_HS", "HS", "HM", "HD", "phase", "RL", "RM", "RE"):
+        for code in (
+            "EQ_HS",
+            "MC_EQ",
+            "HS",
+            "HM",
+            "HD",
+            "phase",
+            "RL",
+            "RM",
+            "RE",
+        ):
             self.assertNotIn(code, queue.jobs)
 
     def test_dirty_high_equilibrium_propagates_through_driver_and_replays(self):
@@ -104,12 +136,41 @@ class SbatchWorkflowTest(unittest.TestCase):
             runner, "phase_control_complete", return_value=True
         ):
             queue = runner.submit_workflow(args)
-        for code in ("EQ_HS", "HS", "HM", "HD", "phase", "RL", "RM", "RE"):
+        for code in (
+            "EQ_HS",
+            "MC_EQ",
+            "HS",
+            "HM",
+            "HD",
+            "phase",
+            "RL",
+            "RM",
+            "RE",
+        ):
             self.assertIn(code, queue.jobs)
         self.assertEqual(queue.jobs["HD"].dependency_keys, ["EQ_HS"])
+        self.assertEqual(queue.jobs["MC_EQ"].dependency_keys, ["EQ_HS"])
+        self.assertEqual(queue.jobs["HM"].dependency_keys, ["MC_EQ"])
         self.assertEqual(queue.jobs["RL"].dependency_keys, ["HD"])
-        self.assertEqual(queue.jobs["RM"].dependency_keys, ["HD"])
+        self.assertEqual(queue.jobs["RM"].dependency_keys, ["HD", "MC_EQ"])
         self.assertEqual(queue.jobs["RE"].dependency_keys, ["phase"])
+
+    def test_dirty_mc_handoff_forces_both_mc_descendants(self):
+        args = runner.build_parser().parse_args(["screen", "--dry-run"])
+
+        def complete(path: Path) -> bool:
+            return path.name != "02_MC_EQ.json"
+
+        with patch.object(runner, "config_complete", side_effect=complete), patch.object(
+            runner, "phase_control_complete", return_value=True
+        ):
+            queue = runner.submit_workflow(args)
+        for code in ("MC_EQ", "HM", "RM"):
+            self.assertIn(code, queue.jobs)
+        self.assertEqual(queue.jobs["HM"].dependency_keys, ["MC_EQ"])
+        self.assertEqual(queue.jobs["RM"].dependency_keys, ["validate", "MC_EQ"])
+        for code in ("EQ_HS", "HS", "HD", "phase", "RL", "RE"):
+            self.assertNotIn(code, queue.jobs)
 
     def test_dirty_phase_transform_forces_replay_counterfactual_rerun(self):
         args = runner.build_parser().parse_args(["screen", "--dry-run"])

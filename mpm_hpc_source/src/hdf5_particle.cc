@@ -766,9 +766,9 @@ void validate_table_metadata(hsize_t field_count, hsize_t record_count,
         ", mesh=" + std::to_string(expected_records));
 }
 
-void validate_legacy_state_variables(hsize_t field_count,
-                                     const HDF5Particle* particles,
-                                     std::size_t particle_count) {
+void prepare_state_variables_for_restart(hsize_t field_count,
+                                         HDF5Particle* particles,
+                                         std::size_t particle_count) {
   if (field_count == NFIELDS) return;
   if (field_count != LEGACY_NFIELDS)
     throw std::runtime_error(
@@ -786,6 +786,14 @@ void validate_legacy_state_variables(hsize_t field_count,
           std::to_string(particles[i].nstate_vars) +
           " state variables; refusing a lossy restart");
   }
+
+  // A legacy compound table has no named svars_6..svars_19 fields. HDF5 may
+  // nevertheless copy bytes from the unnamed gap in the old in-memory
+  // layout, so value-initialising the destination buffer is not sufficient.
+  // Clear the missing history explicitly after accepting the legacy schema.
+  for (std::size_t i = 0; i < particle_count; ++i)
+    for (unsigned state = LEGACY_NSTATE_VARS; state < 20; ++state)
+      particles[i].svars[state] = 0.;
 }
 }  // namespace hdf5::particle
 }  // namespace mpm

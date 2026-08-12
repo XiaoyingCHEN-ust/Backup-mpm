@@ -123,13 +123,15 @@
       }
     ]
   },
-  "title": "RE one-way counterfactual: fundamental phase erased",
+  "title": "High-lag Mohr-Coulomb handoff relaxation",
   "materials": [
     {
       "id": 0,
       "name": "soil",
-      "type": "SANISAND2D",
+      "type": "MohrCoulomb2D",
       "density": 2650.0,
+      "youngs_modulus": 9100807.964990605,
+      "poisson_ratio": -0.00796252868675392,
       "critical_timestep_modulus": 23800000.0,
       "eta": 10.0,
       "eta_T": 0.2,
@@ -144,26 +146,33 @@
       "initial_temperature": 0.0,
       "p_ref": 100000.0,
       "resume_state_policy": "reinitialize_from_particle",
-      "G0": 125.0,
-      "K0": 150.0,
-      "Mc": 1.25,
-      "Lambda": 0.37,
-      "N_c": 240.902666166616,
-      "alpha_c": 3370000.0,
-      "n_b": 1.25,
-      "ch": 0.968,
-      "n_d": 2.3,
-      "h0": 12.0,
-      "A0": 0.4,
-      "Me": 0.89,
-      "cz": 600.0,
-      "zmax": 4.0,
-      "m_iso": 0.01,
-      "Patm": 100000.0,
-      "P_min": 100.0,
-      "FTOL": 1e-05,
-      "STOL": 1e-05,
-      "LTOL": 1e-06
+      "friction": 31.14738992150898,
+      "cohesion": 0.0,
+      "residual_friction": 31.14738992150898,
+      "residual_cohesion": 0.0,
+      "dilation": 0.0,
+      "residual_dilation": 0.0,
+      "softening": false,
+      "softening_type": "none",
+      "peak_pdstrain": 0.01,
+      "residual_pdstrain": 0.05,
+      "tension_cutoff": 0.0,
+      "stiffness_calibration": {
+        "method": "SANISAND initial elastic tangent at reference mean effective stress",
+        "reference_mean_effective_stress_pa": 3000.0,
+        "reference_porosity": 0.485,
+        "reference_void_ratio": 0.9417475728155339,
+        "reference_specific_volume": 1.941747572815534,
+        "sanisand_G0": 125.0,
+        "sanisand_K0": 150.0,
+        "sanisand_Patm_pa": 100000.0,
+        "matched_shear_modulus_pa": 4586927.52449314,
+        "matched_bulk_modulus_pa": 2986049.6431101956,
+        "mc_youngs_modulus_pa": 9100807.964990605,
+        "mc_poisson_ratio": -0.00796252868675392,
+        "shear_formula": "G=(p'/Patm)^0.5*G0*Patm*(2.97-e)^2/(1+e)",
+        "bulk_formula": "K=(p'/Patm)^(2/3)*K0*Patm*(1+e)/e"
+      }
     },
     {
       "id": 1,
@@ -209,8 +218,8 @@
   "analysis": {
     "type": "ThermoMPMExplicitThreePhaseLag2D",
     "stress_update": "usf",
-    "APIC": true,
-    "PIC": 0.0,
+    "APIC": false,
+    "PIC": 1.0,
     "PIC_T": 0.0,
     "free_surface": {
       "free_surface_particle": "assign",
@@ -218,15 +227,15 @@
     },
     "damping": {
       "type": "Cundall",
-      "damping_factor": 0.0
+      "damping_factor": 5.0
     },
     "pressure_smoothing": true,
     "pressure_smoothing_iterations": 1,
     "pressure_smoothing_in_loop": false,
     "rigid_pipeline": {
       "enable": true,
-      "fixed": false,
-      "release_time": 3.9000000000000004,
+      "fixed": true,
+      "release_time": 4.0001,
       "allow_rotation": true,
       "center": [
         0.7,
@@ -248,32 +257,24 @@
       "rotational_damping": 0.0,
       "history_interval": 130
     },
-    "uuid": "PLP_PRODUCTION_RE_SANI",
+    "uuid": "PLP_SCREEN_HS_MC_RELAX",
     "dt": 0.0001,
-    "nsteps": 234000,
+    "nsteps": 40000,
+    "handoff_relaxation": true,
+    "stability_gate": true,
     "resume": {
       "resume": true,
-      "uuid": "PLP_PRODUCTION_HS_EQ",
+      "uuid": "PLP_SCREEN_HS_EQ",
       "step": 40000,
       "nsteps": 40000,
       "start_from_this_step": false,
       "this_step": 0,
       "current_time": 0.0
-    },
-    "prescribed_phase_pressures": {
-      "enable": true,
-      "write": false,
-      "path": "pressure_databases/production/phase_erased",
-      "file_prefix": "phase_erased",
-      "source_dt": 0.0001,
-      "step_interval": 130,
-      "max_step": 234000,
-      "mapping": "id"
     }
   },
   "post_processing": {
-    "path": "results/production/",
-    "write_hdf5": false,
+    "path": "results/screen/",
+    "write_hdf5": true,
     "write_vtk": true,
     "vtk": [
       "ids",
@@ -283,8 +284,10 @@
       "velocities",
       "stresses",
       "vertical_effective_stress_remaining_ratios",
-      "eps_p_q",
-      "void_ratio"
+      "pdstrain",
+      "phi",
+      "psi",
+      "cohesion"
     ],
     "liquid_vtk": [
       "PIC_pore_pressures",
@@ -301,6 +304,6 @@
       "liquid_seepage_forces"
     ],
     "log_output_steps": false,
-    "output_steps": 650
+    "output_steps": 40000
   }
 }

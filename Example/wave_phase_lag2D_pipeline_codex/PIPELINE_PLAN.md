@@ -25,7 +25,9 @@ the paper should claim practical naturalness rather than impossibility of FEM.
 
 1. **Case and controls.** Geometry, five probe locations, `C/D=0.25`, release
    time, and the LS/HS/HM/RL/RM/RE matrix.  Visually distinguish physical
-   cases from one-way diagnostic replays.
+   cases from one-way diagnostic replays.  Disclose `MC_EQ` as the fixed-pipe,
+   damped Mohr-Coulomb handoff relaxation used by HM/RM, but do not plot or
+   interpret it as a scientific comparison case.
 2. **Hydraulic bridge.** Fixed-pipe pressure histories and fitted phase at the
    surface/crown/invert.  Show that LS is low lag, HS is high lag, and RL–RE has
    matching mean/amplitude with only the fundamental lag removed.

@@ -30,14 +30,29 @@ PRESSURE_INTERVAL = STEPS_PER_CYCLE // 100
 VTK_INTERVAL = STEPS_PER_CYCLE // 20
 EQUILIBRIUM_STEPS = 40_000
 EQUILIBRIUM_DAMPING_FACTOR = 5.0
+MC_HANDOFF_STEPS = 40_000
+STABILITY_MAX_VELOCITY = 1.0e-3
+STABILITY_MAX_DISPLACEMENT = 2.0e-2
+CRITICAL_TIMESTEP_MODULUS = 23_800_000.0
 POROSITY = 0.485
 PERMEABILITY = 9.79e-12
 LOW_LAG_SATURATION = 0.993
 HIGH_LAG_SATURATION = 0.94
+WATER_DENSITY = 1000.0
+GRAVITY = 9.81
+SEA_LEVEL = 1.0
+SEABED_ELEVATION = 0.5
+SUBMERGED_SURFACE_TRACTION = -WATER_DENSITY * GRAVITY * (
+    SEA_LEVEL - SEABED_ELEVATION
+)
+SURFACE_TRACTION_PSET_ID = 4
 PIPE_RADIUS = 0.06
 PIPE_DIAMETER = 2.0 * PIPE_RADIUS
 PIPE_COVER_RATIO = 0.25
-PIPE_CENTER = [0.7, 0.5 - PIPE_RADIUS - PIPE_COVER_RATIO * PIPE_DIAMETER]
+PIPE_CENTER = [
+    0.7,
+    SEABED_ELEVATION - PIPE_RADIUS - PIPE_COVER_RATIO * PIPE_DIAMETER,
+]
 RELEASE_TIME = 3.0 * PERIOD
 SANISAND_MC = 1.25
 MC_FRICTION_DEG = math.degrees(math.asin(3.0 * SANISAND_MC / (6.0 + SANISAND_MC)))
@@ -135,7 +150,7 @@ def prefixed(mesh_directory: str, filename: str) -> str:
 def mesh_block(mesh_directory: str, cell_size: float, particle_spacing: float) -> dict[str, Any]:
     bottom_y_1 = 0.5 * particle_spacing
     bottom_y_2 = 1.5 * particle_spacing
-    hydrostatic = lambda y: 1000.0 * 9.81 * (1.0 - y)
+    hydrostatic = lambda y: WATER_DENSITY * GRAVITY * (SEA_LEVEL - y)
     return {
         "mesh": prefixed(mesh_directory, "mesh.txt"),
         "isoparametric": False,
@@ -188,8 +203,14 @@ def common_soil(material_type: str) -> dict[str, Any]:
         "name": "soil",
         "type": material_type,
         "density": 2650.0,
-        "youngs_modulus": 23_800_000.0,
-        "poisson_ratio": 0.4,
+        # LinearElastic2D equilibrium uses the same registered reference
+        # tangent as the MC handoff. The separate field below remains the
+        # conservative wave-speed bound used by the timestep audit.
+        "youngs_modulus": MC_MATCHED_YOUNGS_MODULUS,
+        "poisson_ratio": MC_MATCHED_POISSON_RATIO,
+        # Numerical wave-speed bound used by the explicit time-step check.
+        # This is not a constitutive Young's modulus for SANISAND.
+        "critical_timestep_modulus": CRITICAL_TIMESTEP_MODULUS,
         "eta": 10.0,
         "eta_T": 0.2,
         "eta_p": 1.0e-5,
@@ -272,7 +293,7 @@ def fluid_material(saturation: float, wave: bool, wave_height: float, particle_s
         "id": 1,
         "name": "water",
         "type": "Newtonian2D",
-        "density": 1000.0,
+        "density": WATER_DENSITY,
         "liquid_saturation": saturation,
         "liquid_viscosity": 1.0e-3,
         "bulk_modulus": 2.2e9,
@@ -301,9 +322,9 @@ def fluid_material(saturation: float, wave: bool, wave_height: float, particle_s
         "wave_pressure": wave,
         "domain_length_x": 1.5,
         "Nx": 1.5 / particle_spacing + 1.0,
-        "depth_left": 0.5,
-        "depth_right": 0.5,
-        "sea_level": 1.0,
+        "depth_left": SEA_LEVEL - SEABED_ELEVATION,
+        "depth_right": SEA_LEVEL - SEABED_ELEVATION,
+        "sea_level": SEA_LEVEL,
         "wave_height_ini_": wave_height,
         "wave_period": PERIOD,
         "wave_ramp_time": PERIOD,
@@ -328,7 +349,7 @@ def rigid_pipeline(*, fixed: bool, release_time: float, particle_spacing: float)
         "normal_penalty": 238_000.0,
         "normal_damping": 75.0,
         "tangential_damping": 75.0,
-        "fluid_density": 1000.0,
+        "fluid_density": WATER_DENSITY,
         "translational_damping": 0.0,
         "rotational_damping": 0.0,
         "history_interval": PRESSURE_INTERVAL,
@@ -337,26 +358,43 @@ def rigid_pipeline(*, fixed: bool, release_time: float, particle_spacing: float)
 
 def external_loading() -> dict[str, Any]:
     return {
-        "gravity": [0.0, -9.81],
+        "gravity": [0.0, -GRAVITY],
         "particle_surface_traction": [
-            {"pset_id": 0, "dir": 1, "traction": 0.0, "facet": 2}
+            {
+                "pset_id": SURFACE_TRACTION_PSET_ID,
+                "dir": 1,
+                "traction": SUBMERGED_SURFACE_TRACTION,
+                "facet": 2,
+            }
         ],
     }
 
 
-def resume_block(enable: bool, uuid: str) -> dict[str, Any]:
+def resume_block(
+    enable: bool,
+    uuid: str,
+    *,
+    step: int = EQUILIBRIUM_STEPS,
+    nsteps: int = EQUILIBRIUM_STEPS,
+) -> dict[str, Any]:
     return {
         "resume": enable,
         "uuid": uuid,
-        "step": EQUILIBRIUM_STEPS,
-        "nsteps": EQUILIBRIUM_STEPS,
+        "step": step,
+        "nsteps": nsteps,
         "start_from_this_step": False,
         "this_step": 0,
         "current_time": 0.0,
     }
 
 
-def post_processing(result_path: str, material_type: str, *, initial: bool) -> dict[str, Any]:
+def post_processing(
+    result_path: str,
+    material_type: str,
+    *,
+    initial: bool,
+    write_checkpoint: bool = False,
+) -> dict[str, Any]:
     if initial:
         solid = [
             "ids",
@@ -401,10 +439,10 @@ def post_processing(result_path: str, material_type: str, *, initial: bool) -> d
             "liquid_pressure_gradients",
             "liquid_seepage_forces",
         ]
-        output_steps = VTK_INTERVAL
+        output_steps = MC_HANDOFF_STEPS if write_checkpoint else VTK_INTERVAL
     return {
         "path": result_path,
-        "write_hdf5": initial,
+        "write_hdf5": initial or write_checkpoint,
         "write_vtk": True,
         "vtk": solid,
         "liquid_vtk": liquid,
@@ -456,7 +494,9 @@ def equilibrium_config(
             "analysis": {
                 "type": "ThermoMPMExplicitThreePhaseLag2D",
                 "stress_update": "usf",
-                "APIC": True,
+                # Use true pure PIC for equilibrium. The affine velocity field
+                # amplifies the penalty-contact discontinuity around the pipe.
+                "APIC": False,
                 "PIC": 1.0,
                 "PIC_T": 0.0,
                 "free_surface": {
@@ -478,9 +518,72 @@ def equilibrium_config(
                 "uuid": uuid,
                 "dt": DT,
                 "nsteps": EQUILIBRIUM_STEPS,
+                "stability_gate": True,
                 "resume": resume_block(False, uuid),
             },
             "post_processing": post_processing(result_path, "LinearElastic2D", initial=True),
+        }
+    )
+    return config
+
+
+def mc_handoff_config(
+    *,
+    code: str,
+    saturation: float,
+    equilibrium_uuid: str,
+    result_path: str,
+    mesh_directory: str,
+    cell_size: float,
+    particle_spacing: float,
+    wave_height: float,
+) -> dict[str, Any]:
+    """Create an explicit, damped MC relaxation from the elastic checkpoint."""
+
+    config = base_config(mesh_directory, cell_size, particle_spacing)
+    uuid = f"PLP_{code}_MC_RELAX"
+    config.update(
+        {
+            "title": "High-lag Mohr-Coulomb handoff relaxation",
+            "materials": [
+                mohr_coulomb_material(),
+                fluid_material(saturation, False, wave_height, particle_spacing),
+            ],
+            "analysis": {
+                "type": "ThermoMPMExplicitThreePhaseLag2D",
+                "stress_update": "usf",
+                "APIC": False,
+                "PIC": 1.0,
+                "PIC_T": 0.0,
+                "free_surface": {
+                    "free_surface_particle": "assign",
+                    "volume_tolerance": 0.25,
+                },
+                "damping": {
+                    "type": "Cundall",
+                    "damping_factor": EQUILIBRIUM_DAMPING_FACTOR,
+                },
+                "pressure_smoothing": True,
+                "pressure_smoothing_iterations": 1,
+                "pressure_smoothing_in_loop": False,
+                "rigid_pipeline": rigid_pipeline(
+                    fixed=True,
+                    release_time=(MC_HANDOFF_STEPS + 1) * DT,
+                    particle_spacing=particle_spacing,
+                ),
+                "uuid": uuid,
+                "dt": DT,
+                "nsteps": MC_HANDOFF_STEPS,
+                "handoff_relaxation": True,
+                "stability_gate": True,
+                "resume": resume_block(True, equilibrium_uuid),
+            },
+            "post_processing": post_processing(
+                result_path,
+                "MohrCoulomb2D",
+                initial=False,
+                write_checkpoint=True,
+            ),
         }
     )
     return config
@@ -500,6 +603,7 @@ def dynamic_config(
     particle_spacing: float,
     wave_height: float,
     physical_wave: bool,
+    equilibrium_steps: int = EQUILIBRIUM_STEPS,
     fixed_pipeline: bool = False,
     pressure_mode: str | None = None,
     pressure_path: str | None = None,
@@ -534,7 +638,12 @@ def dynamic_config(
         "uuid": f"PLP_{code}",
         "dt": DT,
         "nsteps": nsteps,
-        "resume": resume_block(True, equilibrium_uuid),
+        "resume": resume_block(
+            True,
+            equilibrium_uuid,
+            step=equilibrium_steps,
+            nsteps=equilibrium_steps,
+        ),
     }
     if pressure_mode:
         if pressure_path is None:
@@ -570,12 +679,23 @@ def validate_config(config: dict[str, Any]) -> None:
     soil, fluid = config["materials"]
     analysis = config["analysis"]
     pipeline = analysis["rigid_pipeline"]
-    if "/APIC" in analysis or analysis.get("APIC") is not True:
+    resume_enabled = bool(analysis["resume"].get("resume"))
+    handoff_relaxation = bool(analysis.get("handoff_relaxation", False))
+    if "/APIC" in analysis or not isinstance(analysis.get("APIC"), bool):
         raise ValueError(f"{analysis['uuid']}: APIC key is absent or malformed")
-    if not analysis["resume"].get("resume"):
-        if soil["type"] != "LinearElastic2D" or float(analysis["PIC"]) != 1.0:
+    if not resume_enabled:
+        if handoff_relaxation:
             raise ValueError(
-                f"{analysis['uuid']}: equilibrium must use LinearElastic2D and PIC=1"
+                f"{analysis['uuid']}: MC handoff relaxation must resume the elastic checkpoint"
+            )
+        if (
+            soil["type"] != "LinearElastic2D"
+            or analysis["APIC"]
+            or float(analysis["PIC"]) != 1.0
+        ):
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium must use LinearElastic2D, "
+                "APIC=false and PIC=1"
             )
         if int(analysis["nsteps"]) != EQUILIBRIUM_STEPS:
             raise ValueError(
@@ -597,8 +717,47 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"{analysis['uuid']}: equilibrium initial stress/pressure field is absent"
             )
+        if analysis.get("stability_gate") is not True:
+            raise ValueError(f"{analysis['uuid']}: equilibrium stability gate is disabled")
+    elif handoff_relaxation:
+        damping_factor = float(analysis["damping"].get("damping_factor", 0.0))
+        if (
+            soil["type"] != "MohrCoulomb2D"
+            or analysis["APIC"]
+            or float(analysis["PIC"]) != 1.0
+            or not pipeline.get("fixed")
+            or bool(fluid.get("wave_pressure"))
+            or int(analysis["nsteps"]) != MC_HANDOFF_STEPS
+            or not math.isclose(
+                damping_factor,
+                EQUILIBRIUM_DAMPING_FACTOR,
+                abs_tol=1.0e-12,
+            )
+        ):
+            raise ValueError(
+                f"{analysis['uuid']}: MC handoff must use MohrCoulomb2D, "
+                "APIC=false, PIC=1, damping=5 1/s, fixed pipe and no wave"
+            )
+        if analysis.get("stability_gate") is not True:
+            raise ValueError(f"{analysis['uuid']}: MC handoff stability gate is disabled")
+        if not config["post_processing"].get("write_hdf5"):
+            raise ValueError(f"{analysis['uuid']}: MC handoff checkpoint is disabled")
+        if analysis.get("prescribed_phase_pressures") is not None:
+            raise ValueError(
+                f"{analysis['uuid']}: MC handoff cannot read or write wave pressures"
+            )
+    elif not analysis["APIC"]:
+        raise ValueError(f"{analysis['uuid']}: dynamic phase must restore APIC")
+    elif analysis.get("stability_gate"):
+        raise ValueError(f"{analysis['uuid']}: dynamic phase cannot publish a static gate")
     if abs(float(soil["intrinsic_permeability"]) - PERMEABILITY) > 1.0e-20:
         raise ValueError(f"{analysis['uuid']}: permeability changed")
+    if not math.isclose(
+        float(soil["critical_timestep_modulus"]),
+        CRITICAL_TIMESTEP_MODULUS,
+        abs_tol=1.0e-12,
+    ):
+        raise ValueError(f"{analysis['uuid']}: critical timestep modulus changed")
     saturation_sum = float(fluid["liquid_saturation"]) + float(fluid["gas_saturation"])
     if not math.isclose(saturation_sum, 1.0, abs_tol=1.0e-12):
         raise ValueError(f"{analysis['uuid']}: phase saturations do not sum to one")
@@ -681,6 +840,8 @@ def generate_tier(
     high_eq_code = f"{tier.upper()}{label_code}_HS"
     low_eq_uuid = f"PLP_{low_eq_code}_EQ"
     high_eq_uuid = f"PLP_{high_eq_code}_EQ"
+    mc_handoff_code = f"{tier.upper()}{label_code}_HS"
+    mc_handoff_uuid = f"PLP_{mc_handoff_code}_MC_RELAX"
     configs: dict[str, dict[str, Any]] = {
         "EQ_LS": equilibrium_config(
             low_eq_code,
@@ -699,6 +860,16 @@ def generate_tier(
             cell_size,
             particle_spacing,
             wave_height,
+        ),
+        "MC_EQ": mc_handoff_config(
+            code=mc_handoff_code,
+            saturation=HIGH_LAG_SATURATION,
+            equilibrium_uuid=high_eq_uuid,
+            result_path=result_path,
+            mesh_directory=mesh_directory,
+            cell_size=cell_size,
+            particle_spacing=particle_spacing,
+            wave_height=wave_height,
         ),
     }
     dynamic_common = {
@@ -734,7 +905,8 @@ def generate_tier(
                 title="HM fully coupled high-lag Mohr-Coulomb context",
                 saturation=HIGH_LAG_SATURATION,
                 material_type="MohrCoulomb2D",
-                equilibrium_uuid=high_eq_uuid,
+                equilibrium_uuid=mc_handoff_uuid,
+                equilibrium_steps=MC_HANDOFF_STEPS,
                 physical_wave=True,
                 **dynamic_common,
             ),
@@ -771,7 +943,8 @@ def generate_tier(
                 ),
                 saturation=HIGH_LAG_SATURATION,
                 material_type="MohrCoulomb2D",
-                equilibrium_uuid=high_eq_uuid,
+                equilibrium_uuid=mc_handoff_uuid,
+                equilibrium_steps=MC_HANDOFF_STEPS,
                 physical_wave=False,
                 pressure_mode="read",
                 pressure_path=f"{pressure_root}/lagged",
@@ -796,12 +969,13 @@ def generate_tier(
     rows = [
         ("EQ_LS", 1, "physical equilibrium", "none"),
         ("EQ_HS", 1, "physical equilibrium", "none"),
+        ("MC_EQ", 2, "MC handoff relaxation", "EQ_HS"),
         ("LS", 2, "physical low-lag reference", "EQ_LS"),
         ("HS", 2, "physical high-lag main case", "EQ_HS"),
-        ("HM", 2, "fully-coupled MC context", "EQ_HS"),
+        ("HM", 3, "fully-coupled MC context", "MC_EQ"),
         ("HD", 2, "fixed-pipe replay driver", "EQ_HS"),
         ("RL", 4, "one-way lagged replay", "HD"),
-        ("RM", 4, "matched-pressure constitutive ablation", "HD"),
+        ("RM", 4, "matched-pressure constitutive ablation", "HD + MC_EQ"),
         ("RE", 4, "one-way phase-erased counterfactual", "HD + phase_controls.py"),
     ]
     manifest: dict[str, Any] = {
@@ -809,6 +983,7 @@ def generate_tier(
         "tier": tier,
         "label": label,
         "scientific_scope": (
+            "MC_EQ is numerical handoff relaxation and not a comparison case; "
             "LS/HS/HM are fully coupled physical cases; RL/RM/RE are one-way "
             "diagnostic replays and must not be described as physical solutions"
         ),
@@ -823,12 +998,21 @@ def generate_tier(
             "equilibrium_duration_s": EQUILIBRIUM_STEPS * DT,
             "equilibrium_pic": 1.0,
             "equilibrium_damping_factor_per_s": EQUILIBRIUM_DAMPING_FACTOR,
+            "mc_handoff_steps": MC_HANDOFF_STEPS,
+            "mc_handoff_duration_s": MC_HANDOFF_STEPS * DT,
+            "stability_max_velocity_m_s": STABILITY_MAX_VELOCITY,
+            "stability_max_displacement_m": STABILITY_MAX_DISPLACEMENT,
             "porosity": POROSITY,
             "intrinsic_permeability_m2": PERMEABILITY,
-            "hydraulic_conductivity_approx_m_s": PERMEABILITY * 1000.0 * 9.81 / 1.0e-3,
+            "hydraulic_conductivity_approx_m_s": (
+                PERMEABILITY * WATER_DENSITY * GRAVITY / 1.0e-3
+            ),
             "pipe_diameter_m": PIPE_DIAMETER,
             "cover_over_diameter": PIPE_COVER_RATIO,
-            "pipe_invert_depth_m": 0.5 - (PIPE_CENTER[1] - PIPE_RADIUS),
+            "pipe_invert_depth_m": (
+                SEABED_ELEVATION - (PIPE_CENTER[1] - PIPE_RADIUS)
+            ),
+            "submerged_surface_traction_pa": SUBMERGED_SURFACE_TRACTION,
             "mc_friction_deg_from_Mc": MC_FRICTION_DEG,
             "mc_stiffness_calibration": mc_stiffness_calibration(),
             "background_cell_size_m": cell_size,

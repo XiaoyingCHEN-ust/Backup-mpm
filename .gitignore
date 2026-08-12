@@ -3,6 +3,7 @@
 /.tools/
 /CMakeFiles/
 /tmp/
+/mpm_hpc_source/build*/
 __pycache__/
 *.pyc
 

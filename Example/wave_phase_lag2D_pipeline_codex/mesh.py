@@ -592,11 +592,17 @@ tunnel_boundary_particle_ids = numpy.where(
 save_particle(particles, "particles")
 save_entries_oneline(tunnel_boundary_particle_ids, "tunnel_boundary_particle_id")
 
-# Find particle sets. The top set contains two particle rows, matching the
-# relative support used by the original 0.01/0.005 discretisation.
+# Find particle sets. The free-surface set contains two particle rows, matching
+# the relative support used by the original 0.01/0.005 discretisation. Surface
+# traction is applied only to the topmost row so its integrated force is not
+# doubled by the two-row free-surface support.
 top_particle_ids = numpy.where(
     particles[:, 1] >= 0.5 - 2.0 * particle_spacing - 1.e-15)[0]
 save_entries(top_particle_ids, "top_particle_id")
+
+top_traction_particle_ids = numpy.where(
+    numpy.isclose(particles[:, 1], 0.5 - 0.5 * particle_spacing))[0]
+save_entries(top_traction_particle_ids, "top_surface_traction_particle_id")
 
 bottom_particle_ids_1 = numpy.where(
     numpy.isclose(particles[:, 1], 0.5 * particle_spacing))[0]
@@ -641,6 +647,7 @@ save_entity_sets(
         (1, bottom_particle_ids_1),
         (2, bottom_particle_ids_2),
         (3, tunnel_boundary_particle_ids),
+        (4, top_traction_particle_ids),
     ])
 
 temperatures = numpy.zeros(particles.shape[0])
@@ -692,6 +699,10 @@ for state, liquid_saturation in initial_saturations.items():
     stresses = numpy.zeros((particles.shape[0], 6))
     stresses[:, 0] = K0_effective * sigma_yy
     stresses[:, 1] = sigma_yy
+    # LinearElastic2D and MohrCoulomb2D use the 3D tensor under plane strain.
+    # The out-of-plane geostatic stress is therefore the second horizontal
+    # effective stress, not a traction-free zero component.
+    stresses[:, 2] = K0_effective * sigma_yy
     save_stresses(stresses, "initial_effective_stresses_{}".format(state))
     initial_effective_unit_weights[state] = effective_unit_weight
 
@@ -702,6 +713,8 @@ for name, ids, upper_bound in (
         ("top nodes", top_node_ids, nodes.shape[0]),
         ("right nodes", right_node_ids, nodes.shape[0]),
         ("top particles", top_particle_ids, particles.shape[0]),
+        ("top traction particles", top_traction_particle_ids,
+         particles.shape[0]),
         ("bottom particles 1", bottom_particle_ids_1, particles.shape[0]),
         ("bottom particles 2", bottom_particle_ids_2, particles.shape[0]),
         ("pipeline boundary particles", tunnel_boundary_particle_ids,
@@ -729,6 +742,8 @@ summary = {
     "empty_pipeline_cavity_particles_removed": int(
         all_particles.shape[0] - particles.shape[0]),
     "pipeline_contact_particles": int(tunnel_boundary_particle_ids.shape[0]),
+    "free_surface_particles": int(top_particle_ids.shape[0]),
+    "surface_traction_particles": int(top_traction_particle_ids.shape[0]),
     "pipeline_wall_thickness": pipeline_wall_thickness,
     "pipeline_density": pipeline_density,
     "pipeline_diameter": pipeline_diameter,

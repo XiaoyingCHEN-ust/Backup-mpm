@@ -31,9 +31,10 @@ PRESSURE_MAGIC = {b"MPM_PRESSURE_V1\0", b"MPM_PRESSURE_V2\0"}
 CASE_CONFIGS = {
     "EQ_LS": "01_EQ_LS.json",
     "EQ_HS": "01_EQ_HS.json",
+    "MC_EQ": "02_MC_EQ.json",
     "LS": "02_LS.json",
     "HS": "02_HS.json",
-    "HM": "02_HM.json",
+    "HM": "03_HM.json",
     "HD": "02_HD.json",
     "RL": "04_RL.json",
     "RM": "04_RM.json",
@@ -249,6 +250,10 @@ def config_complete(config_path: Path) -> bool:
             raise ValueError("Completion sentinel UUID is stale")
         if int(sentinel_config["nsteps"]) != nsteps:
             raise ValueError("Completion sentinel nsteps is stale")
+        if bool(analysis.get("stability_gate")) and not isinstance(
+            sentinel.get("stability_qa"), str
+        ):
+            raise ValueError("Completion sentinel has no stability-gate audit")
         artifacts = sentinel["artifacts"]
         verify_artifact(artifacts["final_vtp"], final_vtp)
         if config["post_processing"].get("write_hdf5"):
@@ -560,9 +565,16 @@ def submit_workflow(
     low_parent = eq_ls or base_key
     high_parent = eq_hs or base_key
 
+    mc_eq = submit_case(
+        "MC_EQ",
+        [high_parent],
+        upstream_dirty=eq_hs is not None,
+    )
+    mc_parent = mc_eq or high_parent
+
     submit_case("LS", [low_parent], upstream_dirty=eq_ls is not None)
     submit_case("HS", [high_parent], upstream_dirty=eq_hs is not None)
-    submit_case("HM", [high_parent], upstream_dirty=eq_hs is not None)
+    submit_case("HM", [mc_parent], upstream_dirty=mc_eq is not None)
 
     if args.stage == "full":
         hd = submit_case("HD", [high_parent], upstream_dirty=eq_hs is not None)
@@ -589,7 +601,11 @@ def submit_workflow(
         # RL and RM intentionally share the lagged HD pressure history. They can
         # run concurrently once the driver database is complete.
         submit_case("RL", [driver_parent], upstream_dirty=hd is not None)
-        submit_case("RM", [driver_parent], upstream_dirty=hd is not None)
+        submit_case(
+            "RM",
+            [driver_parent, mc_parent],
+            upstream_dirty=hd is not None or mc_eq is not None,
+        )
         submit_case(
             "RE",
             [phase or driver_parent],

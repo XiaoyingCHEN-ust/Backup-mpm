@@ -19,7 +19,7 @@ conda activate cbgeo_tbb
 configs=(
   "configs/${group}/02_LS.json"
   "configs/${group}/02_HS.json"
-  "configs/${group}/02_HM.json"
+  "configs/${group}/03_HM.json"
 )
 if [[ "${stage}" == "full" ]]; then
   configs+=(

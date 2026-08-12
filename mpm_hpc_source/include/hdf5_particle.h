@@ -199,10 +199,10 @@ extern const hid_t field_type[NFIELDS];
 void validate_table_metadata(hsize_t field_count, hsize_t record_count,
                              hsize_t expected_records);
 
-//! Reject legacy checkpoints that claim state variables absent from disk
-void validate_legacy_state_variables(hsize_t field_count,
-                                     const HDF5Particle* particles,
-                                     std::size_t particle_count);
+//! Validate restart history and zero state variables absent from legacy tables
+void prepare_state_variables_for_restart(hsize_t field_count,
+                                         HDF5Particle* particles,
+                                         std::size_t particle_count);
 
 }  // namespace hdf5::particle
 

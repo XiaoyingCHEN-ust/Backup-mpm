@@ -120,9 +120,9 @@
     ],
     "particle_surface_traction": [
       {
-        "pset_id": 0,
+        "pset_id": 4,
         "dir": 1,
-        "traction": 0.0,
+        "traction": -4905.0,
         "facet": 2
       }
     ]
@@ -134,8 +134,9 @@
       "name": "soil",
       "type": "LinearElastic2D",
       "density": 2650.0,
-      "youngs_modulus": 23800000.0,
-      "poisson_ratio": 0.4,
+      "youngs_modulus": 9100807.964990605,
+      "poisson_ratio": -0.00796252868675392,
+      "critical_timestep_modulus": 23800000.0,
       "eta": 10.0,
       "eta_T": 0.2,
       "eta_p": 1e-05,
@@ -193,7 +194,7 @@
   "analysis": {
     "type": "ThermoMPMExplicitThreePhaseLag2D",
     "stress_update": "usf",
-    "APIC": true,
+    "APIC": false,
     "PIC": 1.0,
     "PIC_T": 0.0,
     "free_surface": {
@@ -235,6 +236,7 @@
     "uuid": "PLP_SCREEN_HS_EQ",
     "dt": 0.0001,
     "nsteps": 40000,
+    "stability_gate": true,
     "resume": {
       "resume": false,
       "uuid": "PLP_SCREEN_HS_EQ",

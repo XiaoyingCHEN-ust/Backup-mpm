@@ -1740,7 +1740,7 @@ bool mpm::Mesh<Tdim>::read_particles_hdf5(unsigned phase,
 
     // A legacy 159-field table contains only svars_0..svars_5. Do not let a
     // material declaring more history silently restart with zero-filled state.
-    mpm::hdf5::particle::validate_legacy_state_variables(
+    mpm::hdf5::particle::prepare_state_variables_for_restart(
         table_fields, dst_buf.data(), dst_buf.size());
 
     unsigned i = 0;

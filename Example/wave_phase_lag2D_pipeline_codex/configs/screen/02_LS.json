@@ -116,9 +116,9 @@
     ],
     "particle_surface_traction": [
       {
-        "pset_id": 0,
+        "pset_id": 4,
         "dir": 1,
-        "traction": 0.0,
+        "traction": -4905.0,
         "facet": 2
       }
     ]
@@ -130,6 +130,7 @@
       "name": "soil",
       "type": "SANISAND2D",
       "density": 2650.0,
+      "critical_timestep_modulus": 23800000.0,
       "eta": 10.0,
       "eta_T": 0.2,
       "eta_p": 1e-05,

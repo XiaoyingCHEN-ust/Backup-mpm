@@ -116,9 +116,9 @@
     ],
     "particle_surface_traction": [
       {
-        "pset_id": 0,
+        "pset_id": 4,
         "dir": 1,
-        "traction": 0.0,
+        "traction": -4905.0,
         "facet": 2
       }
     ]
@@ -132,6 +132,7 @@
       "density": 2650.0,
       "youngs_modulus": 9100807.964990605,
       "poisson_ratio": -0.00796252868675392,
+      "critical_timestep_modulus": 23800000.0,
       "eta": 10.0,
       "eta_T": 0.2,
       "eta_p": 1e-05,
@@ -261,7 +262,7 @@
     "nsteps": 104000,
     "resume": {
       "resume": true,
-      "uuid": "PLP_SCREEN_HS_EQ",
+      "uuid": "PLP_SCREEN_HS_MC_RELAX",
       "step": 40000,
       "nsteps": 40000,
       "start_from_this_step": false,

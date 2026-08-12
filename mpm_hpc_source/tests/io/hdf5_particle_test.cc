@@ -160,28 +160,29 @@ TEST_CASE("HDF5 particle round trip preserves all twenty state variables") {
     CAPTURE(state);
     REQUIRE(restored.svars[state] == Approx(source.svars[state]));
   }
-  REQUIRE_NOTHROW(mpm::hdf5::particle::validate_legacy_state_variables(
+  REQUIRE_NOTHROW(mpm::hdf5::particle::prepare_state_variables_for_restart(
       mpm::hdf5::particle::NFIELDS, &restored, 1));
 }
 
 TEST_CASE("Legacy 159-field particle tables cannot fake extended history") {
   SECTION("linear elastic checkpoint with no state is accepted") {
     const auto restored = legacy_round_trip(0);
-    REQUIRE(restored.nstate_vars == 0);
+    auto prepared = restored;
+    REQUIRE_NOTHROW(mpm::hdf5::particle::prepare_state_variables_for_restart(
+        mpm::hdf5::particle::LEGACY_NFIELDS, &prepared, 1));
+    REQUIRE(prepared.nstate_vars == 0);
     for (std::size_t state = 0; state < 6; ++state)
-      REQUIRE(restored.svars[state] ==
+      REQUIRE(prepared.svars[state] ==
               Approx(2000. + 0.25 * static_cast<double>(state)));
     for (std::size_t state = 6; state < 20; ++state)
-      REQUIRE(restored.svars[state] == Approx(0.0));
-    REQUIRE_NOTHROW(mpm::hdf5::particle::validate_legacy_state_variables(
-        mpm::hdf5::particle::LEGACY_NFIELDS, &restored, 1));
+      REQUIRE(prepared.svars[state] == Approx(0.0));
   }
 
   SECTION("SANISAND checkpoint declaring twenty states is rejected") {
-    const auto restored = legacy_round_trip(20);
+    auto restored = legacy_round_trip(20);
     REQUIRE(restored.nstate_vars == 20);
     REQUIRE_THROWS_WITH(
-        mpm::hdf5::particle::validate_legacy_state_variables(
+        mpm::hdf5::particle::prepare_state_variables_for_restart(
             mpm::hdf5::particle::LEGACY_NFIELDS, &restored, 1),
         Catch::Matchers::Contains("refusing a lossy restart"));
   }

@@ -83,7 +83,7 @@ class ValidateCaseTest(unittest.TestCase):
         self.assertEqual(path.name, "particles40000.h5")
         self.assertEqual(path.parent.name, "EQ")
 
-    def test_generated_manifest_selects_nine_cases(self):
+    def test_generated_manifest_selects_ten_cases(self):
         with tempfile.TemporaryDirectory() as temporary:
             manifest = study.generate_tier(
                 "screen",
@@ -95,7 +95,7 @@ class ValidateCaseTest(unittest.TestCase):
                 label="baseline",
             )
             data = json.loads(manifest.read_text(encoding="utf-8"))
-            self.assertEqual(len(data["cases"]), 9)
+            self.assertEqual(len(data["cases"]), 10)
 
     def test_completion_is_atomic_and_audits_vtp_hdf5_and_config(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -103,13 +103,19 @@ class ValidateCaseTest(unittest.TestCase):
             config_path = root / "configs" / "case.json"
             config_path.parent.mkdir(parents=True)
             config = {
-                "analysis": {"uuid": "TEST_EQ", "nsteps": 10},
+                "analysis": {
+                    "uuid": "TEST_EQ",
+                    "nsteps": 10,
+                    "stability_gate": True,
+                },
                 "post_processing": {"path": "results/test/", "write_hdf5": True},
             }
             config_path.write_text(json.dumps(config), encoding="utf-8")
             result = root / "results" / "test" / "TEST_EQ"
             result.mkdir(parents=True)
-            (result / "particle10.vtp").write_text(MINIMAL_VTP, encoding="utf-8")
+            (result / "particle10.vtp").write_text(
+                EQUILIBRIUM_VTP, encoding="utf-8"
+            )
             (result / "particles10.h5").write_bytes(
                 validate.HDF5_SIGNATURE + b"completion-test"
             )
@@ -121,6 +127,7 @@ class ValidateCaseTest(unittest.TestCase):
                 self.assertEqual(payload["config"]["uuid"], "TEST_EQ")
                 self.assertIn("final_vtp", payload["artifacts"])
                 self.assertIn("final_hdf5", payload["artifacts"])
+                self.assertIn("max|v|=0.000e+00", payload["stability_qa"])
                 self.assertFalse(list(result.glob(".*.tmp")))
 
                 unrelated = result / "keep-me.txt"
@@ -129,6 +136,38 @@ class ValidateCaseTest(unittest.TestCase):
                 self.assertEqual(cleared, sentinel)
                 self.assertFalse(sentinel.exists())
                 self.assertTrue(unrelated.is_file())
+
+    def test_completion_rejects_unstable_gated_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "configs" / "case.json"
+            config_path.parent.mkdir(parents=True)
+            config = {
+                "analysis": {
+                    "uuid": "UNSTABLE_EQ",
+                    "nsteps": 10,
+                    "stability_gate": True,
+                },
+                "post_processing": {"path": "results/test/", "write_hdf5": True},
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            result = root / "results" / "test" / "UNSTABLE_EQ"
+            result.mkdir(parents=True)
+            unstable_vtp = EQUILIBRIUM_VTP.replace(
+                'Name="velocities" NumberOfComponents="3" format="ascii">0 0 0',
+                'Name="velocities" NumberOfComponents="3" format="ascii">0.002 0 0',
+            )
+            (result / "particle10.vtp").write_text(
+                unstable_vtp, encoding="utf-8"
+            )
+            (result / "particles10.h5").write_bytes(
+                validate.HDF5_SIGNATURE + b"unstable-checkpoint"
+            )
+
+            with patch.object(validate, "CASE_ROOT", root):
+                with self.assertRaisesRegex(ValueError, "exceeds 1e-3"):
+                    validate.write_case_completion(config_path)
+            self.assertFalse((result / validate.COMPLETION_FILENAME).exists())
 
     def test_completion_rejects_incomplete_written_pressure_database(self):
         with tempfile.TemporaryDirectory() as temporary:

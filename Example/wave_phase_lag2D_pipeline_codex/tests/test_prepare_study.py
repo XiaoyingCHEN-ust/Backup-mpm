@@ -53,21 +53,64 @@ class PrepareStudyTest(unittest.TestCase):
                 label="baseline",
             )
             self.assertTrue(manifest.exists())
-            self.assertEqual(len(list(manifest.parent.glob("*.json"))), 10)
+            self.assertEqual(len(list(manifest.parent.glob("*.json"))), 11)
 
             def load(name: str):
                 return json.loads((manifest.parent / name).read_text(encoding="utf-8"))
 
             low = load("02_LS.json")
             high = load("02_HS.json")
-            mc = load("02_HM.json")
+            mc_handoff = load("02_MC_EQ.json")
+            mc = load("03_HM.json")
             equilibrium = load("01_EQ_LS.json")
             equilibrium_high = load("01_EQ_HS.json")
-            for config in (equilibrium, low, high, mc):
+            for config in (equilibrium, low, high, mc_handoff, mc):
                 self.assertIn("volumes", config["post_processing"]["vtk"])
                 self.assertIn("ids", config["post_processing"]["vtk"])
             self.assertEqual(equilibrium["materials"][0]["type"], "LinearElastic2D")
+            self.assertAlmostEqual(
+                equilibrium["materials"][0]["youngs_modulus"],
+                study.MC_MATCHED_YOUNGS_MODULUS,
+            )
+            self.assertAlmostEqual(
+                equilibrium["materials"][0]["poisson_ratio"],
+                study.MC_MATCHED_POISSON_RATIO,
+            )
+            self.assertFalse(equilibrium["analysis"]["APIC"])
             self.assertEqual(equilibrium["analysis"]["PIC"], 1.0)
+            self.assertTrue(low["analysis"]["APIC"])
+            self.assertEqual(
+                mc_handoff["materials"][0]["type"], "MohrCoulomb2D"
+            )
+            self.assertTrue(mc_handoff["analysis"]["handoff_relaxation"])
+            self.assertTrue(mc_handoff["analysis"]["stability_gate"])
+            self.assertFalse(mc_handoff["analysis"]["APIC"])
+            self.assertEqual(mc_handoff["analysis"]["PIC"], 1.0)
+            self.assertTrue(mc_handoff["analysis"]["rigid_pipeline"]["fixed"])
+            self.assertFalse(mc_handoff["materials"][1]["wave_pressure"])
+            self.assertEqual(
+                mc_handoff["analysis"]["damping"]["damping_factor"],
+                study.EQUILIBRIUM_DAMPING_FACTOR,
+            )
+            self.assertEqual(
+                mc_handoff["analysis"]["nsteps"], study.MC_HANDOFF_STEPS
+            )
+            self.assertTrue(mc_handoff["post_processing"]["write_hdf5"])
+            self.assertEqual(
+                mc_handoff["analysis"]["resume"]["uuid"],
+                equilibrium_high["analysis"]["uuid"],
+            )
+            self.assertTrue(mc["analysis"]["APIC"])
+            self.assertEqual(mc["analysis"]["PIC"], 0.0)
+            self.assertEqual(
+                mc["analysis"]["resume"]["uuid"],
+                mc_handoff["analysis"]["uuid"],
+            )
+            self.assertNotIn("youngs_modulus", low["materials"][0])
+            self.assertEqual(
+                low["materials"][0]["critical_timestep_modulus"],
+                study.CRITICAL_TIMESTEP_MODULUS,
+            )
             self.assertEqual(
                 equilibrium["analysis"]["damping"]["damping_factor"],
                 study.EQUILIBRIUM_DAMPING_FACTOR,
@@ -89,6 +132,29 @@ class PrepareStudyTest(unittest.TestCase):
                 equilibrium["mesh"]["particles_pore_pressures"],
                 {"file": "initial_liquid_pressures.txt"},
             )
+            expected_surface_loading = [
+                {
+                    "pset_id": study.SURFACE_TRACTION_PSET_ID,
+                    "dir": 1,
+                    "traction": study.SUBMERGED_SURFACE_TRACTION,
+                    "facet": 2,
+                }
+            ]
+            for config in (
+                equilibrium,
+                equilibrium_high,
+                low,
+                high,
+                mc_handoff,
+                mc,
+            ):
+                self.assertEqual(
+                    config["external_loading_conditions"][
+                        "particle_surface_traction"
+                    ],
+                    expected_surface_loading,
+                )
+            self.assertEqual(study.SUBMERGED_SURFACE_TRACTION, -4_905.0)
             self.assertNotIn("particles_stresses", low["mesh"])
             self.assertNotIn("particles_pore_pressures", low["mesh"])
             for config in (low, high, mc):
@@ -128,6 +194,14 @@ class PrepareStudyTest(unittest.TestCase):
                 manifest_data["constants"]["equilibrium_damping_factor_per_s"],
                 study.EQUILIBRIUM_DAMPING_FACTOR,
             )
+            self.assertEqual(
+                manifest_data["constants"]["mc_handoff_steps"],
+                study.MC_HANDOFF_STEPS,
+            )
+            self.assertEqual(
+                manifest_data["constants"]["stability_max_velocity_m_s"],
+                study.STABILITY_MAX_VELOCITY,
+            )
 
             lagged = load("04_RL.json")
             matched_mc = load("04_RM.json")
@@ -143,8 +217,8 @@ class PrepareStudyTest(unittest.TestCase):
             self.assertEqual(matched_mc["materials"][0]["type"], "MohrCoulomb2D")
             self.assertEqual(matched_mc["materials"][1], load("04_RL.json")["materials"][1])
             self.assertEqual(
-                matched_mc["analysis"]["resume"],
-                load("04_RL.json")["analysis"]["resume"],
+                matched_mc["analysis"]["resume"]["uuid"],
+                mc_handoff["analysis"]["uuid"],
             )
             self.assertEqual(
                 matched_mc["analysis"]["prescribed_phase_pressures"],
@@ -156,7 +230,11 @@ class PrepareStudyTest(unittest.TestCase):
             }
             self.assertEqual(
                 manifest_roles["RM"],
-                ("matched-pressure constitutive ablation", "HD"),
+                ("matched-pressure constitutive ablation", "HD + MC_EQ"),
+            )
+            self.assertEqual(
+                manifest_roles["MC_EQ"],
+                ("MC handoff relaxation", "EQ_HS"),
             )
 
     def test_equilibrium_ids_are_accepted_and_written_by_base_solver(self):
@@ -199,6 +277,20 @@ class PrepareStudyTest(unittest.TestCase):
         self.assertIn("has_input_initial_liquid_pressure_ ?", source)
         self.assertIn("input_initial_liquid_pressure_", source)
 
+    def test_primary_stress_ratio_is_registered_for_base_vtk_validation(self):
+        source = (
+            CASE_DIR.parents[1]
+            / "mpm_hpc_source"
+            / "include"
+            / "solvers"
+            / "mpm_base.tcc"
+        ).read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            source.count('"vertical_effective_stress_remaining_ratios"'), 2
+        )
+        for field in ("phi", "psi", "cohesion", "pdstrain"):
+            self.assertGreaterEqual(source.count(f'"{field}"'), 2)
+
     def test_cundall_damping_is_applied_to_pure_pic_velocities(self):
         particle_source = (
             CASE_DIR.parents[1]
@@ -240,6 +332,29 @@ class PrepareStudyTest(unittest.TestCase):
         config = copy.deepcopy(config)
         config["analysis"]["/APIC"] = config["analysis"].pop("APIC")
         with self.assertRaisesRegex(ValueError, "APIC"):
+            study.validate_config(config)
+
+    def test_validator_requires_pure_pic_equilibrium(self):
+        config = study.equilibrium_config(
+            "TEST", 0.94, "results/test/", ".", 0.02, 0.01, 0.12
+        )
+        config["analysis"]["APIC"] = True
+        with self.assertRaisesRegex(ValueError, "APIC=false"):
+            study.validate_config(config)
+
+    def test_validator_requires_pure_pic_mc_handoff(self):
+        config = study.mc_handoff_config(
+            code="TEST",
+            saturation=study.HIGH_LAG_SATURATION,
+            equilibrium_uuid="EQ",
+            result_path="results/test/",
+            mesh_directory=".",
+            cell_size=0.02,
+            particle_spacing=0.01,
+            wave_height=0.12,
+        )
+        config["analysis"]["APIC"] = True
+        with self.assertRaisesRegex(ValueError, "MC handoff"):
             study.validate_config(config)
 
     def test_validator_requires_primary_liquefaction_outputs(self):
