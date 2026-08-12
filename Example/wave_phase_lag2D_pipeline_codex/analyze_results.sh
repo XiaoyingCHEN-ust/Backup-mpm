@@ -30,3 +30,20 @@ if [[ "${stage}" == "full" ]]; then
 fi
 
 python analyze_study.py "${configs[@]}" --output "analysis/${group}"
+
+if [[ "${stage}" == "full" ]]; then
+  python synthesize_manuscript_evidence.py \
+    --analysis-dir "analysis/${group}" \
+    --phase-metadata \
+      "pressure_databases/${group}/phase_erased/phase_erased_metadata.json" \
+    --output-json "analysis/${group}/manuscript_evidence.json" \
+    --output-markdown "analysis/${group}/manuscript_evidence.md"
+  if python -c 'import matplotlib' >/dev/null 2>&1; then
+    python plot_manuscript_figures.py \
+      --analysis-dir "analysis/${group}" \
+      --output-dir "analysis/${group}/figures"
+  else
+    printf '%s\n' \
+      'Matplotlib unavailable; evidence tables were written, figure drafts skipped.' >&2
+  fi
+fi

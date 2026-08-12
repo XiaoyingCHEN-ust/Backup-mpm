@@ -182,7 +182,14 @@ python submit_study_sbatch.py production --label fine --prepare --analyze \
 ## Output definitions
 
 `analyze_study.py` writes a JSON summary, probe history, per-cycle pipeline
-history and an aggregate CSV.  The manuscript comparison should use only:
+history and an aggregate CSV.  For a full analysis, `analyze_results.sh` also
+runs `synthesize_manuscript_evidence.py` and `plot_manuscript_figures.py`.  The
+former writes `manuscript_evidence.json/.md` with pre-registered claim gates;
+the latter writes PNG/PDF curve composites (when Matplotlib is available) plus
+a JSON manifest selecting RL and RE field frames at one common physical time.
+The Section 7.5 draft and the
+source-PDF correction audit are in `MANUSCRIPT_SECTION_7_5_DRAFT.md` and
+`MANUSCRIPT_PDF_REVISION_NOTES.md`.  The manuscript comparison should use only:
 
 1. measured mixture-pore-pressure amplitude ratio and phase lag at the
    crown/shoulder/invert;
@@ -196,6 +203,15 @@ history and an aggregate CSV.  The manuscript comparison should use only:
    area-time and resolved-duration histories;
 6. post-release soil `max|u|/h` and `fraction(|u|>=h)` as method-choice
    evidence, reported separately from the deformation/strain claim.
+
+The evidence synthesis fixes its thresholds before reading the field result:
+RL/RE fitted pressure means and amplitudes must agree within 2%, removal must
+reduce the mean crown/shoulder/invert absolute phase lag by at least 5 degrees,
+and a response difference must exceed 5% to be called material.  RL/RM also
+must pass a 5% first-frame `p'-q` initial-state audit.  This last check matters
+because RM passes through MC_EQ while RL resumes the elastic checkpoint
+directly; a failed audit downgrades the result to a comparison of complete
+handoff/model chains rather than a clean constitutive isolation.
 
 The phase metric uses `PIC_pore_pressures` (the saturation-weighted mixture
 pressure used in the parametric manuscript section); liquid and gas pressure

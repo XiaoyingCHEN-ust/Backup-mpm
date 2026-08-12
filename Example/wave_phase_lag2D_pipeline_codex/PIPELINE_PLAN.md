@@ -110,3 +110,17 @@ Do not submit production results if any of the following occurs:
 - the analysis uses `ru` as a liquefaction criterion, fails to remove the
   hydrostatic component from the seepage force, or presents the replay as a
   conservative fully coupled solution.
+
+## Manuscript evidence gate
+
+The completed full-screen analysis must generate `manuscript_evidence.json`
+and `manuscript_evidence.md` before prose placeholders are populated.  A phase-
+lag liquefaction claim requires, in order: RL/RE pressure mean/amplitude QA,
+material reduction of the fitted subsurface lag, greater RL support-zone
+`IF>=1` area--time, and (for actual rather than potential liquefaction) greater
+RL support-zone `Rsigma<=0.05` area--time.  The SANISAND mechanistic claim uses
+RL/RM under the identical lagged pressure history and requires cyclic state
+evolution, an observable stress/engineering consequence and a passed first-
+frame `p'-q` initial-state audit.  If the audit fails because MC_EQ changed the
+initial path materially, report a model-chain comparison and do not attribute
+the difference uniquely to constitutive cyclic memory.
