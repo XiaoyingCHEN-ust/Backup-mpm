@@ -1356,13 +1356,20 @@ void mpm::Particle<Tdim>::update_particle_thermal_strain() noexcept {
 
 // Update particle stress
 template <unsigned Tdim>
-void mpm::Particle<Tdim>::update_particle_stress() noexcept {
+void mpm::Particle<Tdim>::update_particle_stress() {
   if (material_id_ != 999) {
     // Check if material ptr is valid
     assert(material_ != nullptr);
-    // Calculate stress    
-    Eigen::Matrix<double, 6, 1> updated_stress = 
+    // Calculate stress.  Include the particle id when a constitutive update
+    // fails so a parallel field calculation remains diagnosable.
+    Eigen::Matrix<double, 6, 1> updated_stress;
+    try {
+      updated_stress =
           material_->compute_stress(stress_, dstrain_, this, &state_variables_);
+    } catch (const std::exception& error) {
+      throw std::runtime_error("Particle " + std::to_string(this->id_) +
+                               " stress update failed: " + error.what());
+    }
     this->stress_ = updated_stress;
 
     // get theta

@@ -16,6 +16,7 @@ import numpy as np
 
 from analyze_study import read_vtp
 import prepare_study as study
+import prepare_local_smoke as local_smoke
 from phase_controls import (
     database_paths,
     iter_frames,
@@ -83,6 +84,37 @@ def mesh_counts(path: Path) -> tuple[int, int]:
                 raise ValueError(f"Invalid mesh count row in {path}: {stripped}")
             return int(values[0]), int(values[1])
     raise ValueError(f"Mesh file has no node/cell count row: {path}")
+
+
+def mesh_node_bounds(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Read the node block of an MPM mesh and return its finite 2-D bounds."""
+
+    node_count: int | None = None
+    coordinates: list[list[float]] = []
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            values = stripped.split()
+            if node_count is None:
+                if len(values) != 2:
+                    raise ValueError(f"Invalid mesh count row in {path}: {stripped}")
+                node_count = int(values[0])
+                if node_count <= 0:
+                    raise ValueError(f"Mesh contains no nodes: {path}")
+                continue
+            if len(coordinates) >= node_count:
+                break
+            if len(values) < 2:
+                raise ValueError(f"Invalid mesh node row in {path}: {stripped}")
+            coordinates.append([float(values[0]), float(values[1])])
+    if node_count is None or len(coordinates) != node_count:
+        raise ValueError(f"Mesh node block is truncated: {path}")
+    points = np.asarray(coordinates, dtype=float)
+    if not np.all(np.isfinite(points)):
+        raise ValueError(f"Mesh node block contains non-finite values: {path}")
+    return np.min(points, axis=0), np.max(points, axis=0)
 
 
 def file_sha256(path: Path) -> str:
@@ -168,10 +200,45 @@ def final_artifact_paths(config: dict[str, Any]) -> tuple[Path, Path | None]:
     return vtp, hdf5
 
 
-def validate_final_vtp(path: Path) -> None:
-    points, _ = read_vtp(checked_case_path(path))
+def validate_final_vtp(path: Path, config: dict[str, Any] | None = None) -> None:
+    points, arrays = read_vtp(checked_case_path(path))
     if len(points) == 0 or not np.all(np.isfinite(points)):
         raise ValueError(f"Final VTP has no finite particle coordinates: {path}")
+    if config is not None:
+        if "mesh" not in config or "particles" not in config:
+            return
+        mesh_path = resolve_case_path(config["mesh"]["mesh"])
+        particle_path = resolve_case_path(
+            config["particles"][0]["generator"]["location"]
+        )
+        # Direct completion-unit tests may intentionally omit the full runtime
+        # geometry. The CLI always calls validate_one first, so real runs reach
+        # this branch with both inputs present.
+        if not mesh_path.is_file() or not particle_path.is_file():
+            return
+        lower, upper = mesh_node_bounds(mesh_path)
+        tolerance = 1.0e-9
+        if np.any(points[:, :2] < lower - tolerance) or np.any(
+            points[:, :2] > upper + tolerance
+        ):
+            raise ValueError(f"Final VTP contains particles outside the mesh: {path}")
+        expected_particles = first_count(particle_path)
+        if len(points) != expected_particles:
+            raise ValueError(
+                f"Final VTP particle count {len(points)} differs from input "
+                f"count {expected_particles}: {path}"
+            )
+        essential = {
+            "ids",
+            "porosities",
+            "volumes",
+            "displacements",
+            "velocities",
+            "stresses",
+        }
+        missing = essential - set(arrays)
+        if missing:
+            raise ValueError(f"Final VTP lacks essential fields {sorted(missing)}: {path}")
 
 
 def validate_final_hdf5(path: Path) -> None:
@@ -289,13 +356,15 @@ def runtime_dependency_audit(config: dict[str, Any]) -> dict[str, Any]:
     return dependencies
 
 
-def write_case_completion(config_path: Path) -> Path:
+def write_case_completion(
+    config_path: Path, *, validation_profile: str = "registered-study-v1"
+) -> Path:
     """Validate final artifacts and atomically publish a restart sentinel."""
 
     config_path = checked_case_path(config_path)
     config = json.loads(config_path.read_text(encoding="utf-8"))
     final_vtp, final_hdf5 = final_artifact_paths(config)
-    validate_final_vtp(final_vtp)
+    validate_final_vtp(final_vtp, config)
     artifacts: dict[str, Any] = {"final_vtp": artifact_audit(final_vtp)}
     if final_hdf5 is not None:
         validate_final_hdf5(final_hdf5)
@@ -318,6 +387,7 @@ def write_case_completion(config_path: Path) -> Path:
             "sha256": file_sha256(config_path),
             "uuid": str(config["analysis"]["uuid"]),
             "nsteps": int(config["analysis"]["nsteps"]),
+            "validation_profile": validation_profile,
         },
         "artifacts": artifacts,
         "runtime_dependencies": runtime_dependencies,
@@ -619,10 +689,53 @@ def validate_runtime_dependencies(config: dict[str, Any], runtime: bool) -> list
     return messages
 
 
-def validate_one(config_path: Path, runtime: bool) -> list[str]:
+def validate_local_smoke_config(config: dict[str, Any]) -> None:
+    """Accept only an exact hash-bound config generated by the smoke profile."""
+
+    marker = config.get("local_smoke")
+    if not isinstance(marker, dict):
+        raise ValueError("Local smoke marker is absent or malformed")
+    if set(marker) != {
+        "schema",
+        "label",
+        "role",
+        "baseline_sha256",
+        "result_eligibility",
+    }:
+        raise ValueError("Local smoke marker fields are missing or unexpected")
+    if marker.get("schema") != local_smoke.SMOKE_SCHEMA:
+        raise ValueError("Local smoke schema is not registered")
+    label = local_smoke.validate_label(str(marker.get("label", "")))
+    role = str(marker.get("role", ""))
+    if role not in local_smoke.ROLE_FILENAMES:
+        raise ValueError(f"Local smoke role is not allowed: {role}")
+    if marker.get("result_eligibility") != (
+        "local-smoke-only; excluded from manuscript evidence"
+    ):
+        raise ValueError("Local smoke evidence exclusion is absent")
+
+    payload = dict(config)
+    payload.pop("local_smoke")
+    observed_hash = local_smoke.payload_sha256(payload)
+    expected = local_smoke.canonical_config(label, role)
+    expected_hash = expected["local_smoke"]["baseline_sha256"]
+    if marker.get("baseline_sha256") != observed_hash:
+        raise ValueError("Local smoke payload differs from its recorded baseline hash")
+    if observed_hash != expected_hash or config != expected:
+        raise ValueError(
+            f"Local smoke {label}/{role} differs from the exact canonical profile"
+        )
+
+
+def validate_one(
+    config_path: Path, runtime: bool, *, use_local_smoke_profile: bool = False
+) -> list[str]:
     config_path = config_path.resolve()
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    study.validate_config(config)
+    if use_local_smoke_profile:
+        validate_local_smoke_config(config)
+    else:
+        study.validate_config(config)
     messages = [f"config: {config_path}", f"uuid: {config['analysis']['uuid']}"]
     messages.extend(validate_geometry(config))
     messages.extend(validate_runtime_dependencies(config, runtime))
@@ -676,6 +789,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="recursively create this case's configured output base before launch",
     )
+    parser.add_argument(
+        "--local-smoke",
+        action="store_true",
+        help=(
+            "validate only an exact hash-bound pipeline-local-smoke-v1 config; "
+            "never relax the registered study validator"
+        ),
+    )
+    parser.add_argument(
+        "--print-result-directory",
+        action="store_true",
+        help="structurally validate one config and print only its resolved result directory",
+    )
     return parser
 
 
@@ -688,16 +814,30 @@ def main() -> int:
         args.write_completion
         or args.clear_completion
         or args.prepare_output
+        or args.print_result_directory
     ) and len(paths) != 1:
         raise ValueError("Per-case operations require exactly one configuration")
     if args.write_completion and args.clear_completion:
         raise ValueError("Cannot write and clear a completion in the same invocation")
+    if args.print_result_directory:
+        config = json.loads(paths[0].read_text(encoding="utf-8"))
+        if args.local_smoke:
+            validate_local_smoke_config(config)
+        else:
+            study.validate_config(config)
+        print(result_directory(config))
+        return 0
     runtime = args.runtime or args.write_completion
     for path in paths:
-        for message in validate_one(path, runtime):
+        for message in validate_one(
+            path, runtime, use_local_smoke_profile=args.local_smoke
+        ):
             print(f"[{path.stem}] {message}")
     if args.write_completion:
-        sentinel = write_case_completion(paths[0])
+        profile = (
+            local_smoke.SMOKE_SCHEMA if args.local_smoke else "registered-study-v1"
+        )
+        sentinel = write_case_completion(paths[0], validation_profile=profile)
         print(f"Published completion sentinel: {sentinel}")
     if args.prepare_output:
         output_base = prepare_output_base(paths[0])

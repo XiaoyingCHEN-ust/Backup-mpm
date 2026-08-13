@@ -82,6 +82,19 @@ class Material {
         "Material does not support state reinitialisation from particle data");
   }
 
+  //! Initialise history variables from restored particle data and stress
+  //! \param[in] porosity Restored particle porosity
+  //! \param[in] stress Restored effective stress in MPM Voigt ordering
+  //! \details The stress-aware overload lets pressure-dependent materials
+  //! place their internal yield surface consistently around a checkpointed
+  //! stress state. Materials that do not need the stress retain the legacy
+  //! porosity-only behaviour.
+  virtual mpm::dense_map initialise_state_variables_from_particle(
+      double porosity, const Vector6d& stress) {
+    static_cast<void>(stress);
+    return this->initialise_state_variables_from_particle(porosity);
+  }
+
   //! Compute stress
   //! \param[in] stress Stress
   //! \param[in] dstrain Strain

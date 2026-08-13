@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+import prepare_study as study
+
 
 CASE_DIR = Path(__file__).resolve().parent
 RUN_TASK = "run_task.sbatch"
@@ -229,6 +231,10 @@ def config_complete(config_path: Path) -> bool:
     try:
         config_path = checked_case_path(config_path)
         config = json.loads(config_path.read_text(encoding="utf-8"))
+        # Completion skipping is a registered-study operation. Local smoke or
+        # hand-edited JSON must never be promoted merely because its hashes are
+        # internally self-consistent.
+        study.validate_config(config)
         analysis = config["analysis"]
         nsteps = int(analysis["nsteps"])
         digits = len(str(nsteps))
@@ -250,6 +256,8 @@ def config_complete(config_path: Path) -> bool:
             raise ValueError("Completion sentinel UUID is stale")
         if int(sentinel_config["nsteps"]) != nsteps:
             raise ValueError("Completion sentinel nsteps is stale")
+        if sentinel_config.get("validation_profile") != "registered-study-v1":
+            raise ValueError("Completion sentinel was not formally validated")
         if bool(analysis.get("stability_gate")) and not isinstance(
             sentinel.get("stability_qa"), str
         ):
@@ -466,7 +474,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tier", choices=("screen", "production"))
     parser.add_argument("--label", default="baseline")
-    parser.add_argument("--stage", choices=("physical", "full"), default="full")
+    parser.add_argument(
+        "--stage", choices=("physical", "phase", "full"), default="full"
+    )
     parser.add_argument("--cpus", type=int, default=16)
     parser.add_argument("--gres", default="gpu:1")
     parser.add_argument("--nodelist", default="gpu30")
@@ -565,18 +575,20 @@ def submit_workflow(
     low_parent = eq_ls or base_key
     high_parent = eq_hs or base_key
 
-    mc_eq = submit_case(
-        "MC_EQ",
-        [high_parent],
-        upstream_dirty=eq_hs is not None,
-    )
-    mc_parent = mc_eq or high_parent
-
     submit_case("LS", [low_parent], upstream_dirty=eq_ls is not None)
     submit_case("HS", [high_parent], upstream_dirty=eq_hs is not None)
-    submit_case("HM", [mc_parent], upstream_dirty=mc_eq is not None)
+    mc_eq = None
+    mc_parent = high_parent
+    if args.stage in ("physical", "full"):
+        mc_eq = submit_case(
+            "MC_EQ",
+            [high_parent],
+            upstream_dirty=eq_hs is not None,
+        )
+        mc_parent = mc_eq or high_parent
+        submit_case("HM", [mc_parent], upstream_dirty=mc_eq is not None)
 
-    if args.stage == "full":
+    if args.stage in ("phase", "full"):
         hd = submit_case("HD", [high_parent], upstream_dirty=eq_hs is not None)
         driver_parent = hd or high_parent
 
@@ -598,14 +610,15 @@ def submit_workflow(
             queue.skip("phase", f"complete phase-erased database for {group}")
             phase = None
 
-        # RL and RM intentionally share the lagged HD pressure history. They can
-        # run concurrently once the driver database is complete.
+        # RL and RE form the phase-only branch. RM is added only for the full
+        # constitutive branch after MC_EQ has passed its unchanged static gate.
         submit_case("RL", [driver_parent], upstream_dirty=hd is not None)
-        submit_case(
-            "RM",
-            [driver_parent, mc_parent],
-            upstream_dirty=hd is not None or mc_eq is not None,
-        )
+        if args.stage == "full":
+            submit_case(
+                "RM",
+                [driver_parent, mc_parent],
+                upstream_dirty=hd is not None or mc_eq is not None,
+            )
         submit_case(
             "RE",
             [phase or driver_parent],

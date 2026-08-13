@@ -1,5 +1,9 @@
 # Phase-lag-controlled pipeline instability study
 
+For an exact Linux workstation continuation, including the verified baseline,
+mandatory smoke DAG, registered run order and local analysis commands, read
+[`LINUX_5080_HANDOFF.md`](LINUX_5080_HANDOFF.md) first.
+
 This directory contains the final case-study workflow for the manuscript.  The
 case is a shallow-buried, empty PE100 SDR17 pipeline that becomes a sensitive
 indicator of support loss when the surrounding seabed liquefies.  The proposed
@@ -48,6 +52,23 @@ and calibration values.  The separate `critical_timestep_modulus=23.8 MPa` is
 only a conservative wave-speed bound for the explicit time-step audit; it is
 not used by the SANISAND stress update.
 
+## Local Linux workflow
+
+The same fail-fast validation and completion audit can be used without Slurm,
+environment modules or Conda. Build `mpm_hpc_source/build-pipeline/mpm`, then
+run one registered case from this directory:
+
+```bash
+MPM_THREADS=8 bash run_case_local.sh configs/screen/01_EQ_LS.json
+```
+
+`run_case_local.sh` validates runtime dependencies, removes only that case's
+old completion sentinel, executes the solver, and publishes a new sentinel only
+after the final VTP/HDF5 and any unchanged equilibrium stability gate pass.
+Run shortened smoke configurations before the registered 40,000-step
+equilibria or 104,000-step screen. Results without a matching completion
+sentinel are diagnostic only and are rejected by manuscript analysis.
+
 ## Server workflow
 
 Run from this directory after checking out the branch.  Windows does not need
@@ -76,9 +97,19 @@ hydrostatic liquid-pressure profile for every particle plus separate LS/HS
 effective self-weight stress fields.  The submerged bed surface carries the
 matching downward `4.905 kPa` water-column traction; it is assigned only to the
 top particle row, while the two-row set remains reserved for free-surface
-detection.  Validation checks the single-column MPM
+detection. Wave-pressure increments receive the same total normal traction on
+that physical top row; this is a seabed boundary load, not direct wave drag on
+the pipe. The phase momentum equations consistently use pressure increments
+relative to the equilibrium checkpoint for both liquid and gas, so the
+initial gas suction/pressure cannot create an artificial unbalanced force.
+Validation checks the single-column MPM
 pressure format and the stress/pressure values before a job is submitted.
 SANISAND dynamics restore the successful LinearElastic2D HDF5 directly.  The
+cross-model handoff derives the SANISAND void ratio from restored porosity and
+centres its finite `m_iso` yield surface on the restored effective stress.
+Every stage also suppresses velocity updates only on emerging nodes carrying
+less than 1% of a full-cell skeleton support; the physical equilibrium gate
+remains the unchanged `max|v| <= 1e-3 m/s`.
 zero-cohesion MC comparison instead passes through the explicit `MC_EQ` stage:
 it restores EQ_HS, switches to Mohr-Coulomb, retains pure PIC, damping
 `5 s^-1`, the fixed pipe and zero wave loading for another 4 s, and writes a

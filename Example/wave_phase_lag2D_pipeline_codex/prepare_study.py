@@ -61,6 +61,17 @@ SANISAND_K0 = 150.0
 SANISAND_PATM = 100_000.0
 MC_STIFFNESS_REFERENCE_PRESSURE = 3_000.0
 INITIAL_EFFECTIVE_K0 = 0.72
+MINIMUM_NODAL_SUPPORT_FRACTION = 0.01
+
+REGISTERED_DYNAMIC_STAGES = {
+    "_LS_SANI": "LS",
+    "_HS_SANI": "HS",
+    "_HS_MC": "HM",
+    "_HD_DRIVER": "HD",
+    "_RL_SANI": "RL",
+    "_RM_MC": "RM",
+    "_RE_SANI": "RE",
+}
 
 
 def sanisand_elastic_moduli(
@@ -427,6 +438,9 @@ def post_processing(
             solid.extend(["pdstrain", "phi", "psi", "cohesion"])
         liquid = [
             "PIC_pore_pressures",
+            # Checkpoint-relative mixture pressure used by the registered
+            # excess-pressure curves and 2-D fields.
+            "PIC_pore_pressure_excess",
             "PIC_liquid_pressures",
             "PIC_gas_pressures",
             "PIC_ru",
@@ -510,6 +524,7 @@ def equilibrium_config(
                 "pressure_smoothing": True,
                 "pressure_smoothing_iterations": 1,
                 "pressure_smoothing_in_loop": False,
+                "minimum_nodal_support_fraction": MINIMUM_NODAL_SUPPORT_FRACTION,
                 "rigid_pipeline": rigid_pipeline(
                     fixed=True,
                     release_time=(EQUILIBRIUM_STEPS + 1) * DT,
@@ -566,6 +581,7 @@ def mc_handoff_config(
                 "pressure_smoothing": True,
                 "pressure_smoothing_iterations": 1,
                 "pressure_smoothing_in_loop": False,
+                "minimum_nodal_support_fraction": MINIMUM_NODAL_SUPPORT_FRACTION,
                 "rigid_pipeline": rigid_pipeline(
                     fixed=True,
                     release_time=(MC_HANDOFF_STEPS + 1) * DT,
@@ -630,6 +646,7 @@ def dynamic_config(
         "pressure_smoothing": True,
         "pressure_smoothing_iterations": 1,
         "pressure_smoothing_in_loop": False,
+        "minimum_nodal_support_fraction": MINIMUM_NODAL_SUPPORT_FRACTION,
         "rigid_pipeline": rigid_pipeline(
             fixed=fixed_pipeline,
             release_time=(nsteps + 1) * DT if fixed_pipeline else RELEASE_TIME,
@@ -675,12 +692,102 @@ def dynamic_config(
     return config
 
 
+def registered_tier(uuid: str) -> str | None:
+    """Return the registered study tier encoded in a generated UUID."""
+
+    for tier in TIERS:
+        if uuid.startswith(f"PLP_{tier.upper()}_"):
+            return tier
+    return None
+
+
+def registered_dynamic_stage(uuid: str) -> str | None:
+    """Return the registered dynamic case encoded in a generated UUID."""
+
+    for suffix, stage in REGISTERED_DYNAMIC_STAGES.items():
+        if uuid.endswith(suffix):
+            return stage
+    return None
+
+
+def registered_dynamic_prefix(uuid: str) -> str | None:
+    """Return the UUID prefix shared by a dynamic case and its prerequisites."""
+
+    for suffix in REGISTERED_DYNAMIC_STAGES:
+        if uuid.endswith(suffix):
+            return uuid[: -len(suffix)]
+    return None
+
+
+def require_registered_saturation(
+    analysis: dict[str, Any], fluid: dict[str, Any], expected: float
+) -> None:
+    saturation = float(fluid["liquid_saturation"])
+    if not math.isclose(saturation, expected, rel_tol=0.0, abs_tol=1.0e-12):
+        raise ValueError(
+            f"{analysis['uuid']}: liquid saturation must be {expected:g}, "
+            f"not {saturation:g}"
+        )
+
+
+def validate_pressure_registration(
+    analysis: dict[str, Any], *, tier: str, stage: str
+) -> None:
+    """Validate mutually exclusive physical-wave and replay database roles."""
+
+    pressure = analysis.get("prescribed_phase_pressures")
+    if stage in {"LS", "HS", "HM"}:
+        if pressure is not None:
+            raise ValueError(
+                f"{analysis['uuid']}: fully coupled {stage} cannot use a pressure database"
+            )
+        return
+
+    if not isinstance(pressure, dict):
+        raise ValueError(f"{analysis['uuid']}: {stage} pressure database is absent")
+    expected_read = stage in {"RL", "RM", "RE"}
+    if bool(pressure.get("enable")) != expected_read:
+        raise ValueError(f"{analysis['uuid']}: {stage} pressure read mode is wrong")
+    if bool(pressure.get("write")) != (stage == "HD"):
+        raise ValueError(f"{analysis['uuid']}: {stage} pressure write mode is wrong")
+    expected_prefix = "phase_erased" if stage == "RE" else "pressure"
+    expected_leaf = "phase_erased" if stage == "RE" else "lagged"
+    path = str(pressure.get("path", ""))
+    if (
+        pressure.get("file_prefix") != expected_prefix
+        or not path.startswith(f"pressure_databases/{tier}")
+        or not path.endswith(f"/{expected_leaf}")
+        or not math.isclose(float(pressure.get("source_dt", -1.0)), DT, abs_tol=1.0e-15)
+        or int(pressure.get("step_interval", -1)) != PRESSURE_INTERVAL
+        or int(pressure.get("max_step", -1)) != int(analysis["nsteps"])
+        or pressure.get("mapping") != "id"
+    ):
+        raise ValueError(
+            f"{analysis['uuid']}: {stage} pressure database registration is stale"
+        )
+
+
 def validate_config(config: dict[str, Any]) -> None:
     soil, fluid = config["materials"]
     analysis = config["analysis"]
     pipeline = analysis["rigid_pipeline"]
     resume_enabled = bool(analysis["resume"].get("resume"))
     handoff_relaxation = bool(analysis.get("handoff_relaxation", False))
+    uuid = str(analysis["uuid"])
+    if analysis.get("type") != "ThermoMPMExplicitThreePhaseLag2D":
+        raise ValueError(f"{uuid}: unexpected analysis type")
+    if not math.isclose(float(analysis.get("dt", -1.0)), DT, abs_tol=1.0e-15):
+        raise ValueError(f"{uuid}: dt must remain {DT:g} s")
+    if pipeline.get("enable") is not True:
+        raise ValueError(f"{uuid}: rigid pipeline must be enabled")
+    support_fraction = float(analysis.get("minimum_nodal_support_fraction", -1.0))
+    if not math.isclose(
+        support_fraction, MINIMUM_NODAL_SUPPORT_FRACTION, abs_tol=1.0e-12
+    ):
+        raise ValueError(
+            f"{analysis['uuid']}: minimum_nodal_support_fraction must be "
+            f"{MINIMUM_NODAL_SUPPORT_FRACTION:g}"
+        )
     if "/APIC" in analysis or not isinstance(analysis.get("APIC"), bool):
         raise ValueError(f"{analysis['uuid']}: APIC key is absent or malformed")
     if not resume_enabled:
@@ -692,10 +799,13 @@ def validate_config(config: dict[str, Any]) -> None:
             soil["type"] != "LinearElastic2D"
             or analysis["APIC"]
             or float(analysis["PIC"]) != 1.0
+            or float(analysis.get("PIC_T", -1.0)) != 0.0
+            or not pipeline.get("fixed")
+            or bool(fluid.get("wave_pressure"))
         ):
             raise ValueError(
                 f"{analysis['uuid']}: equilibrium must use LinearElastic2D, "
-                "APIC=false and PIC=1"
+                "APIC=false, PIC=1, a fixed pipe and no wave"
             )
         if int(analysis["nsteps"]) != EQUILIBRIUM_STEPS:
             raise ValueError(
@@ -704,7 +814,7 @@ def validate_config(config: dict[str, Any]) -> None:
         damping_factor = float(analysis["damping"].get("damping_factor", 0.0))
         if not math.isclose(
             damping_factor, EQUILIBRIUM_DAMPING_FACTOR, abs_tol=1.0e-12
-        ):
+        ) or analysis["damping"].get("type") != "Cundall":
             raise ValueError(
                 f"{analysis['uuid']}: equilibrium damping must be "
                 f"{EQUILIBRIUM_DAMPING_FACTOR:g} 1/s"
@@ -719,12 +829,41 @@ def validate_config(config: dict[str, Any]) -> None:
             )
         if analysis.get("stability_gate") is not True:
             raise ValueError(f"{analysis['uuid']}: equilibrium stability gate is disabled")
+        saturation = float(fluid["liquid_saturation"])
+        if math.isclose(saturation, LOW_LAG_SATURATION, rel_tol=0.0, abs_tol=1.0e-12):
+            expected_state = "LS"
+        elif math.isclose(
+            saturation, HIGH_LAG_SATURATION, rel_tol=0.0, abs_tol=1.0e-12
+        ):
+            expected_state = "HS"
+        else:
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium saturation is not registered as LS/HS"
+            )
+        if registered_tier(uuid) is None or not uuid.endswith(f"_{expected_state}_EQ"):
+            raise ValueError(f"{uuid}: equilibrium tier/case registration is absent")
+        if not str(initial_stress).endswith(
+            f"initial_effective_stresses_{expected_state}.txt"
+        ):
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium saturation/stress field mismatch"
+            )
+        expected_release = (EQUILIBRIUM_STEPS + 1) * DT
+        if not math.isclose(
+            float(pipeline.get("release_time", -1.0)),
+            expected_release,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError(f"{analysis['uuid']}: equilibrium pipe release is stale")
+        if not config["post_processing"].get("write_hdf5"):
+            raise ValueError(f"{analysis['uuid']}: equilibrium checkpoint is disabled")
     elif handoff_relaxation:
         damping_factor = float(analysis["damping"].get("damping_factor", 0.0))
         if (
             soil["type"] != "MohrCoulomb2D"
             or analysis["APIC"]
             or float(analysis["PIC"]) != 1.0
+            or float(analysis.get("PIC_T", -1.0)) != 0.0
             or not pipeline.get("fixed")
             or bool(fluid.get("wave_pressure"))
             or int(analysis["nsteps"]) != MC_HANDOFF_STEPS
@@ -733,6 +872,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 EQUILIBRIUM_DAMPING_FACTOR,
                 abs_tol=1.0e-12,
             )
+            or analysis["damping"].get("type") != "Cundall"
         ):
             raise ValueError(
                 f"{analysis['uuid']}: MC handoff must use MohrCoulomb2D, "
@@ -746,10 +886,81 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"{analysis['uuid']}: MC handoff cannot read or write wave pressures"
             )
-    elif not analysis["APIC"]:
-        raise ValueError(f"{analysis['uuid']}: dynamic phase must restore APIC")
-    elif analysis.get("stability_gate"):
-        raise ValueError(f"{analysis['uuid']}: dynamic phase cannot publish a static gate")
+        require_registered_saturation(analysis, fluid, HIGH_LAG_SATURATION)
+        resume = analysis["resume"]
+        expected_equilibrium_uuid = uuid.removesuffix("_MC_RELAX") + "_EQ"
+        if (
+            registered_tier(uuid) is None
+            or not uuid.endswith("_HS_MC_RELAX")
+            or str(resume.get("uuid", "")) != expected_equilibrium_uuid
+            or int(resume.get("step", -1)) != EQUILIBRIUM_STEPS
+            or int(resume.get("nsteps", -1)) != EQUILIBRIUM_STEPS
+            or not math.isclose(
+                float(pipeline.get("release_time", -1.0)),
+                (MC_HANDOFF_STEPS + 1) * DT,
+                abs_tol=1.0e-12,
+            )
+        ):
+            raise ValueError(f"{analysis['uuid']}: MC handoff registration is stale")
+    else:
+        tier = registered_tier(uuid)
+        stage = registered_dynamic_stage(uuid)
+        dynamic_prefix = registered_dynamic_prefix(uuid)
+        if tier is None or stage is None or dynamic_prefix is None:
+            raise ValueError(f"{uuid}: dynamic tier/case registration is absent")
+        expected_nsteps = int(TIERS[tier]["cycles"] * STEPS_PER_CYCLE)
+        damping_factor = float(analysis["damping"].get("damping_factor", -1.0))
+        if (
+            not analysis["APIC"]
+            or float(analysis["PIC"]) != 0.0
+            or float(analysis.get("PIC_T", -1.0)) != 0.0
+            or damping_factor != 0.0
+            or analysis["damping"].get("type") != "Cundall"
+            or int(analysis["nsteps"]) != expected_nsteps
+        ):
+            raise ValueError(
+                f"{uuid}: dynamic {tier}/{stage} must use APIC=true, PIC=0, "
+                f"zero damping and {expected_nsteps} steps"
+            )
+        if analysis.get("stability_gate"):
+            raise ValueError(f"{uuid}: dynamic phase cannot publish a static gate")
+
+        expected_material = (
+            "MohrCoulomb2D" if stage in {"HM", "RM"} else "SANISAND2D"
+        )
+        expected_saturation = (
+            LOW_LAG_SATURATION if stage == "LS" else HIGH_LAG_SATURATION
+        )
+        if soil["type"] != expected_material:
+            raise ValueError(f"{uuid}: {stage} material registration is wrong")
+        require_registered_saturation(analysis, fluid, expected_saturation)
+
+        physical_wave = stage in {"LS", "HS", "HM", "HD"}
+        if bool(fluid.get("wave_pressure")) != physical_wave:
+            raise ValueError(f"{uuid}: {stage} physical-wave registration is wrong")
+        expected_fixed = stage == "HD"
+        expected_release = (expected_nsteps + 1) * DT if expected_fixed else RELEASE_TIME
+        if bool(pipeline.get("fixed")) != expected_fixed or not math.isclose(
+            float(pipeline.get("release_time", -1.0)), expected_release, abs_tol=1.0e-12
+        ):
+            raise ValueError(f"{uuid}: {stage} pipe release registration is wrong")
+        validate_pressure_registration(analysis, tier=tier, stage=stage)
+
+        resume = analysis["resume"]
+        expected_resume_uuid = (
+            f"{dynamic_prefix}_HS_MC_RELAX"
+            if stage in {"HM", "RM"}
+            else f"{dynamic_prefix}_LS_EQ"
+            if stage == "LS"
+            else f"{dynamic_prefix}_HS_EQ"
+        )
+        if (
+            not resume_enabled
+            or str(resume.get("uuid", "")) != expected_resume_uuid
+            or int(resume.get("step", -1)) != EQUILIBRIUM_STEPS
+            or int(resume.get("nsteps", -1)) != EQUILIBRIUM_STEPS
+        ):
+            raise ValueError(f"{uuid}: {stage} resume registration is wrong")
     if abs(float(soil["intrinsic_permeability"]) - PERMEABILITY) > 1.0e-20:
         raise ValueError(f"{analysis['uuid']}: permeability changed")
     if not math.isclose(
@@ -783,6 +994,7 @@ def validate_config(config: dict[str, Any]) -> None:
             "vertical_effective_stress_remaining_ratios",
         }
         required_liquid = {
+            "PIC_pore_pressure_excess",
             "liquid_densities",
             "gamma_sub",
             "liquid_seepage_forces",

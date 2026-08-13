@@ -729,27 +729,34 @@ Eigen::Matrix<double, 6, 1> mpm::MohrCoulomb<Tdim>::compute_stress(
   // Define the maximum iteration step
   const int itr_max = 100;
   bool return_map_converged = false;
+  auto active_yield_type = yield_type_trial;
   // Correct the stress again
   for (unsigned itr = 0; itr < itr_max; ++itr) {
     // Check the update stress
     // Compute stress invariants based on updated stress
     this->compute_stress_invariants(updated_stress, state_vars);
     // Compute yield function based on updated stress
-    yield_type_trial =
+    const auto classified_yield_type =
         this->compute_yield_state(&yield_function_trial, (*state_vars));
+    if (classified_yield_type != mpm::mohrcoulomb::FailureState::Elastic)
+      active_yield_type = classified_yield_type;
     // Check yield function
-    if (yield_type_trial == mpm::mohrcoulomb::FailureState::Elastic &&
-        yield_function_trial.allFinite()) {
+    // Return mapping targets the yield surface (f = 0).  Do not reuse the
+    // historical failure-state classifier here: its -0.1 Pa classification
+    // tolerance deliberately labels near-surface states as plastic, so it can
+    // never certify convergence to f = 0.
+    if (mpm::mohrcoulomb::active_surface_converged(
+            active_yield_type, yield_function_trial, Tolerance)) {
       return_map_converged = true;
       break;
     }
     // Compute plastic multiplier based on updated stress
-    this->compute_df_dp(yield_type_trial, state_vars, updated_stress,
+    this->compute_df_dp(active_yield_type, state_vars, updated_stress,
                         &df_dsigma_trial, &dp_dsigma_trial, &dp_dq_trial,
                         &softening_trial, ptr);
-    if (yield_type_trial == mpm::mohrcoulomb::FailureState::Tensile)
+    if (active_yield_type == mpm::mohrcoulomb::FailureState::Tensile)
       yield_trial = yield_function_trial(0);
-    if (yield_type_trial == mpm::mohrcoulomb::FailureState::Shear)
+    if (active_yield_type == mpm::mohrcoulomb::FailureState::Shear)
       yield_trial = yield_function_trial(1);
     // Compute plastic multiplier based on updated stress
     const double denominator =
@@ -770,11 +777,12 @@ Eigen::Matrix<double, 6, 1> mpm::MohrCoulomb<Tdim>::compute_stress(
   // Validate the state after the final correction too: the last iteration can
   // update stress without returning to the loop's convergence check.
   this->compute_stress_invariants(updated_stress, state_vars);
-  const auto final_yield_type =
+  const auto final_classified_yield_type =
       this->compute_yield_state(&yield_function_trial, (*state_vars));
-  return_map_converged =
-      yield_function_trial.allFinite() &&
-      final_yield_type == mpm::mohrcoulomb::FailureState::Elastic;
+  if (final_classified_yield_type != mpm::mohrcoulomb::FailureState::Elastic)
+    active_yield_type = final_classified_yield_type;
+  return_map_converged = mpm::mohrcoulomb::active_surface_converged(
+      active_yield_type, yield_function_trial, Tolerance);
   if (!return_map_converged)
     throw std::runtime_error(
         "Mohr-Coulomb return mapping did not converge after 100 iterations; "

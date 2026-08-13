@@ -15,6 +15,21 @@ namespace mpm {
 namespace mohrcoulomb {
 //! Failure state
 enum FailureState { Elastic, Tensile, Shear };
+
+//! A return map converges on its active surface, not merely anywhere inside
+//! the elastic domain. The inactive surface may remain strictly negative.
+inline bool active_surface_converged(
+    FailureState active_surface,
+    const Eigen::Matrix<double, 2, 1>& yield_residuals, double tolerance) {
+  if (active_surface == FailureState::Elastic || tolerance < 0. ||
+      !std::isfinite(tolerance) || !yield_residuals.allFinite())
+    return false;
+  const unsigned active =
+      active_surface == FailureState::Tensile ? 0U : 1U;
+  const unsigned inactive = 1U - active;
+  return std::fabs(yield_residuals(active)) <= tolerance &&
+         yield_residuals(inactive) <= tolerance;
+}
 }  // namespace mohrcoulomb
 
 //! MohrCoulomb class

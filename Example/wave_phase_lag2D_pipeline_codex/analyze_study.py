@@ -14,12 +14,14 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
+import hashlib
 import json
 import math
 import re
 import struct
 import xml.etree.ElementTree as ET
 import zlib
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -28,6 +30,9 @@ import numpy as np
 
 
 PARTICLE_PATTERN = re.compile(r"particle(\d+)\.vtp$")
+COMPLETION_SCHEMA = "pipeline-case-completion-v2"
+COMPLETION_FILENAME = "pipeline_completion.json"
+REGISTERED_STUDY_VALIDATION_PROFILE = "registered-study-v1"
 STRESS_LOSS_RATIO_THRESHOLD = 0.05
 MINIMUM_REFERENCE_VERTICAL_STRESS_PA = 100.0
 THRESHOLD_RATIO_TOLERANCE = 1.0e-12
@@ -44,6 +49,7 @@ WANTED_ARRAYS = {
     "ids",
     "volumes",
     "PIC_pore_pressures",
+    "PIC_pore_pressure_excess",
     "PIC_liquid_pressures",
     "PIC_gas_pressures",
     "PIC_ru",
@@ -189,6 +195,160 @@ def particle_step(path: Path) -> int:
     return int(match.group(1))
 
 
+def file_sha256(path: Path) -> str:
+    """Return the SHA-256 fingerprint used by completion sentinels."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def expected_particle_steps(config: dict[str, Any]) -> list[int]:
+    """Return the complete configured particle-output step grid."""
+
+    nsteps = int(config["analysis"]["nsteps"])
+    output_steps = int(config["post_processing"]["output_steps"])
+    if nsteps <= 0 or output_steps <= 0:
+        raise ValueError("Configured nsteps and output_steps must be positive")
+    steps = list(range(output_steps, nsteps + 1, output_steps))
+    if not steps or steps[-1] != nsteps:
+        steps.append(nsteps)
+    return steps
+
+
+def _resolve_recorded_path(value: str | Path, case_root: Path) -> Path:
+    path = Path(value)
+    resolved = (path if path.is_absolute() else case_root / path).resolve()
+    try:
+        resolved.relative_to(case_root.resolve())
+    except ValueError as error:
+        raise ValueError(f"Recorded artifact escapes the case root: {path}") from error
+    return resolved
+
+
+def _verify_nested_artifact_audits(
+    value: Any, case_root: Path, audited: list[dict[str, Any]]
+) -> None:
+    """Recursively verify every {path,size_bytes,sha256} sentinel record."""
+
+    if isinstance(value, dict):
+        if {"path", "size_bytes", "sha256"}.issubset(value):
+            path = _resolve_recorded_path(value["path"], case_root)
+            if not path.is_file():
+                raise FileNotFoundError(f"Audited runtime artifact is missing: {path}")
+            size = path.stat().st_size
+            digest = file_sha256(path)
+            if size <= 0 or int(value["size_bytes"]) != size:
+                raise ValueError(f"Audited runtime artifact size is stale: {path}")
+            if str(value["sha256"]) != digest:
+                raise ValueError(f"Audited runtime artifact hash is stale: {path}")
+            audited.append(
+                {"path": str(path), "size_bytes": size, "sha256": digest}
+            )
+            return
+        for child in value.values():
+            _verify_nested_artifact_audits(child, case_root, audited)
+    elif isinstance(value, list):
+        for child in value:
+            _verify_nested_artifact_audits(child, case_root, audited)
+
+
+def validate_completed_result(
+    config_path: Path,
+    case_root: Path,
+    config: dict[str, Any],
+    result_directory: Path,
+    vtp_files: Iterable[Path],
+) -> dict[str, Any]:
+    """Reject unaudited, stale, final-frame-only, or partial result sets.
+
+    A valid manuscript input must have the exact configured particle-frame
+    grid and a completion sentinel that fingerprints both the current config
+    and the final VTP.  Merely finding a final-looking filename is not enough.
+    """
+
+    config_path = config_path.resolve()
+    case_root = case_root.resolve()
+    result_directory = result_directory.resolve()
+    files = sorted((Path(path).resolve() for path in vtp_files), key=particle_step)
+    actual_steps = [particle_step(path) for path in files]
+    expected_steps = expected_particle_steps(config)
+    if actual_steps != expected_steps:
+        missing = sorted(set(expected_steps) - set(actual_steps))
+        unexpected = sorted(set(actual_steps) - set(expected_steps))
+        raise ValueError(
+            "Particle VTP time grid is incomplete or unexpected: "
+            f"expected {len(expected_steps)} frames through step {expected_steps[-1]}, "
+            f"found {len(actual_steps)}; missing={missing[:8]}, "
+            f"unexpected={unexpected[:8]}"
+        )
+
+    nsteps = int(config["analysis"]["nsteps"])
+    final_vtp = result_directory / f"particle{nsteps:0{len(str(nsteps))}d}.vtp"
+    if files[-1] != final_vtp.resolve() or not final_vtp.is_file():
+        raise FileNotFoundError(f"Configured final particle VTP is missing: {final_vtp}")
+
+    sentinel_path = result_directory / COMPLETION_FILENAME
+    if not sentinel_path.is_file():
+        raise FileNotFoundError(
+            f"Audited completion sentinel is missing: {sentinel_path}"
+        )
+    sentinel = json.loads(sentinel_path.read_text(encoding="utf-8"))
+    if sentinel.get("schema") != COMPLETION_SCHEMA:
+        raise ValueError("Completion sentinel schema is invalid")
+    record = sentinel.get("config")
+    if not isinstance(record, dict):
+        raise ValueError("Completion sentinel has no config audit")
+    if _resolve_recorded_path(record["path"], case_root) != config_path:
+        raise ValueError("Completion sentinel references another config")
+    config_hash = file_sha256(config_path)
+    if str(record.get("sha256")) != config_hash:
+        raise ValueError("Completion sentinel config hash is stale")
+    if str(record.get("uuid")) != str(config["analysis"]["uuid"]):
+        raise ValueError("Completion sentinel UUID is stale")
+    if int(record.get("nsteps", -1)) != nsteps:
+        raise ValueError("Completion sentinel nsteps is stale")
+    if record.get("validation_profile") != REGISTERED_STUDY_VALIDATION_PROFILE:
+        raise ValueError(
+            "Completion sentinel is not registered-study manuscript evidence: "
+            f"validation_profile={record.get('validation_profile')!r}"
+        )
+
+    artifact = sentinel.get("artifacts", {}).get("final_vtp")
+    if not isinstance(artifact, dict):
+        raise ValueError("Completion sentinel has no final-VTP audit")
+    if _resolve_recorded_path(artifact["path"], case_root) != final_vtp.resolve():
+        raise ValueError("Completion sentinel final-VTP path is stale")
+    size = final_vtp.stat().st_size
+    final_hash = file_sha256(final_vtp)
+    if size <= 0 or int(artifact.get("size_bytes", -1)) != size:
+        raise ValueError("Completion sentinel final-VTP size is stale")
+    if str(artifact.get("sha256")) != final_hash:
+        raise ValueError("Completion sentinel final-VTP hash is stale")
+
+    audited_dependencies: list[dict[str, Any]] = []
+    _verify_nested_artifact_audits(
+        sentinel.get("runtime_dependencies", {}),
+        case_root,
+        audited_dependencies,
+    )
+
+    dt = float(config["analysis"]["dt"])
+    return {
+        "schema": COMPLETION_SCHEMA,
+        "sentinel_path": str(sentinel_path.resolve()),
+        "sentinel_sha256": file_sha256(sentinel_path),
+        "config_sha256": config_hash,
+        "final_vtp_sha256": final_hash,
+        "expected_particle_steps": expected_steps,
+        "expected_particle_times_s": [step * dt for step in expected_steps],
+        "runtime_dependencies": sentinel.get("runtime_dependencies", {}),
+        "verified_runtime_artifacts": audited_dependencies,
+    }
+
+
 def read_initial_coordinates(path: Path) -> np.ndarray:
     with path.open(encoding="utf-8") as stream:
         first = stream.readline().strip()
@@ -208,6 +368,45 @@ def resolve_particle_input_path(config: dict[str, Any], case_root: Path) -> Path
 
     location = Path(config["particles"][0]["generator"]["location"])
     return location if location.is_absolute() else case_root / location
+
+
+def checkpoint_pressure_reference(
+    completion_audit: dict[str, Any], case_root: Path, expected_count: int
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    """Load the audited equilibrium pressure reference in particle-ID order."""
+
+    runtime = completion_audit.get("runtime_dependencies", {})
+    resume = runtime.get("resume_equilibrium")
+    if not isinstance(resume, dict) or not isinstance(resume.get("qa_vtp"), dict):
+        return None, {"available": False, "reason": "case has no resume checkpoint"}
+    record = resume["qa_vtp"]
+    path = _resolve_recorded_path(record["path"], case_root)
+    _, arrays = read_vtp(path)
+    required = ("ids", "PIC_pore_pressures")
+    missing = [name for name in required if name not in arrays]
+    if missing:
+        return None, {
+            "available": False,
+            "reason": f"audited checkpoint VTP lacks {missing}",
+            "path": str(path),
+            "sha256": record.get("sha256"),
+        }
+    ids = np.asarray(arrays["ids"], dtype=np.float64).reshape(-1)
+    pressure = np.asarray(arrays["PIC_pore_pressures"], dtype=np.float64).reshape(-1)
+    if ids.size != expected_count or pressure.size != expected_count:
+        raise ValueError("Checkpoint pressure-reference particle count is invalid")
+    integer_ids = np.rint(ids).astype(np.int64)
+    order = np.argsort(integer_ids)
+    if not np.array_equal(integer_ids[order], np.arange(expected_count)):
+        raise ValueError("Checkpoint pressure-reference particle IDs are invalid")
+    if not np.all(np.isfinite(pressure)):
+        raise ValueError("Checkpoint pressure reference contains NaN/Inf")
+    return pressure[order], {
+        "available": True,
+        "method": "audited_resume_checkpoint_PIC_pore_pressures_by_particle_id",
+        "path": str(path),
+        "sha256": record.get("sha256"),
+    }
 
 
 def nearest_probe(
@@ -252,6 +451,44 @@ def nearest_history_row(
     history: list[dict[str, float]], target_time: float
 ) -> dict[str, float]:
     return min(history, key=lambda row: abs(row["time"] - target_time))
+
+
+def validate_pipeline_history_grid(
+    history: list[dict[str, float]], config: dict[str, Any]
+) -> dict[str, Any]:
+    """Require every configured rigid-pipeline history sample through nsteps."""
+
+    if not history:
+        raise ValueError("Rigid-pipeline history is empty")
+    analysis = config["analysis"]
+    interval = int(analysis["rigid_pipeline"]["history_interval"])
+    nsteps = int(analysis["nsteps"])
+    dt = float(analysis["dt"])
+    if interval <= 0:
+        raise ValueError("Rigid-pipeline history interval must be positive")
+    expected_steps = list(range(interval, nsteps + 1, interval))
+    actual_steps = [int(row["step"]) for row in history]
+    if actual_steps != expected_steps:
+        missing = sorted(set(expected_steps) - set(actual_steps))
+        unexpected = sorted(set(actual_steps) - set(expected_steps))
+        raise ValueError(
+            "Rigid-pipeline history grid is incomplete or unexpected: "
+            f"expected {len(expected_steps)} rows, found {len(actual_steps)}; "
+            f"missing={missing[:8]}, unexpected={unexpected[:8]}"
+        )
+    for row, step in zip(history, expected_steps):
+        expected_time = step * dt
+        if not math.isclose(
+            float(row["time"]), expected_time, rel_tol=1.0e-10, abs_tol=1.0e-12
+        ):
+            raise ValueError(
+                f"Rigid-pipeline history time at step {step} is "
+                f"{row['time']}; expected {expected_time}"
+            )
+    return {
+        "expected_pipeline_history_steps": expected_steps,
+        "expected_pipeline_history_times_s": [step * dt for step in expected_steps],
+    }
 
 
 def pipeline_metrics(
@@ -632,6 +869,190 @@ def threshold_spatiotemporal_metrics(
     return result
 
 
+def _linear_integral_between(
+    times: np.ndarray, values: np.ndarray, start: float, end: float
+) -> float:
+    """Integrate a linearly interpolated saved-frame series on [start, end]."""
+
+    lower = max(float(start), float(times[0]))
+    upper = min(float(end), float(times[-1]))
+    if upper <= lower:
+        return 0.0
+    interior = times[(times > lower) & (times < upper)]
+    sample_times = np.concatenate(([lower], interior, [upper]))
+    sample_values = np.interp(sample_times, times, values)
+    intervals = np.diff(sample_times)
+    return float(
+        np.sum(0.5 * (sample_values[:-1] + sample_values[1:]) * intervals)
+    )
+
+
+def threshold_release_segments(
+    times: np.ndarray,
+    masks: np.ndarray,
+    particle_area: float,
+    release_time: float,
+    current_volumes: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Split a threshold area history at the pre-registered pipe release."""
+
+    times = np.asarray(times, dtype=np.float64)
+    masks = np.asarray(masks, dtype=bool)
+    if masks.ndim != 2 or masks.shape[0] != times.size:
+        raise ValueError("Threshold masks and times have inconsistent shapes")
+    if not math.isfinite(release_time):
+        raise ValueError("Pipeline release time must be finite")
+    if current_volumes is None:
+        areas = np.count_nonzero(masks, axis=1).astype(float) * particle_area
+        fractions = np.mean(masks, axis=1)
+        basis = "nominal_reference_particle_area_fallback"
+    else:
+        volumes = np.asarray(current_volumes, dtype=np.float64)
+        if volumes.shape != masks.shape:
+            raise ValueError("Current volumes and threshold masks must match")
+        areas = np.sum(np.where(masks, volumes, 0.0), axis=1)
+        totals = np.sum(volumes, axis=1)
+        fractions = areas / totals
+        basis = "current_particle_volumes"
+
+    output: dict[str, Any] = {"release_segment_area_basis": basis}
+    spans = {
+        "pre_release": (float(times[0]), min(release_time, float(times[-1]))),
+        "post_release": (max(release_time, float(times[0])), float(times[-1])),
+    }
+    for name, (start, end) in spans.items():
+        saved = (times >= start - THRESHOLD_RATIO_TOLERANCE) & (
+            times <= end + THRESHOLD_RATIO_TOLERANCE
+        )
+        active_saved = saved & (np.count_nonzero(masks, axis=1) > 0)
+        output[f"{name}_saved_frames"] = int(np.count_nonzero(saved))
+        output[f"{name}_active_saved_frames"] = int(np.count_nonzero(active_saved))
+        output[f"{name}_first_active_saved_time_s"] = (
+            float(times[np.flatnonzero(active_saved)[0]])
+            if np.any(active_saved)
+            else None
+        )
+        output[f"{name}_max_area_m2"] = (
+            float(np.max(areas[saved])) if np.any(saved) else 0.0
+        )
+        output[f"{name}_time_integrated_area_m2_s"] = _linear_integral_between(
+            times, areas, start, end
+        )
+        output[f"{name}_time_integrated_area_fraction_s"] = (
+            _linear_integral_between(times, fractions, start, end)
+        )
+    return output
+
+
+def trigger_to_stress_loss_timing(
+    times: np.ndarray,
+    seepage_masks: np.ndarray,
+    stress_loss_masks: np.ndarray,
+    wave_period: float,
+) -> dict[str, Any]:
+    """Quantify particle-level IF ordering relative to first stress loss.
+
+    The preceding-cycle test is strict in time: a simultaneous saved-frame
+    exceedance is captured by the joint criterion but is not retroactively
+    counted as a preceding trigger.
+    """
+
+    times = np.asarray(times, dtype=np.float64)
+    seepage_masks = np.asarray(seepage_masks, dtype=bool)
+    stress_loss_masks = np.asarray(stress_loss_masks, dtype=bool)
+    if (
+        times.ndim != 1
+        or seepage_masks.shape != stress_loss_masks.shape
+        or seepage_masks.ndim != 2
+        or seepage_masks.shape[0] != times.size
+    ):
+        raise ValueError("IF/stress-loss histories have inconsistent shapes")
+    if not math.isfinite(wave_period) or wave_period <= 0.0:
+        raise ValueError("Wave period must be finite and positive")
+
+    particle_count = seepage_masks.shape[1]
+    first_if = np.full(particle_count, np.nan)
+    first_stress = np.full(particle_count, np.nan)
+    for index in range(particle_count):
+        if_indices = np.flatnonzero(seepage_masks[:, index])
+        stress_indices = np.flatnonzero(stress_loss_masks[:, index])
+        if if_indices.size:
+            first_if[index] = times[if_indices[0]]
+        if stress_indices.size:
+            first_stress[index] = times[stress_indices[0]]
+
+    lost = np.isfinite(first_stress)
+    lost_count = int(np.count_nonzero(lost))
+    if_before = lost & np.isfinite(first_if) & (
+        first_if < first_stress - THRESHOLD_RATIO_TOLERANCE
+    )
+    simultaneous = lost & np.isfinite(first_if) & np.isclose(
+        first_if,
+        first_stress,
+        rtol=0.0,
+        atol=THRESHOLD_RATIO_TOLERANCE,
+    )
+    stress_before = lost & np.isfinite(first_if) & (
+        first_stress < first_if - THRESHOLD_RATIO_TOLERANCE
+    )
+    no_if = lost & ~np.isfinite(first_if)
+    observable = lost & (
+        first_stress - times[0] >= wave_period - THRESHOLD_RATIO_TOLERANCE
+    )
+    preceding = np.zeros(particle_count, dtype=bool)
+    for index in np.flatnonzero(lost):
+        start = first_stress[index] - wave_period
+        preceding[index] = bool(
+            np.any(
+                seepage_masks[:, index]
+                & (times >= start - THRESHOLD_RATIO_TOLERANCE)
+                & (times < first_stress[index] - THRESHOLD_RATIO_TOLERANCE)
+            )
+        )
+
+    def fraction(mask: np.ndarray, denominator: int) -> float | None:
+        return float(np.count_nonzero(mask) / denominator) if denominator else None
+
+    observable_count = int(np.count_nonzero(observable))
+    return {
+        "first_IF_active_saved_time_s": (
+            float(np.nanmin(first_if)) if np.any(np.isfinite(first_if)) else None
+        ),
+        "first_stress_loss_active_saved_time_s": (
+            float(np.nanmin(first_stress)) if lost_count else None
+        ),
+        "first_stress_loss_minus_first_IF_active_saved_time_s": (
+            float(np.nanmin(first_stress) - np.nanmin(first_if))
+            if lost_count and np.any(np.isfinite(first_if))
+            else None
+        ),
+        "stress_loss_particles": lost_count,
+        "stress_loss_particles_IF_first": int(np.count_nonzero(if_before)),
+        "stress_loss_particles_simultaneous_first": int(
+            np.count_nonzero(simultaneous)
+        ),
+        "stress_loss_particles_stress_first": int(np.count_nonzero(stress_before)),
+        "stress_loss_particles_without_IF": int(np.count_nonzero(no_if)),
+        "fraction_stress_loss_particles_IF_first": fraction(if_before, lost_count),
+        "stress_loss_particles_with_IF_in_preceding_cycle": int(
+            np.count_nonzero(preceding)
+        ),
+        "fraction_stress_loss_particles_with_IF_in_preceding_cycle": fraction(
+            preceding, lost_count
+        ),
+        "preceding_cycle_fully_observable_stress_loss_particles": observable_count,
+        "fraction_fully_observable_stress_loss_particles_with_IF_in_preceding_cycle": (
+            fraction(preceding & observable, observable_count)
+        ),
+        "preceding_cycle_window_s": wave_period,
+        "preceding_cycle_rule": (
+            "same particle has IF>=1 at a saved time in "
+            "[first R_sigma<=0.05 - T, first R_sigma<=0.05); "
+            "simultaneous onset is reported separately"
+        ),
+    }
+
+
 def add_frame_threshold_metrics(
     row: dict[str, Any],
     name: str,
@@ -719,16 +1140,29 @@ def particle_histories(
     config: dict[str, Any],
     coordinates: np.ndarray,
     probes: list[Probe],
+    checkpoint_pressure: np.ndarray | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     dt = float(config["analysis"]["dt"])
     rows: list[dict[str, Any]] = []
     expected_count = len(coordinates)
+    if checkpoint_pressure is not None:
+        checkpoint_pressure = np.asarray(
+            checkpoint_pressure, dtype=np.float64
+        ).reshape(-1)
+        if checkpoint_pressure.size != expected_count or not np.all(
+            np.isfinite(checkpoint_pressure)
+        ):
+            raise ValueError(
+                "Checkpoint pore-pressure reference does not match particle input"
+            )
     particle_area = nominal_reference_particle_area(coordinates)
     stress_threshold_name = "stress_loss_Rsigma_le_0p05"
     seepage_threshold_name = "upward_seepage_IF_ge_1"
+    joint_threshold_name = "joint_IF_ge_1_and_Rsigma_le_0p05"
     threshold_masks: dict[str, list[np.ndarray | None]] = {
         stress_threshold_name: [],
         seepage_threshold_name: [],
+        joint_threshold_name: [],
     }
     volume_frames: list[np.ndarray | None] = []
     support_roi = pipeline_support_roi(config, coordinates)
@@ -885,6 +1319,7 @@ def particle_histories(
             )
 
         stress_ratios: np.ndarray | None = None
+        stress_loss_mask: np.ndarray | None = None
         solver_ratio_name = "vertical_effective_stress_remaining_ratios"
         solver_ratio_present.append(solver_ratio_name in arrays)
         if "stresses" in arrays:
@@ -964,6 +1399,7 @@ def particle_histories(
         )
         seepage_present = [name in arrays for name in seepage_required]
         seepage_index: np.ndarray | None = None
+        seepage_mask: np.ndarray | None = None
         if any(seepage_present) and not all(seepage_present):
             missing = [
                 name
@@ -1007,6 +1443,29 @@ def particle_histories(
         else:
             threshold_masks[seepage_threshold_name].append(None)
 
+        joint_mask: np.ndarray | None = None
+        if stress_loss_mask is not None and seepage_mask is not None:
+            joint_mask = stress_loss_mask & seepage_mask
+            threshold_masks[joint_threshold_name].append(joint_mask)
+            add_frame_threshold_metrics(
+                row,
+                joint_threshold_name,
+                joint_mask,
+                particle_area,
+                current_volumes,
+            )
+            if support_roi is not None:
+                add_frame_threshold_metrics(
+                    row,
+                    f"support_ROI_{joint_threshold_name}",
+                    joint_mask,
+                    particle_area,
+                    current_volumes,
+                    support_roi,
+                )
+        else:
+            threshold_masks[joint_threshold_name].append(None)
+
         if "liquefaction_potentials" in arrays:
             legacy_potential = np.asarray(
                 arrays["liquefaction_potentials"], dtype=np.float64
@@ -1037,10 +1496,28 @@ def particle_histories(
             if "PIC_liquid_pressures" in arrays
             else None
         )
+        pressure_excess: np.ndarray | None = None
+        if "PIC_pore_pressure_excess" in arrays:
+            pressure_excess = np.asarray(
+                arrays["PIC_pore_pressure_excess"], dtype=np.float64
+            ).reshape(-1)
+            if pressure_excess.size != expected_count or not np.all(
+                np.isfinite(pressure_excess)
+            ):
+                raise ValueError(f"PIC pore-pressure excess in {path} is invalid")
+        elif pressure_name is not None and checkpoint_pressure is not None:
+            pressure_excess = (
+                np.asarray(arrays[pressure_name], dtype=np.float64).reshape(-1)
+                - checkpoint_pressure
+            )
         for probe in probes:
             index = probe.index
             if pressure_name:
                 row[f"{probe.name}_pressure_pa"] = float(arrays[pressure_name][index])
+            if pressure_excess is not None:
+                row[f"{probe.name}_pressure_excess_pa"] = float(
+                    pressure_excess[index]
+                )
             if "PIC_ru" in arrays:
                 row[f"{probe.name}_ru"] = float(arrays["PIC_ru"][index])
             if "liquefaction_potentials" in arrays:
@@ -1100,6 +1577,7 @@ def particle_histories(
         raise ValueError(
             "Solver vertical-stress remaining ratios are missing from some frames"
         )
+    stacked_threshold_masks: dict[str, np.ndarray] = {}
     for name, saved_masks in threshold_masks.items():
         present = [mask is not None for mask in saved_masks]
         if any(present) and not all(present):
@@ -1110,25 +1588,74 @@ def particle_histories(
             all_masks = np.stack(
                 [mask for mask in saved_masks if mask is not None]
             )
-            threshold_summaries[name] = threshold_spatiotemporal_metrics(
+            stacked_threshold_masks[name] = all_masks
+            metrics = threshold_spatiotemporal_metrics(
                 frame_times,
                 all_masks,
                 particle_area,
                 stacked_volumes,
             )
+            metrics.update(
+                threshold_release_segments(
+                    frame_times,
+                    all_masks,
+                    particle_area,
+                    release_time,
+                    stacked_volumes,
+                )
+            )
+            threshold_summaries[name] = metrics
             if support_roi is not None:
-                threshold_summaries[f"support_ROI_{name}"] = (
-                    threshold_spatiotemporal_metrics(
+                support_volumes = (
+                    stacked_volumes[:, support_roi]
+                    if stacked_volumes is not None
+                    else None
+                )
+                support_metrics = threshold_spatiotemporal_metrics(
+                    frame_times,
+                    all_masks[:, support_roi],
+                    particle_area,
+                    support_volumes,
+                )
+                support_metrics.update(
+                    threshold_release_segments(
                         frame_times,
                         all_masks[:, support_roi],
                         particle_area,
-                        (
-                            stacked_volumes[:, support_roi]
-                            if stacked_volumes is not None
-                            else None
-                        ),
+                        release_time,
+                        support_volumes,
                     )
                 )
+                threshold_summaries[f"support_ROI_{name}"] = support_metrics
+
+    materials = config.get("materials", [])
+    wave_period = (
+        float(materials[1].get("wave_period", 0.0))
+        if len(materials) > 1
+        else 0.0
+    )
+    trigger_timing: dict[str, Any] = {}
+    if (
+        stress_threshold_name in stacked_threshold_masks
+        and seepage_threshold_name in stacked_threshold_masks
+        and wave_period > 0.0
+    ):
+        trigger_timing = trigger_to_stress_loss_timing(
+            frame_times,
+            stacked_threshold_masks[seepage_threshold_name],
+            stacked_threshold_masks[stress_threshold_name],
+            wave_period,
+        )
+        if support_roi is not None:
+            support_timing = trigger_to_stress_loss_timing(
+                frame_times,
+                stacked_threshold_masks[seepage_threshold_name][:, support_roi],
+                stacked_threshold_masks[stress_threshold_name][:, support_roi],
+                wave_period,
+            )
+            trigger_timing.update(
+                {f"support_ROI_{key}": value for key, value in support_timing.items()}
+            )
 
     material = config["materials"][0]["type"]
     criterion_area_basis = (
@@ -1138,6 +1665,7 @@ def particle_histories(
     )
     summary: dict[str, Any] = {
         "material": material,
+        "particle_count": expected_count,
         "frames": len(rows),
         "last_particle_time_s": rows[-1]["time_s"],
         "nominal_reference_area_per_particle_m2": particle_area,
@@ -1153,6 +1681,11 @@ def particle_histories(
             stress_threshold_name,
             seepage_threshold_name,
         ],
+        "joint_liquefaction_criterion": joint_threshold_name,
+        "joint_liquefaction_definition": (
+            "same particle at the same saved physical time satisfies both "
+            "IF>=1 and eligible R_sigma<=0.05"
+        ),
         "stress_reference_basis": reference_basis,
         "stress_reference_time_s": reference_time,
         "stress_reference_fallback_used": (
@@ -1319,6 +1852,7 @@ def particle_histories(
     for threshold_name, metrics in threshold_summaries.items():
         for metric_name, value in metrics.items():
             summary[f"{threshold_name}_{metric_name}"] = value
+    summary.update(trigger_timing)
     return rows, summary
 
 
@@ -1340,9 +1874,12 @@ def phase_metrics(
             "fit_end_s": fit_end,
         }
     times = np.asarray([row["time_s"] for row in selected])
-    surface_key = "surface_pressure_pa"
+    surface_key = "surface_pressure_excess_pa"
     if surface_key not in selected[0]:
-        return {"available": False, "reason": "pressure was not written to VTK"}
+        return {
+            "available": False,
+            "reason": "checkpoint-relative pressure was not available in VTP analysis",
+        }
     _, surface_amplitude, surface_phase = harmonic_fit(
         times, np.asarray([row[surface_key] for row in selected]), period
     )
@@ -1354,7 +1891,7 @@ def phase_metrics(
         "probes": {},
     }
     for probe in probes:
-        key = f"{probe.name}_pressure_pa"
+        key = f"{probe.name}_pressure_excess_pa"
         if key not in selected[0]:
             continue
         mean, amplitude, phase = harmonic_fit(
@@ -1401,6 +1938,120 @@ def flatten_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
+def _resume_dependency_fingerprints(summary: dict[str, Any]) -> tuple[str, str]:
+    runtime = summary["completion_audit"].get("runtime_dependencies", {})
+    resume = runtime.get("resume_equilibrium")
+    if not isinstance(resume, dict):
+        raise ValueError(
+            f"{summary['case']} completion audit has no resume-equilibrium fingerprint"
+        )
+    return (
+        str(resume["checkpoint_hdf5"]["sha256"]),
+        str(resume["qa_vtp"]["sha256"]),
+    )
+
+
+def _pressure_replay_grid(summary: dict[str, Any]) -> tuple[Any, ...]:
+    runtime = summary["completion_audit"].get("runtime_dependencies", {})
+    pressure = runtime.get("read_pressure_database")
+    if not isinstance(pressure, dict) or not isinstance(pressure.get("header"), dict):
+        raise ValueError(
+            f"{summary['case']} completion audit has no pressure-replay header"
+        )
+    header = pressure["header"]
+    return tuple(
+        header.get(name)
+        for name in (
+            "format_version",
+            "particle_count",
+            "step_interval",
+            "max_step",
+            "source_dt_s",
+            "frame_count",
+        )
+    )
+
+
+def _phase_comparison_config(config_path: Path) -> dict[str, Any]:
+    """Strip only the pre-registered RL/RE identity and forcing-source fields."""
+
+    config = deepcopy(json.loads(config_path.read_text(encoding="utf-8")))
+    config.pop("title", None)
+    analysis = config["analysis"]
+    analysis.pop("uuid", None)
+    pressure = analysis["prescribed_phase_pressures"]
+    pressure.pop("path", None)
+    pressure.pop("file_prefix", None)
+    return config
+
+
+def validate_RL_RE_comparison(summaries: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
+    """Require RL and RE to share the exact dynamic comparison basis."""
+
+    by_code: dict[str, dict[str, Any]] = {}
+    for summary in summaries:
+        stem = Path(summary["config"]).stem
+        if stem.endswith("_RL"):
+            by_code["RL"] = summary
+        elif stem.endswith("_RE"):
+            by_code["RE"] = summary
+    if not by_code:
+        return None
+    if set(by_code) != {"RL", "RE"}:
+        raise ValueError("RL/RE phase comparison requires both complete cases")
+    rl, re_case = by_code["RL"], by_code["RE"]
+    rl_audit = rl["completion_audit"]
+    re_audit = re_case["completion_audit"]
+    checks = {
+        "dt_s": (
+            float(rl["analysis_dt_s"]),
+            float(re_case["analysis_dt_s"]),
+        ),
+        "particle_steps": (
+            rl_audit["expected_particle_steps"],
+            re_audit["expected_particle_steps"],
+        ),
+        "particle_times_s": (
+            rl_audit["expected_particle_times_s"],
+            re_audit["expected_particle_times_s"],
+        ),
+        "particle_count": (
+            int(rl["particles"]["particle_count"]),
+            int(re_case["particles"]["particle_count"]),
+        ),
+        "resume_checkpoint_fingerprints": (
+            _resume_dependency_fingerprints(rl),
+            _resume_dependency_fingerprints(re_case),
+        ),
+        "pressure_replay_grid": (
+            _pressure_replay_grid(rl),
+            _pressure_replay_grid(re_case),
+        ),
+        "config_except_registered_forcing_source": (
+            _phase_comparison_config(Path(rl["config"])),
+            _phase_comparison_config(Path(re_case["config"])),
+        ),
+    }
+    mismatches = [name for name, (left, right) in checks.items() if left != right]
+    if mismatches:
+        raise ValueError(
+            "RL/RE comparison basis does not match for: " + ", ".join(mismatches)
+        )
+    return {
+        "schema": "RL-RE-comparison-grid-v1",
+        "RL_config_sha256": rl_audit["config_sha256"],
+        "RE_config_sha256": re_audit["config_sha256"],
+        "dt_s": checks["dt_s"][0],
+        "particle_steps": checks["particle_steps"][0],
+        "particle_times_s": checks["particle_times_s"][0],
+        "particle_count": checks["particle_count"][0],
+        "resume_checkpoint_fingerprints": checks[
+            "resume_checkpoint_fingerprints"
+        ][0],
+        "non_forcing_config_identical": True,
+    }
+
+
 def analyse_case(config_path: Path, output_directory: Path) -> dict[str, Any]:
     config_path = config_path.resolve()
     case_root = config_path.parent
@@ -1421,10 +2072,26 @@ def analyse_case(config_path: Path, output_directory: Path) -> dict[str, Any]:
     coordinates = read_initial_coordinates(particle_location)
     probes = build_probes(config, coordinates)
     vtp_files = sorted(result_directory.glob("particle*.vtp"), key=particle_step)
-    particle_rows, particle_summary = particle_histories(
-        vtp_files, config, coordinates, probes
+    completion_audit = validate_completed_result(
+        config_path,
+        case_root,
+        config,
+        result_directory,
+        vtp_files,
     )
+    pressure_reference, pressure_reference_audit = checkpoint_pressure_reference(
+        completion_audit, case_root, len(coordinates)
+    )
+    particle_rows, particle_summary = particle_histories(
+        vtp_files,
+        config,
+        coordinates,
+        probes,
+        checkpoint_pressure=pressure_reference,
+    )
+    particle_summary["pore_pressure_excess_reference"] = pressure_reference_audit
     history = read_pipeline_history(result_directory)
+    completion_audit.update(validate_pipeline_history_grid(history, config))
     pipeline = config["analysis"]["rigid_pipeline"]
     diameter = 2.0 * float(pipeline["outer_radius"])
     bed_elevation = float(config["materials"][1]["sea_level"]) - float(
@@ -1443,6 +2110,8 @@ def analyse_case(config_path: Path, output_directory: Path) -> dict[str, Any]:
         "uuid": uuid,
         "config": str(config_path),
         "result_directory": str(result_directory),
+        "analysis_dt_s": float(config["analysis"]["dt"]),
+        "completion_audit": completion_audit,
         "definitions": {
             "ru": (
                 "excess pore-pressure ratio retained only as a diagnostic "
@@ -1460,6 +2129,16 @@ def analyse_case(config_path: Path, output_directory: Path) -> dict[str, Any]:
                 "IF = dot(f_liquid_seepage + rho_l*g, -g/|g|) / gamma_sub; "
                 "the hydrostatic component is removed, negative/downward "
                 "values are clipped to zero, and the primary threshold is IF >= 1"
+            ),
+            "wave_excess_pore_pressure": (
+                "PIC pore pressure relative to the checkpoint-resumed initial "
+                "pore pressure for the same particle ID; solver-saved excess is "
+                "preferred and the audited equilibrium VTP is the fallback"
+            ),
+            "joint_liquefaction": (
+                "same particle at the same saved physical time satisfies "
+                "IF>=1 and eligible R_sigma<=0.05; first-event ordering and "
+                "the preceding-wave-cycle association are reported separately"
             ),
             "legacy_solver_fields": (
                 "liquefaction_potentials and momentary_liquefied are retained "
@@ -1544,6 +2223,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     summaries = [analyse_case(path, args.output) for path in args.configs]
+    comparison_audit = validate_RL_RE_comparison(summaries)
+    if comparison_audit is not None:
+        (args.output / "RL_RE_comparison_grid.json").write_text(
+            json.dumps(comparison_audit, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
     write_csv(args.output / "study_summary.csv", [flatten_summary(s) for s in summaries])
     for summary in summaries:
         displacement = summary["pipeline"][

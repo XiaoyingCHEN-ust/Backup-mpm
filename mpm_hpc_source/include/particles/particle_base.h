@@ -517,7 +517,10 @@ public:
   virtual void update_particle_thermal_strain() noexcept  = 0;
 
   // Compute stress
-  virtual void update_particle_stress() noexcept = 0;
+  // Material integrations may reject an invalid return map.  Propagate that
+  // diagnostic to the solver instead of terminating inside a noexcept
+  // particle update.
+  virtual void update_particle_stress() = 0;
 
   // Update volume based on centre volumetric strain rate
   virtual void update_particle_volume()  = 0;

@@ -2336,7 +2336,8 @@ bool mpm::Mesh<Tdim>::compute_nodal_corrected_force(
 //! Compute free surface cells, nodes, and particles
 template <unsigned Tdim>
 bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
-                                           double tolerance) {
+                                           double tolerance,
+                                           bool map_nodal_volume_for_density) {
   bool status = true;
   try {
     // Reset free surface cell
@@ -2426,26 +2427,22 @@ bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
       }
     }
 
-    // Compute boundary particles based on density function
-    // Lump cell volume to nodes
-    this->iterate_over_cells(std::bind(
-        &mpm::Cell<Tdim>::map_cell_volume_to_nodes, std::placeholders::_1, 0));
-
-    // Compute nodal value of mass density
-    this->iterate_over_nodes_predicate(
-        std::bind(&mpm::NodeBase<Tdim>::compute_density, std::placeholders::_1),
-        std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));
-
     // Evaluate free surface particles
     if (free_surface_particle == "detect") {
-      // // Lump cell volume to nodes
-      // this->iterate_over_cells(std::bind(
-      //     &mpm::Cell<Tdim>::map_cell_volume_to_nodes, std::placeholders::_1, 0));
-
-      // // Compute nodal value of mass density
-      // this->iterate_over_nodes_predicate(
-      //     std::bind(&mpm::NodeBase<Tdim>::compute_density, std::placeholders::_1),
-      //     std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));
+      // Density detection needs nodal cell volume, while assigned surfaces do
+      // not. Explicit solvers can map volume earlier in the same nodal cycle
+      // for their support threshold; honour that ownership to avoid doubling
+      // the denominator used by subsequent acceleration calculations.
+      if (map_nodal_volume_for_density) {
+        this->iterate_over_cells(std::bind(
+            &mpm::Cell<Tdim>::map_cell_volume_to_nodes,
+            std::placeholders::_1, 0));
+      }
+      this->iterate_over_nodes_predicate(
+          std::bind(&mpm::NodeBase<Tdim>::compute_density,
+                    std::placeholders::_1),
+          std::bind(&mpm::NodeBase<Tdim>::status,
+                    std::placeholders::_1));
 
       this->iterate_over_particles(
           std::bind(&mpm::ParticleBase<Tdim>::compute_particle_free_surface,

@@ -75,6 +75,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def particle_ids_sha256(particle_ids: np.ndarray) -> str:
+    """Return a platform-independent digest of an ordered particle-ID list."""
+
+    values = np.asarray(particle_ids, dtype="<u8").reshape(-1)
+    return hashlib.sha256(values.tobytes()).hexdigest()
+
+
 def database_paths(directory: Path, prefix: str) -> tuple[Path, Path]:
     return (
         directory / f"{prefix}_points.txt",
@@ -217,16 +224,99 @@ def fit_harmonic(
     return coefficients
 
 
-def local_surface_indices(coordinates: np.ndarray, surface_band: float) -> np.ndarray:
+def read_counted_particle_ids(path: Path) -> np.ndarray:
+    """Read the standard MPM counted particle-set format."""
+
+    with path.open(encoding="utf-8") as stream:
+        rows = [
+            line.strip()
+            for line in stream
+            if line.strip() and not line.lstrip().startswith(("#", "!"))
+        ]
+    if not rows:
+        raise ValueError(f"Surface-reference particle set is empty: {path}")
+    declared = int(rows[0])
+    particle_ids = np.asarray([int(value) for value in rows[1:]], dtype=np.uint64)
+    if particle_ids.size != declared:
+        raise ValueError(
+            f"{path} declares {declared} particle IDs but contains "
+            f"{particle_ids.size}"
+        )
+    if np.unique(particle_ids).size != particle_ids.size:
+        raise ValueError(f"Surface-reference particle IDs are not unique: {path}")
+    return particle_ids
+
+
+def physical_surface_sample_indices(
+    points: PressurePoints,
+    surface_band: float,
+    reference_ids_path: Path | None = None,
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Return the one physical top-row sample associated with every point.
+
+    Production transforms use the immutable top-surface particle set generated
+    with the mesh.  The coordinate fallback is intentionally limited to the
+    highest point at each exact x-column and exists for small synthetic/test
+    databases only; it never treats an entire two-row free-surface band as the
+    phase reference.
+    """
+
     if surface_band <= 0.0:
         raise ValueError("surface_band must be positive")
-    vertical = coordinates[:, 1]
-    candidates = np.flatnonzero(vertical >= np.max(vertical) - surface_band)
+    coordinates = np.asarray(points.coordinates, dtype=np.float64)
+    if coordinates.ndim != 2 or coordinates.shape[1] < 2:
+        raise ValueError("Pressure points must contain at least x and y coordinates")
+
+    if reference_ids_path is not None:
+        reference_ids_path = reference_ids_path.resolve()
+        requested_ids = read_counted_particle_ids(reference_ids_path)
+        id_to_index = {
+            int(particle_id): index
+            for index, particle_id in enumerate(points.particle_ids)
+        }
+        missing = [
+            int(particle_id)
+            for particle_id in requested_ids
+            if int(particle_id) not in id_to_index
+        ]
+        if missing:
+            raise ValueError(
+                "Surface-reference particle set is not contained in the pressure "
+                f"database; first missing ID={missing[0]}"
+            )
+        candidates = np.asarray(
+            [id_to_index[int(particle_id)] for particle_id in requested_ids],
+            dtype=np.int64,
+        )
+        method = "registered_top_surface_particle_set"
+        source: dict[str, object] = {
+            "path": str(reference_ids_path),
+            "sha256": sha256(reference_ids_path),
+        }
+    else:
+        vertical = coordinates[:, 1]
+        band = np.flatnonzero(vertical >= np.max(vertical) - surface_band)
+        if band.size < 2:
+            raise ValueError("Too few surface points; increase --surface-band")
+        # Synthetic/test databases use exact x-columns.  Retaining only the
+        # maximum y for each column prevents the old two-row ambiguity.
+        by_x: dict[float, int] = {}
+        for index in band:
+            x = float(coordinates[index, 0])
+            current = by_x.get(x)
+            if current is None or coordinates[index, 1] > coordinates[current, 1]:
+                by_x[x] = int(index)
+        candidates = np.asarray(list(by_x.values()), dtype=np.int64)
+        method = "highest_point_per_exact_x_column_fallback"
+        source = {"path": None, "sha256": None}
+
     if candidates.size < 2:
-        raise ValueError("Too few surface points; increase --surface-band")
-    order = np.argsort(coordinates[candidates, 0])
+        raise ValueError("Too few physical top-row reference points")
+    order = np.argsort(coordinates[candidates, 0], kind="stable")
     candidates = candidates[order]
     candidate_x = coordinates[candidates, 0]
+    if np.any(np.diff(candidate_x) <= 0.0):
+        raise ValueError("Physical top-row reference points must have unique x values")
     target_x = coordinates[:, 0]
     right = np.searchsorted(candidate_x, target_x, side="left")
     right = np.clip(right, 0, len(candidates) - 1)
@@ -234,7 +324,30 @@ def local_surface_indices(coordinates: np.ndarray, surface_band: float) -> np.nd
     choose_right = np.abs(candidate_x[right] - target_x) < np.abs(
         candidate_x[left] - target_x
     )
-    return np.where(choose_right, candidates[right], candidates[left])
+    mapped = np.where(choose_right, candidates[right], candidates[left])
+    reference_ids = points.particle_ids[candidates]
+    audit: dict[str, object] = {
+        "method": method,
+        "source": source,
+        "reference_particle_count": int(reference_ids.size),
+        "reference_particle_ids": [int(value) for value in reference_ids],
+        "reference_particle_ids_sha256": particle_ids_sha256(reference_ids),
+        "reference_y_min_m": float(np.min(coordinates[candidates, 1])),
+        "reference_y_max_m": float(np.max(coordinates[candidates, 1])),
+    }
+    return mapped, audit
+
+
+def local_surface_indices(coordinates: np.ndarray, surface_band: float) -> np.ndarray:
+    """Compatibility wrapper using the highest point in each exact x-column."""
+
+    coordinates = np.asarray(coordinates, dtype=np.float64)
+    points = PressurePoints(
+        particle_ids=np.arange(len(coordinates), dtype=np.uint64),
+        coordinates=coordinates,
+    )
+    indices, _ = physical_surface_sample_indices(points, surface_band)
+    return indices
 
 
 def rotated_coefficients(
@@ -289,6 +402,7 @@ def transform_database(
     ramp_time: float,
     surface_band: float,
     minimum_reference_amplitude: float,
+    surface_reference_ids: Path | None = None,
 ) -> Path:
     source_points, source_values = database_paths(source_directory, source_prefix)
     output_points, output_values = database_paths(output_directory, output_prefix)
@@ -306,7 +420,9 @@ def transform_database(
     coefficients = fit_harmonic(
         source_values, header, period, fit_start, fit_end
     )
-    surface_indices = local_surface_indices(points.coordinates, surface_band)
+    surface_indices, surface_reference = physical_surface_sample_indices(
+        points, surface_band, surface_reference_ids
+    )
     rotated, qa = rotated_coefficients(
         coefficients, surface_indices, minimum_reference_amplitude
     )
@@ -372,6 +488,7 @@ def transform_database(
             "ramp_time_s": ramp_time,
             "surface_band_m": surface_band,
             "minimum_reference_amplitude_pa": minimum_reference_amplitude,
+            "surface_reference": surface_reference,
             "description": (
                 "rotate each point's fundamental liquid/gas pressure component "
                 "to its local surface phase; retain mean, amplitude, residuals, "
@@ -398,6 +515,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fit-end", type=float, default=7.8)
     parser.add_argument("--ramp-time", type=float, default=1.3)
     parser.add_argument("--surface-band", type=float, default=0.015)
+    parser.add_argument(
+        "--surface-reference-ids",
+        type=Path,
+        default=Path(__file__).resolve().parent
+        / "top_surface_traction_particle_id.txt",
+        help=(
+            "counted immutable particle set defining the one physical seabed "
+            "top row"
+        ),
+    )
     parser.add_argument("--minimum-reference-amplitude", type=float, default=1.0)
     return parser
 
@@ -415,6 +542,7 @@ def main() -> int:
         ramp_time=args.ramp_time,
         surface_band=args.surface_band,
         minimum_reference_amplitude=args.minimum_reference_amplitude,
+        surface_reference_ids=args.surface_reference_ids,
     )
     print(f"Wrote phase-erased database and audit metadata: {metadata}")
     return 0

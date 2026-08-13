@@ -38,9 +38,13 @@ explicit time-step bound.  A checkpoint is accepted only if all particles
 remain in the domain, all fields are finite, `max|v| <= 10^-3 m/s`, maximum
 displacement is below one background cell and porosity is valid.  SANISAND
 restores this checkpoint directly.  The zero-cohesion Mohr--Coulomb cases pass
-through an additional 4 s fixed-pipe, pure-PIC, damped MC relaxation and the
-same unchanged stability gate before dynamic loading.  This MC_EQ stage is a
-numerical handoff and is not interpreted as a comparison result.
+through an attempted 4 s fixed-pipe, pure-PIC, damped MC relaxation and the
+same unchanged stability gate before dynamic loading.  In the screen study the
+zero-cohesion material yielded immediately over a large part of the restored
+pipe-adjacent elastic stress field and MC_EQ ejected particles at 3.4576 s;
+it therefore failed rather than being accepted as a dynamic checkpoint.  This
+failed MC_EQ stage is a numerical handoff diagnostic, not a comparison result,
+and HM/RM results are not reported.
 
 ### 7.5.1 A phase-only test of the hydraulic trigger
 
@@ -125,44 +129,28 @@ SANISAND critical-state slope `Mc=1.25`.  Its constant elastic tangent is
 locally matched to the implemented SANISAND tangent at `p'=3 kPa` and
 `n=0.485`; this removes a first-order stiffness bias but does not make the
 models equivalent because SANISAND remains pressure and state dependent.
-Because RM passes through MC_EQ while RL restores the elastic checkpoint
-directly, the crown, shoulder and invert first-frame `p'` and `q` values must
-also agree within the pre-registered 5% tolerance.  If this audit fails, the
-comparison includes an initial-state/handoff-path difference and cannot be
-presented as a clean constitutive isolation.
+Because an admissible RM would have to pass through MC_EQ while RL restores the
+elastic checkpoint directly, the crown, shoulder and invert first-frame `p'`
+and `q` values would also have to agree within the pre-registered 5% tolerance.
+Here MC_EQ failed the preceding unchanged equilibrium gate, so no RM dynamic
+case or clean field-scale constitutive isolation is available.
 
-Figure 9 should compare representative crown, shoulder and invert `q-p'` paths,
-not only final pipe motion.  SANISAND additionally reports accumulated
-equivalent plastic strain `eps_p_q`, void-ratio/state evolution and the cyclic
-stress path, whereas the Mohr--Coulomb comparison reports `pdstrain`.  The
-matched-pressure results are
-`{{RL_SUPPORT_RSIGMA_AREA_TIME_M2S}} m2 s` and
-`{{RM_SUPPORT_RSIGMA_AREA_TIME_M2S}} m2 s` for the support-zone stress-loss
-area--time, with maximum `|uy|/D` of `{{RL_MAX_UY_OVER_D}}` and
-`{{RM_MAX_UY_OVER_D}}`, respectively.
+The SANISAND histories should still show representative crown, shoulder and
+invert `q-p'` paths, accumulated equivalent plastic strain `eps_p_q`,
+void-ratio/state evolution and cyclic stress paths.  Those resolved state and
+fabric mechanisms are an advantage over perfect-plastic Mohr--Coulomb in model
+capability.  However, because MC_EQ did not produce an admissible starting
+state, this screen cannot establish a matched-pressure field-response advantage
+or greater predictive accuracy relative to Mohr--Coulomb.
 
-- If `sanisand_mechanistic_advantage_supported=true`: Under the same external
-  pressure history, the SANISAND state variables evolve cyclically and the
-  stress-loss and/or engineering path differs materially from Mohr--Coulomb.
-  The advantage demonstrated here is the ability to resolve contraction,
-  pressure-dependent stiffness, fabric/state memory and cyclic mobility that a
-  perfect-plastic Mohr--Coulomb model cannot represent.  It is not a claim that
-  SANISAND must always predict a larger final displacement.
-- If the SANISAND state evolves but the field response is not materially
-  separated: The calculation demonstrates additional resolved mechanisms but
-  not a material engineering consequence for this loading duration.  Do not
-  describe model complexity alone as predictive superiority.
-- If neither state evolution nor response separation is resolved: The field
-  comparison is inconclusive; retain the single-material-point preflight and
-  avoid a superiority claim.
-- If `initial_state_QA.passed=false`: Describe RL--RM as a comparison of the
-  complete SANISAND and MC handoff/model chains.  Do not attribute the response
-  difference uniquely to cyclic constitutive evolution.
-
-Strictly, this numerical ablation demonstrates a *mechanistic modelling
-advantage*.  A claim of greater predictive accuracy would require independent
-cyclic laboratory or field response data for the same soil state, which are not
-available in this case study.
+The permitted conclusion is consequently limited to a *mechanistic modelling
+capability*: SANISAND resolves pressure-dependent stiffness, contraction,
+fabric/state memory and cyclic mobility, and its state variables can be checked
+against the evolving `q-p'` paths.  A field-response superiority claim is not
+made because the pre-registered matched-pressure MC chain never reached an
+admissible initial state.  Greater predictive accuracy would additionally
+require independent cyclic laboratory or field response data for the same soil
+state, which are not available in this case study.
 
 ### 7.5.4 Implications and limitations
 
@@ -177,13 +165,14 @@ labelled a one-way numerical counterfactual.
 Subject to the result gates above, the case study advances the hydraulic result
 of Sections 7.1--7.4 in two steps.  First, matching amplitude while removing the
 subsurface phase delay tests whether phase lag itself increases the critical
-upward gradient and realised effective-stress loss.  Second, matching the
-lagged pressure history across two constitutive models tests whether cyclic
-state evolution changes the post-trigger path.  This design supports a more
-specific conclusion than either a saturation sweep or a final-displacement
-comparison alone: phase lag can change *when and where* hydraulic forcing
-becomes critical, while the constitutive model controls how that trigger is
-converted into stress loss, cyclic accumulation and pipeline migration.
+upward gradient and realised effective-stress loss.  Second, the attempted
+matched-pressure constitutive chain exposes whether the simpler material can
+provide an admissible initial state before any response comparison is
+interpreted.  Here it could not.  The successful phase-only design can
+therefore support a more specific hydraulic conclusion than either a
+saturation sweep or a final-displacement comparison alone, while the SANISAND
+histories document how the accepted cyclic model converts that trigger into
+stress loss, state accumulation and pipeline migration.
 
 ## Figure/caption text to use
 
@@ -205,14 +194,15 @@ soil displacement/contact state and pipeline `uy/D`.  The primary thresholds
 are `IF >= 1` and `R_sigma <= 0.05`; `ru` is diagnostic only.  RE is a one-way
 numerical counterfactual, not a fully coupled physical prediction.
 
-### Figure 9 -- constitutive and large-deformation response
+### Figure 9 -- SANISAND cyclic state and handoff audit
 
-Matched-pressure RL (SANISAND) and RM (Mohr--Coulomb) histories: representative
-`q-p'` paths, `eps_p_q`/`pdstrain`, support-zone stress-loss area, cyclic pipe
-uplift/rotation and contacts.  Soil `max|u|/h` and `fraction(|u| >= h)` document
-background-grid crossing and are not interpreted as strain.  SANISAND's
-advantage is assessed from cyclic path/state evolution and its observed
-response consequence, not from an assumed ordering of final displacement.
+Representative RL crown/shoulder/invert `q-p'` paths and `eps_p_q`/void-ratio
+histories, accompanied by the spatial MC admissibility audit of the restored
+elastic stress field and the documented MC_EQ failure.  Soil `max|u|/h` and
+`fraction(|u| >= h)` document background-grid crossing and are not interpreted
+as strain.  The figure demonstrates SANISAND's resolved cyclic mechanisms and
+why a matched MC response claim was withheld; it does not infer predictive
+superiority from the failed handoff.
 
 ## Placeholder source map
 

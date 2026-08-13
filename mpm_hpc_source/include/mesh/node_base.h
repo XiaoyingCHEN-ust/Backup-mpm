@@ -196,6 +196,9 @@ public:
   // Compute velocity from the momentum
   virtual void compute_velocity(double dt) = 0;
 
+  //! Set the minimum supported solid density for nodal momentum updates
+  virtual void assign_minimum_nodal_density(double density) noexcept = 0;
+
   // Compute nodal temperature from heat
   virtual void compute_temperature(unsigned phase) = 0;
 

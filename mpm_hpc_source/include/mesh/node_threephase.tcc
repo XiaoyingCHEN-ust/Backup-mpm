@@ -81,6 +81,15 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
   double tolerance = 1.0E-15;
   try {
 
+    if (minimum_nodal_density_ > 0. && volume_(soil_skeleton) > tolerance &&
+        mass_(soil_skeleton) / volume_(soil_skeleton) <
+            minimum_nodal_density_) {
+      velocity_.setZero();
+      acceleration_.setZero();
+      this->apply_velocity_constraints();
+      return true;
+    }
+
     // Compute liquid drag force
     this->drag_force_liquid_ = drag_force_coefficient_(pore_fluid) * (
         velocity_.col(pore_fluid) - velocity_.col(soil_skeleton));
@@ -141,7 +150,14 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
         M_matrix(2, 1) = 0;
         M_matrix(2, 2) = this->mass_(pore_gas) + dt * drag_force_coefficient_(pore_gas);
 
-        this->acceleration_ =  F_matrix * (M_matrix.transpose()).inverse();
+        const auto mass_solver = M_matrix.fullPivLu();
+        const double reciprocal_condition = mass_solver.rcond();
+        if (!mass_solver.isInvertible() ||
+            !std::isfinite(reciprocal_condition))
+          throw std::runtime_error(
+              "Three-phase nodal mass matrix is singular or non-finite");
+        this->acceleration_ =
+            mass_solver.solve(F_matrix.transpose()).transpose();
 
       }
       else if ((mass_(pore_fluid) > tolerance)) {
@@ -157,7 +173,14 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
         M_matrix(2, 2) = 1;
         F_matrix.col(pore_gas).setZero();
 
-        this->acceleration_ =  F_matrix * (M_matrix.transpose()).inverse();
+        const auto mass_solver = M_matrix.fullPivLu();
+        const double reciprocal_condition = mass_solver.rcond();
+        if (!mass_solver.isInvertible() ||
+            !std::isfinite(reciprocal_condition))
+          throw std::runtime_error(
+              "Liquid-solid nodal mass matrix is singular or non-finite");
+        this->acceleration_ =
+            mass_solver.solve(F_matrix.transpose()).transpose();
       }
       else {
         M_matrix(0, 0) = this->mass_(soil_skeleton);
@@ -172,7 +195,14 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
         F_matrix.col(pore_fluid).setZero();
         F_matrix.col(pore_gas).setZero();
 
-        this->acceleration_ =  F_matrix * (M_matrix.transpose()).inverse();
+        const auto mass_solver = M_matrix.fullPivLu();
+        const double reciprocal_condition = mass_solver.rcond();
+        if (!mass_solver.isInvertible() ||
+            !std::isfinite(reciprocal_condition))
+          throw std::runtime_error(
+              "Solid nodal mass matrix is singular or non-finite");
+        this->acceleration_ =
+            mass_solver.solve(F_matrix.transpose()).transpose();
       }
 
       // Apply friction constraints
@@ -198,12 +228,16 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
                             this->internal_force_.col(mixture));
       }
 
-      // if (this->free_surface_) {
-      //   if (Tnphases == 3) {
-      //     velocity_.col(2) == velocity_.col(0);
-      //     velocity_.col(1) == velocity_.col(0);
-      //   }
-      // }
+      if (!this->acceleration_.allFinite()) {
+        std::ostringstream message;
+        message << "Non-finite three-phase nodal acceleration at node "
+                << id_ << ", coordinates=(" << coordinates_.transpose()
+                << "), mass=" << mass_ << ", drag="
+                << drag_force_coefficient_ << ", force=" << F_matrix
+                << ", matrix=" << M_matrix << ", acceleration="
+                << acceleration_;
+        throw std::runtime_error(message.str());
+      }
 
       tolerance = 1E-15;
       // Set a threshold
@@ -239,8 +273,8 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
   // }
 
   } catch (std::exception& exception) {
-    console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
-    status = false;
+    throw std::runtime_error("Three-phase nodal update failed at node " +
+                             std::to_string(id_) + ": " + exception.what());
   }
   return status;
 }

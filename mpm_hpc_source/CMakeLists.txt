@@ -294,4 +294,15 @@ if(MPM_BUILD_TESTING)
   add_executable(rigid_pipeline2d_test
     ${mpm_SOURCE_DIR}/tests/pipeline/rigid_pipeline2d_test.cc)
   add_test(NAME rigid_pipeline2d_test COMMAND rigid_pipeline2d_test)
+
+  add_executable(free_surface_node_test
+    ${mpm_SOURCE_DIR}/tests/mesh/free_surface_node_test.cc
+    ${mpm_SOURCE_DIR}/src/affine_transform.cc)
+  add_test(NAME free_surface_node_test COMMAND free_surface_node_test)
+
+  add_executable(seabed_pressure_boundary_test
+    ${mpm_SOURCE_DIR}/tests/particles/seabed_pressure_boundary_test.cc)
+  add_test(NAME seabed_pressure_boundary_test
+    COMMAND seabed_pressure_boundary_test)
+
 endif()

@@ -8,11 +8,14 @@ cd "${case_dir}"
 group=${1:?Usage: run_phase_control.sh screen_or_production_group fit_end_s}
 fit_end=${2:?Usage: run_phase_control.sh group fit_end_s}
 
-module load miniconda3/24.3.0-quc3pyu
-eval "$(conda shell.bash hook)"
-conda activate cbgeo_tbb
+if [[ "${PIPELINE_LOCAL:-0}" != "1" ]]; then
+  module load miniconda3/24.3.0-quc3pyu
+  eval "$(conda shell.bash hook)"
+  conda activate cbgeo_tbb
+fi
+python_bin=${PYTHON_BIN:-python3}
 
-python phase_controls.py \
+"${python_bin}" phase_controls.py \
   --source-dir "pressure_databases/${group}/lagged" \
   --source-prefix pressure \
   --output-dir "pressure_databases/${group}/phase_erased" \
@@ -22,4 +25,4 @@ python phase_controls.py \
   --fit-end "${fit_end}" \
   --ramp-time 1.3
 
-python validate_case.py "configs/${group}/04_RE.json" --runtime
+"${python_bin}" validate_case.py "configs/${group}/04_RE.json" --runtime

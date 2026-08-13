@@ -1,5 +1,70 @@
 namespace mpm::sanisand::detail {
 
+//! Double contraction of symmetric stress-like tensors stored as
+//! [xx, yy, zz, yz, xz, xy]. The shear entries are physical tensor
+//! components, so each appears twice in A:B.
+inline double stress_double_contraction(
+    const Eigen::Matrix<double, 6, 1>& first,
+    const Eigen::Matrix<double, 6, 1>& second) {
+  return first.head<3>().dot(second.head<3>()) +
+         2. * first.tail<3>().dot(second.tail<3>());
+}
+
+inline double stress_norm(const Eigen::Matrix<double, 6, 1>& tensor) {
+  return std::sqrt(
+      std::max(0., stress_double_contraction(tensor, tensor)));
+}
+
+//! Norm of a vector that is dual to a physical stress-like Voigt vector.
+//! If g = [n_xx, n_yy, n_zz, 2 n_yz, 2 n_xz, 2 n_xy], this recovers
+//! sqrt(n:n), so the loading cosine is independent of the chosen axes.
+inline double stress_dual_norm(
+    const Eigen::Matrix<double, 6, 1>& dual_tensor) {
+  const double norm_squared = dual_tensor.head<3>().squaredNorm() +
+                              0.5 * dual_tensor.tail<3>().squaredNorm();
+  return std::sqrt(std::max(0., norm_squared));
+}
+
+inline Eigen::Matrix3d stress_matrix(
+    const Eigen::Matrix<double, 6, 1>& tensor) {
+  Eigen::Matrix3d matrix;
+  matrix << tensor[0], tensor[5], tensor[4], tensor[5], tensor[1], tensor[3],
+      tensor[4], tensor[3], tensor[2];
+  return matrix;
+}
+
+//! For a unit deviatoric direction n, sqrt(6) tr(n^3) is the Lode-angle
+//! invariant used by the SANISAND interpolation functions.
+inline double lode_cosine(
+    const Eigen::Matrix<double, 6, 1>& unit_deviator) {
+  const Eigen::Matrix3d matrix = stress_matrix(unit_deviator);
+  return std::clamp(std::sqrt(6.) * (matrix * matrix * matrix).trace(), -1.,
+                    1.);
+}
+
+//! Convert a physical symmetric tensor direction to the vector gradient that
+//! is work-conjugate to [sigma_xx, sigma_yy, sigma_zz, tau_yz, tau_xz,
+//! tau_xy]. Its shear entries are doubled because dF = gradient . dSigma.
+inline Eigen::Matrix<double, 6, 1> stress_direction_to_dual(
+    Eigen::Matrix<double, 6, 1> direction) {
+  direction.tail<3>() *= 2.;
+  return direction;
+}
+
+//! Direction of the pressure-scaled yield gradient for
+//! f = ||s/p - alpha|| - sqrt(2/3) m.  The projection is n:r (not n:alpha)
+//! when m is finite, and the returned vector is dual to the stress-like
+//! Voigt storage.
+inline Eigen::Matrix<double, 6, 1> yield_direction(
+    const Eigen::Matrix<double, 6, 1>& stress_ratio,
+    const Eigen::Matrix<double, 6, 1>& unit_normal) {
+  auto direction = unit_normal;
+  const double projection =
+      stress_double_contraction(unit_normal, stress_ratio);
+  direction.head<3>().array() -= projection / 3.;
+  return stress_direction_to_dual(direction);
+}
+
 inline double equivalent_plastic_deviatoric_strain(
     const Eigen::Matrix<double, 6, 1>& plastic_strain) {
   auto deviatoric = plastic_strain;
@@ -70,6 +135,14 @@ mpm::Sanisand<Tdim>::Sanisand(unsigned id, const Json& material_properties)
   cz_ = require_positive(material_properties, "cz");
   zmax_ = require_positive(material_properties, "zmax");
   m_iso_ = require_finite(material_properties, "m_iso");
+  if (m_iso_ < 0.)
+    throw std::invalid_argument(
+        "SANISAND parameter 'm_iso' must be nonnegative");
+  if (m_iso_ == 0. &&
+      material_properties.value("resume_state_policy", std::string()) ==
+          "reinitialize_from_particle")
+    throw std::invalid_argument(
+        "SANISAND cross-model handoff requires a positive m_iso");
   patm_ = require_positive(material_properties, "Patm");
   p_min_ = require_positive(material_properties, "P_min");
   stol_ = require_positive(material_properties, "STOL");
@@ -116,10 +189,55 @@ mpm::dense_map mpm::Sanisand<Tdim>::initialise_state_variables_from_particle(
 }
 
 template <unsigned Tdim>
+mpm::dense_map mpm::Sanisand<Tdim>::initialise_state_variables_from_particle(
+    double porosity, const Vector6d& stress) {
+  auto state_vars = this->initialise_state_variables_from_particle(porosity);
+  if (!stress.allFinite())
+    throw std::invalid_argument("SANISAND restored stress must be finite");
+
+  // A SANISAND stress state lies on
+  //   ||s/p - alpha|| = sqrt(2/3) m.
+  // Cross-model checkpoints carry stress and porosity but no SANISAND
+  // history. Centre the initial yield surface on the restored stress-ratio
+  // point, retaining alpha=0 when that point is already inside the initial
+  // cone. Starting every anisotropic K0 state with alpha=0 violates the yield
+  // equation and creates a spurious plastic impulse during the first handoff
+  // increments.
+  const Vector6d internal_stress = to_internal(stress);
+  const double raw_mean_stress = internal_stress.head<3>().sum() / 3.;
+  if (raw_mean_stress < p_min_ ||
+      !is_strictly_compressive(internal_stress))
+    return state_vars;
+
+  Vector6d deviator = internal_stress;
+  deviator.head<3>().array() -= raw_mean_stress;
+  const Vector6d stress_ratio = deviator / raw_mean_stress;
+  const double ratio_norm = sanisand::detail::stress_norm(stress_ratio);
+  const double yield_radius = std::sqrt(2. / 3.) * m_iso_;
+  // A zero-radius surface is retained for reproducing legacy SANISAND
+  // calibrations.  It has no unique normal at r == alpha, so an anisotropic
+  // cross-model handoff cannot be centred safely in this limiting case.
+  if (yield_radius == 0.) return state_vars;
+  if (ratio_norm <= yield_radius) return state_vars;
+
+  const Vector6d normal = stress_ratio / ratio_norm;
+  const Vector6d alpha = stress_ratio - yield_radius * normal;
+  const char* alpha_names[6] = {"AlphaXX", "AlphaYY", "AlphaZZ",
+                                "AlphaZY", "AlphaZX", "AlphaXY"};
+  const char* alpha_initial_names[6] = {
+      "AlphaInitialXX", "AlphaInitialYY", "AlphaInitialZZ",
+      "AlphaInitialZY", "AlphaInitialZX", "AlphaInitialXY"};
+  for (unsigned i = 0; i < 6; ++i) {
+    state_vars.at(alpha_names[i]) = alpha[i];
+    state_vars.at(alpha_initial_names[i]) = alpha[i];
+  }
+  return state_vars;
+}
+
+template <unsigned Tdim>
 typename mpm::Sanisand<Tdim>::Vector6d mpm::Sanisand<Tdim>::compute_stress(
     const Vector6d& stress, const Vector6d& dstrain,
     const ParticleBase<Tdim>* ptr, mpm::dense_map* state_vars) {
-  static_cast<void>(ptr);
   if (state_vars == nullptr || state_vars->size() != 20)
     throw std::invalid_argument("SANISAND requires twenty state variables");
 
@@ -128,13 +246,23 @@ typename mpm::Sanisand<Tdim>::Vector6d mpm::Sanisand<Tdim>::compute_stress(
   const Vector6d internal_dstrain = to_internal(dstrain);
 
   try {
+    if (!dstrain.allFinite())
+      throw std::runtime_error(
+          "SANISAND received a non-finite strain increment");
     const auto result = integrate(internal_stress, internal_dstrain, old_state);
     if (!result.stress.allFinite() || !is_finite(result.state))
       throw std::runtime_error("SANISAND integration produced non-finite state");
     pack_state(result.state, state_vars);
     return to_mpm(result.stress);
   } catch (const std::exception& exception) {
-    console_->error("SANISAND integration failed: {}", exception.what());
+    console_->error(
+        "SANISAND integration failed for particle {}: {}; "
+        "stress=[{},{},{},{},{},{}], dstrain=[{},{},{},{},{},{}], "
+        "void_ratio={}, eps_p_q={}",
+        ptr != nullptr ? ptr->id() : std::numeric_limits<Index>::max(),
+        exception.what(), stress[0], stress[1], stress[2], stress[3], stress[4],
+        stress[5], dstrain[0], dstrain[1], dstrain[2], dstrain[3], dstrain[4],
+        dstrain[5], old_state.void_ratio, old_state.eps_p_q);
     throw;
   }
 }
@@ -225,11 +353,8 @@ mpm::Sanisand<Tdim>::compute_invariants(const Vector6d& stress,
                      result.deviator[4] * result.deviator[4] +
                      result.deviator[5] * result.deviator[5]));
 
-  Eigen::Matrix3d deviator_matrix;
-  deviator_matrix << result.deviator[0], result.deviator[5],
-      result.deviator[4], result.deviator[5], result.deviator[1],
-      result.deviator[3], result.deviator[4], result.deviator[3],
-      result.deviator[2];
+  const Eigen::Matrix3d deviator_matrix =
+      sanisand::detail::stress_matrix(result.deviator);
   result.j3 = deviator_matrix.determinant();
   if (std::abs(result.j3) < tiny) result.j3 = 0.;
 
@@ -248,7 +373,7 @@ mpm::Sanisand<Tdim>::compute_invariants(const Vector6d& stress,
 
   result.stress_ratio = result.deviator / result.mean_stress;
   result.normal = result.stress_ratio - alpha;
-  const double normal_norm = result.normal.norm();
+  const double normal_norm = sanisand::detail::stress_norm(result.normal);
   if (result.j2 <= tiny && normal_norm < tiny) {
     result.normal << 1. / 3., 1. / 3., 1. / 3., 0., 0., 0.;
   } else if (normal_norm > tiny) {
@@ -257,11 +382,7 @@ mpm::Sanisand<Tdim>::compute_invariants(const Vector6d& stress,
     throw std::runtime_error("SANISAND yield normal is undefined");
   }
 
-  result.cos_three_theta =
-      std::sqrt(6.) *
-      (std::pow(result.normal[0], 3.) + std::pow(result.normal[1], 3.) +
-       std::pow(result.normal[2], 3.));
-  result.cos_three_theta = std::clamp(result.cos_three_theta, -1., 1.);
+  result.cos_three_theta = sanisand::detail::lode_cosine(result.normal);
   return result;
 }
 
@@ -318,10 +439,10 @@ typename mpm::Sanisand<Tdim>::Vector6d
 mpm::Sanisand<Tdim>::yield_gradient(const Vector6d& stress,
                                     const Vector6d& alpha) const {
   const auto invariants = compute_invariants(stress, alpha);
-  Vector6d gradient = invariants.normal;
-  const double projection = invariants.normal.dot(alpha);
-  for (unsigned i = 0; i < 3; ++i) gradient[i] -= projection / 3.;
-  return gradient;
+  // df/dsigma is proportional to n - (n:r) I/3 for
+  // f=||r-alpha||-sqrt(2/3)m. Using n:alpha omits the finite yield radius.
+  return sanisand::detail::yield_direction(invariants.stress_ratio,
+                                           invariants.normal);
 }
 
 template <unsigned Tdim>
@@ -351,19 +472,22 @@ mpm::Sanisand<Tdim>::plastic_gradient(const Vector6d& stress,
   const double g = std::pow(2. * c4 / denominator, 0.25);
   const double state_parameter =
       (specific_volume - 1.) - critical_void_ratio(invariants.mean_stress);
-  const double alpha_d = g * Mc_ * std::exp(n_d_ * state_parameter);
+  const double alpha_d =
+      g * Mc_ * std::exp(n_d_ * state_parameter) - m_iso_;
   const Vector6d alpha_d_tensor =
       std::sqrt(2. / 3.) * alpha_d * invariants.normal;
-  const double fabric_projection = fabric.dot(invariants.normal);
+  const double fabric_projection =
+      sanisand::detail::stress_double_contraction(fabric, invariants.normal);
   const double amplitude =
       A0_ * (1. + std::max(std::sqrt(3. / 2.) * fabric_projection, 0.));
   double dilatancy =
-      amplitude * invariants.normal.dot(alpha_d_tensor - alpha);
+      amplitude * sanisand::detail::stress_double_contraction(
+                      invariants.normal, alpha_d_tensor - alpha);
   dilatancy *= std::sqrt(3. / 2.);
 
   Vector6d gradient = invariants.normal;
   for (unsigned i = 0; i < 3; ++i) gradient[i] += dilatancy / 3.;
-  return gradient;
+  return sanisand::detail::stress_direction_to_dual(gradient);
 }
 
 template <unsigned Tdim>
@@ -384,7 +508,7 @@ mpm::Sanisand<Tdim>::plastic_modulus(
   const double state_parameter =
       void_ratio - critical_void_ratio(invariants.mean_stress);
   const double alpha_b =
-      g * Mc_ * std::max(std::exp(-n_b_ * state_parameter), 0.);
+      g * Mc_ * std::max(std::exp(-n_b_ * state_parameter), 0.) - m_iso_;
   const Vector6d alpha_b_tensor =
       std::sqrt(2. / 3.) * alpha_b * invariants.normal;
   const Vector6d bounding_direction = alpha_b_tensor - alpha;
@@ -392,10 +516,13 @@ mpm::Sanisand<Tdim>::plastic_modulus(
       G0_ * h0_ * std::max(1. - ch_ * void_ratio, 1.E-9) *
       std::pow(invariants.mean_stress / patm_, -0.5);
   const double distance =
-      std::max(tiny, (alpha - alpha_initial).dot(invariants.normal));
+      std::max(tiny, sanisand::detail::stress_double_contraction(
+                         alpha - alpha_initial, invariants.normal));
   const Vector6d alpha_rate = reference / distance * bounding_direction;
   const double hardening =
-      2. / 3. * invariants.mean_stress * alpha_rate.dot(invariants.normal);
+      2. / 3. * invariants.mean_stress *
+      sanisand::detail::stress_double_contraction(alpha_rate,
+                                                   invariants.normal);
   return {2. / 3. * alpha_rate, hardening};
 }
 
@@ -417,8 +544,9 @@ mpm::Sanisand<Tdim>::compute_increment(
   if (!std::isfinite(denominator) || std::abs(denominator) < tiny)
     throw std::runtime_error("SANISAND consistency denominator is singular");
 
-  const double yield_norm = yield.norm();
-  const double increment_norm = elastic_stress_increment.norm();
+  const double yield_norm = sanisand::detail::stress_dual_norm(yield);
+  const double increment_norm =
+      sanisand::detail::stress_norm(elastic_stress_increment);
   double plastic_multiplier = 0.;
   if (yield_norm > tiny && increment_norm > tiny) {
     const double cosine =
@@ -458,7 +586,8 @@ void mpm::Sanisand<Tdim>::update_alpha_initial(Vector6d* alpha_initial,
                                                const Vector6d& stress,
                                                const Vector6d& alpha) const {
   const auto invariants = compute_invariants(stress, alpha);
-  if (invariants.normal.dot(alpha - *alpha_initial) < 0.)
+  if (sanisand::detail::stress_double_contraction(
+          invariants.normal, alpha - *alpha_initial) < 0.)
     *alpha_initial = alpha;
 }
 
@@ -477,13 +606,14 @@ double mpm::Sanisand<Tdim>::relative_error(
   const double fabric_max =
       (increment1.fabric - increment2.fabric).cwiseAbs().maxCoeff() /
       (fabric2.cwiseAbs().maxCoeff() + tiny);
-  const double stress_l2 =
-      (stress2 - stress1).norm() / (stress2.norm() + 1.);
+  const double stress_l2 = sanisand::detail::stress_norm(stress2 - stress1) /
+                           (sanisand::detail::stress_norm(stress2) + 1.);
   const double fabric_l2 =
-      (increment1.fabric - increment2.fabric).norm() /
-      (fabric2.norm() + 1.);
+      sanisand::detail::stress_norm(increment1.fabric - increment2.fabric) /
+      (sanisand::detail::stress_norm(fabric2) + 1.);
+  const double stress_norm = sanisand::detail::stress_norm(stress2);
   const double epsilon =
-      tiny * stress2.squaredNorm() / (stress2.squaredNorm() + 1.);
+      tiny * stress_norm * stress_norm / (stress_norm * stress_norm + 1.);
   return std::max({epsilon, stress_max, alpha_max, fabric_max, stress_l2,
                    fabric_l2});
 }

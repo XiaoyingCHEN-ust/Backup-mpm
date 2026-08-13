@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -166,6 +168,180 @@ class StudyAnalysisTest(unittest.TestCase):
             metrics["resolved_duration_anywhere_lower_bound_s"], 2.0
         )
 
+    def test_release_segments_and_particle_level_trigger_ordering(self):
+        times = np.asarray([0.0, 1.0, 2.0, 3.0])
+        seepage = np.asarray(
+            [
+                [True, False, False, False],
+                [False, True, False, False],
+                [False, False, True, False],
+                [False, False, False, False],
+            ]
+        )
+        stress = np.asarray(
+            [
+                [False, False, False, False],
+                [True, True, True, False],
+                [True, True, True, True],
+                [False, False, False, False],
+            ]
+        )
+        timing = analysis.trigger_to_stress_loss_timing(
+            times, seepage, stress, wave_period=1.0
+        )
+        self.assertEqual(timing["stress_loss_particles"], 4)
+        self.assertEqual(timing["stress_loss_particles_IF_first"], 1)
+        self.assertEqual(timing["stress_loss_particles_simultaneous_first"], 1)
+        self.assertEqual(timing["stress_loss_particles_stress_first"], 1)
+        self.assertEqual(timing["stress_loss_particles_without_IF"], 1)
+        self.assertAlmostEqual(
+            timing[
+                "fraction_stress_loss_particles_with_IF_in_preceding_cycle"
+            ],
+            0.25,
+        )
+
+        segments = analysis.threshold_release_segments(
+            times,
+            seepage & stress,
+            particle_area=0.02,
+            release_time=1.5,
+        )
+        self.assertEqual(
+            segments["release_segment_area_basis"],
+            "nominal_reference_particle_area_fallback",
+        )
+        self.assertAlmostEqual(
+            segments["pre_release_time_integrated_area_m2_s"], 0.02
+        )
+        self.assertAlmostEqual(
+            segments["post_release_time_integrated_area_m2_s"], 0.02
+        )
+
+    def test_completed_result_requires_exact_grid_and_matching_hashes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "04_RL.json"
+            config = {
+                "analysis": {"uuid": "CASE", "nsteps": 20, "dt": 0.1},
+                "post_processing": {"output_steps": 10},
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            result = root / "results" / "CASE"
+            result.mkdir(parents=True)
+            files = [result / "particle10.vtp", result / "particle20.vtp"]
+            for path in files:
+                path.write_text(f"frame-{path.stem}", encoding="utf-8")
+            final = files[-1]
+            sentinel = {
+                "schema": analysis.COMPLETION_SCHEMA,
+                "config": {
+                    "path": config_path.name,
+                    "sha256": analysis.file_sha256(config_path),
+                    "uuid": "CASE",
+                    "nsteps": 20,
+                    "validation_profile": "registered-study-v1",
+                },
+                "artifacts": {
+                    "final_vtp": {
+                        "path": str(final.relative_to(root)),
+                        "size_bytes": final.stat().st_size,
+                        "sha256": analysis.file_sha256(final),
+                    }
+                },
+                "runtime_dependencies": {},
+            }
+            (result / analysis.COMPLETION_FILENAME).write_text(
+                json.dumps(sentinel), encoding="utf-8"
+            )
+            audit = analysis.validate_completed_result(
+                config_path, root, config, result, files
+            )
+            self.assertEqual(audit["expected_particle_steps"], [10, 20])
+            self.assertEqual(audit["expected_particle_times_s"], [1.0, 2.0])
+            sentinel["config"]["validation_profile"] = "pipeline-local-smoke-v1"
+            (result / analysis.COMPLETION_FILENAME).write_text(
+                json.dumps(sentinel), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "not registered-study"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files
+                )
+            sentinel["config"]["validation_profile"] = "registered-study-v1"
+            (result / analysis.COMPLETION_FILENAME).write_text(
+                json.dumps(sentinel), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "time grid"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files[-1:]
+                )
+            final.write_text("corrupt", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "size|hash"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files
+                )
+
+    def test_RL_RE_comparison_rejects_different_time_grids(self):
+        def summary(code: str) -> dict[str, object]:
+            return {
+                "case": code,
+                "config": f"/case/04_{code}.json",
+                "analysis_dt_s": 0.1,
+                "particles": {"particle_count": 4},
+                "completion_audit": {
+                    "config_sha256": code,
+                    "expected_particle_steps": [10, 20],
+                    "expected_particle_times_s": [1.0, 2.0],
+                    "runtime_dependencies": {
+                        "resume_equilibrium": {
+                            "checkpoint_hdf5": {"sha256": "h5"},
+                            "qa_vtp": {"sha256": "vtp"},
+                        },
+                        "read_pressure_database": {
+                            "header": {
+                                "format_version": "V2",
+                                "particle_count": 4,
+                                "step_interval": 10,
+                                "max_step": 20,
+                                "source_dt_s": 0.1,
+                                "frame_count": 3,
+                            }
+                        },
+                    },
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for code, prefix in (("RL", "pressure"), ("RE", "phase_erased")):
+                config_path = root / f"04_{code}.json"
+                config_path.write_text(
+                    json.dumps(
+                        {
+                            "title": code,
+                            "analysis": {
+                                "uuid": code,
+                                "dt": 0.1,
+                                "prescribed_phase_pressures": {
+                                    "path": f"database/{code}",
+                                    "file_prefix": prefix,
+                                    "step_interval": 10,
+                                },
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            rl = summary("RL")
+            re_case = summary("RE")
+            rl["config"] = str(root / "04_RL.json")
+            re_case["config"] = str(root / "04_RE.json")
+            audit = analysis.validate_RL_RE_comparison([rl, re_case])
+            self.assertEqual(audit["particle_steps"], [10, 20])
+            re_case["completion_audit"]["expected_particle_steps"] = [10]
+            with self.assertRaisesRegex(ValueError, "particle_steps"):
+                analysis.validate_RL_RE_comparison([rl, re_case])
+
     @staticmethod
     def _frame(
         coordinates: np.ndarray,
@@ -189,6 +365,7 @@ class StudyAnalysisTest(unittest.TestCase):
             "ids": np.arange(len(reference), dtype=np.float64),
             "volumes": volumes,
             "PIC_ru": ru,
+            "PIC_pore_pressure_excess": 100.0 * ru,
             "stresses": stresses,
             "initial_vertical_effective_stresses": reference,
             "vertical_effective_stress_remaining_ratios": vertical / reference,
@@ -252,20 +429,26 @@ class StudyAnalysisTest(unittest.TestCase):
             "mesh": {"cellsize_min": 0.1},
             "materials": [
                 {"type": "SANISAND2D"},
-                {"sea_level": 0.15, "depth_left": 0.0},
+                {"sea_level": 0.15, "depth_left": 0.0, "wave_period": 1.0},
             ],
             "external_loading_conditions": {"gravity": [0.0, -10.0]},
         }
         paths = [Path(f"particle{step:07d}.vtp") for step in (0, 10, 20)]
         with patch.object(analysis, "read_vtp", side_effect=frames):
             rows, summary = analysis.particle_histories(
-                paths, config, coordinates, probes=[]
+                paths,
+                config,
+                coordinates,
+                probes=[analysis.Probe("surface", 0, 0.05, 0.05, 0.05, 0.05)],
             )
 
         stress_name = "stress_loss_Rsigma_le_0p05"
         seepage_name = "upward_seepage_IF_ge_1"
+        joint_name = "joint_IF_ge_1_and_Rsigma_le_0p05"
         self.assertAlmostEqual(rows[1][f"current_area_{stress_name}_m2"], 0.022)
         self.assertAlmostEqual(rows[1][f"current_area_{seepage_name}_m2"], 0.022)
+        self.assertAlmostEqual(rows[1][f"current_area_{joint_name}_m2"], 0.012)
+        self.assertAlmostEqual(rows[2][f"current_area_{joint_name}_m2"], 0.019)
         self.assertAlmostEqual(
             summary[f"{stress_name}_time_integrated_current_area_m2_s"], 0.038
         )
@@ -280,6 +463,16 @@ class StudyAnalysisTest(unittest.TestCase):
             summary[f"{seepage_name}_resolved_duration_anywhere_lower_bound_s"],
             2.0,
         )
+        self.assertAlmostEqual(
+            summary[f"{joint_name}_pre_release_time_integrated_area_m2_s"],
+            0.006,
+        )
+        self.assertAlmostEqual(
+            summary[f"{joint_name}_post_release_time_integrated_area_m2_s"],
+            0.0155,
+        )
+        self.assertEqual(summary["stress_loss_particles"], 3)
+        self.assertEqual(summary["stress_loss_particles_simultaneous_first"], 2)
         self.assertEqual(
             summary["stress_reference_basis"],
             "checkpoint_initial_vertical_effective_stresses",
@@ -296,6 +489,9 @@ class StudyAnalysisTest(unittest.TestCase):
         )
         self.assertAlmostEqual(summary["solver_Rsigma_QA_max_abs_difference"], 0.0)
         self.assertEqual(summary["max_ru_diagnostic"], 20.0)
+        self.assertAlmostEqual(
+            rows[1]["surface_pressure_excess_pa"], 2000.0
+        )
         self.assertNotIn("soil_max_abs_displacement_over_h", rows[0])
         self.assertAlmostEqual(rows[1]["soil_max_abs_displacement_over_h"], 2.0)
         self.assertAlmostEqual(

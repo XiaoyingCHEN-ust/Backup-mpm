@@ -16,6 +16,15 @@ __pycache__/
 /Example/*
 !/Example/slope_infiltration/
 !/Example/siemens2013_column_validation/
+!/Example/wave_phase_lag2D_pipeline_codex/
+/Example/wave_phase_lag2D_pipeline_codex/*
+!/Example/wave_phase_lag2D_pipeline_codex/run_case_local.sh
+!/Example/wave_phase_lag2D_pipeline_codex/prepare_local_smoke.py
+!/Example/wave_phase_lag2D_pipeline_codex/run_local_smoke.sh
+!/Example/wave_phase_lag2D_pipeline_codex/LINUX_5080_HANDOFF.md
+!/Example/wave_phase_lag2D_pipeline_codex/tests/
+/Example/wave_phase_lag2D_pipeline_codex/tests/*
+!/Example/wave_phase_lag2D_pipeline_codex/tests/test_local_smoke.py
 /Example/slope_infiltration/results/
 /Example/siemens2013_column_validation/results/
 /Example/siemens2013_column_validation/validation_results/

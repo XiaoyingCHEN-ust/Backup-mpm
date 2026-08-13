@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import struct
 import sys
 import tempfile
@@ -87,6 +88,46 @@ class PhaseControlTest(unittest.TestCase):
                         * transformed[1, depth, phase]
                     )
                     self.assertAlmostEqual(float(cross), 0.0, places=10)
+            audit = json.loads(metadata.read_text(encoding="utf-8"))[
+                "transform"
+            ]["surface_reference"]
+            self.assertEqual(
+                audit["method"], "highest_point_per_exact_x_column_fallback"
+            )
+            self.assertEqual(audit["reference_particle_ids"], [0, 2])
+
+    def test_registered_surface_particle_set_controls_mapping_and_is_hashed(self):
+        points = controls.PressurePoints(
+            particle_ids=np.asarray([10, 11, 20, 21], dtype=np.uint64),
+            coordinates=np.asarray(
+                [[0.0, 0.5], [0.0, 0.4], [1.0, 0.5], [1.0, 0.4]]
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            reference = Path(temporary) / "top.txt"
+            reference.write_text("2\n10\n20\n", encoding="utf-8")
+            indices, audit = controls.physical_surface_sample_indices(
+                points, 0.2, reference
+            )
+            np.testing.assert_array_equal(indices, [0, 0, 2, 2])
+            self.assertEqual(audit["method"], "registered_top_surface_particle_set")
+            self.assertEqual(audit["reference_particle_ids"], [10, 20])
+            self.assertEqual(audit["source"]["sha256"], controls.sha256(reference))
+            self.assertEqual(
+                audit["reference_particle_ids_sha256"],
+                controls.particle_ids_sha256(np.asarray([10, 20])),
+            )
+
+    def test_registered_surface_rejects_unknown_particle_id(self):
+        points = controls.PressurePoints(
+            particle_ids=np.asarray([0, 1], dtype=np.uint64),
+            coordinates=np.asarray([[0.0, 0.5], [1.0, 0.5]]),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            reference = Path(temporary) / "top.txt"
+            reference.write_text("2\n0\n9\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "first missing ID=9"):
+                controls.physical_surface_sample_indices(points, 0.01, reference)
 
     def test_rejects_incomplete_database(self):
         with tempfile.TemporaryDirectory() as temporary:

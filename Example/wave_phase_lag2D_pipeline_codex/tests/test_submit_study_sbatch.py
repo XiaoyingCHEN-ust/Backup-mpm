@@ -66,6 +66,26 @@ class SbatchWorkflowTest(unittest.TestCase):
             [key for key in queue.jobs if key != "analysis"],
         )
 
+    def test_phase_dag_excludes_failed_mohr_coulomb_branch(self):
+        args = runner.build_parser().parse_args(
+            [
+                "screen",
+                "--stage",
+                "phase",
+                "--prepare",
+                "--build",
+                "--analyze",
+                "--dry-run",
+            ]
+        )
+        queue = runner.submit_workflow(args)
+        for code in ("LS", "HS", "HD", "phase", "RL", "RE", "analysis"):
+            self.assertIn(code, queue.jobs)
+        for code in ("MC_EQ", "HM", "RM"):
+            self.assertNotIn(code, queue.jobs)
+        self.assertEqual(queue.jobs["RL"].dependency_keys, ["HD"])
+        self.assertEqual(queue.jobs["RE"].dependency_keys, ["phase"])
+
     def test_new_label_does_not_require_a_manifest_at_submit_time(self):
         args = runner.build_parser().parse_args(
             ["screen", "--label", "not_generated_yet", "--prepare", "--dry-run"]
@@ -221,6 +241,7 @@ class SbatchWorkflowTest(unittest.TestCase):
                     "sha256": runner.file_sha256(config_path),
                     "uuid": "TEST",
                     "nsteps": 10,
+                    "validation_profile": "registered-study-v1",
                 },
                 "artifacts": {
                     "final_vtp": {
@@ -234,8 +255,19 @@ class SbatchWorkflowTest(unittest.TestCase):
             (result / runner.COMPLETION_FILENAME).write_text(
                 json.dumps(sentinel), encoding="utf-8"
             )
-            with patch.object(runner, "CASE_DIR", root):
+            with patch.object(runner, "CASE_DIR", root), patch.object(
+                runner.study, "validate_config"
+            ):
                 self.assertTrue(runner.config_complete(config_path))
+                sentinel["config"]["validation_profile"] = "pipeline-local-smoke-v1"
+                (result / runner.COMPLETION_FILENAME).write_text(
+                    json.dumps(sentinel), encoding="utf-8"
+                )
+                self.assertFalse(runner.config_complete(config_path))
+                sentinel["config"]["validation_profile"] = "registered-study-v1"
+                (result / runner.COMPLETION_FILENAME).write_text(
+                    json.dumps(sentinel), encoding="utf-8"
+                )
                 final_vtp.write_text("corrupt-vtp", encoding="utf-8")
                 self.assertFalse(runner.config_complete(config_path))
 
@@ -304,7 +336,9 @@ class SbatchWorkflowTest(unittest.TestCase):
                     "sha256": runner.file_sha256(path),
                 }
 
-            with patch.object(runner, "CASE_DIR", root):
+            with patch.object(runner, "CASE_DIR", root), patch.object(
+                runner.study, "validate_config"
+            ):
                 pressure_header = runner.pressure_database_header(values)
                 sentinel = {
                     "schema": runner.COMPLETION_SCHEMA,
@@ -313,6 +347,7 @@ class SbatchWorkflowTest(unittest.TestCase):
                         "sha256": runner.file_sha256(config_path),
                         "uuid": "DYNAMIC",
                         "nsteps": 10,
+                        "validation_profile": "registered-study-v1",
                     },
                     "artifacts": {
                         "final_vtp": audit(

@@ -53,6 +53,29 @@ TEST_CASE("Mohr-Coulomb handoff rejects invalid restored porosity") {
       std::numeric_limits<double>::quiet_NaN()));
 }
 
+TEST_CASE("Mohr-Coulomb return-map convergence targets the active surface") {
+  Eigen::Matrix<double, 2, 1> residuals;
+
+  residuals << -100., 5.E-7;
+  REQUIRE(mpm::mohrcoulomb::active_surface_converged(
+      mpm::mohrcoulomb::FailureState::Shear, residuals, 1.E-6));
+  REQUIRE_FALSE(mpm::mohrcoulomb::active_surface_converged(
+      mpm::mohrcoulomb::FailureState::Tensile, residuals, 1.E-6));
+
+  // The former one-sided test accepted this deep interior overshoot because
+  // both residuals were below +tolerance.
+  residuals << -100., -10.;
+  REQUIRE_FALSE(mpm::mohrcoulomb::active_surface_converged(
+      mpm::mohrcoulomb::FailureState::Shear, residuals, 1.E-6));
+
+  residuals << -5.E-7, -100.;
+  REQUIRE(mpm::mohrcoulomb::active_surface_converged(
+      mpm::mohrcoulomb::FailureState::Tensile, residuals, 1.E-6));
+  residuals[0] = std::numeric_limits<double>::quiet_NaN();
+  REQUIRE_FALSE(mpm::mohrcoulomb::active_surface_converged(
+      mpm::mohrcoulomb::FailureState::Tensile, residuals, 1.E-6));
+}
+
 TEST_CASE("Mohr-Coulomb zero-cohesion apex remains finite") {
   mpm::MohrCoulomb<2> material(0, mohr_coulomb_properties());
   auto state = material.initialise_state_variables_from_particle(0.485);
@@ -122,4 +145,29 @@ TEST_CASE("Mohr-Coulomb states adjacent to zero pressure remain finite") {
     REQUIRE(yield_function(1) < 1.E-6);
     REQUIRE(std::isfinite(state.at("pdstrain")));
   }
+}
+
+TEST_CASE("Mohr-Coulomb equilibrium handoff returns to the shear surface") {
+  mpm::MohrCoulomb<2> material(0, mohr_coulomb_properties());
+  auto state = material.initialise_state_variables_from_particle(0.485);
+  Eigen::Matrix<double, 6, 1> stress;
+  // Representative restored stress from particle 6454 in the shortened HS
+  // equilibrium.  It exercises the near-zero shear residual that the return
+  // map must accept without confusing it with elastic classification.
+  stress << -9.68000132, -1016.36570135, -375.78115639, -158.56789724, 0.,
+      0.;
+  const Eigen::Matrix<double, 6, 1> dstrain =
+      Eigen::Matrix<double, 6, 1>::Zero();
+
+  const auto updated =
+      material.compute_stress(stress, dstrain, nullptr, &state);
+
+  REQUIRE(updated.allFinite());
+  REQUIRE(std::isfinite(state.at("pdstrain")));
+  Eigen::Matrix<double, 2, 1> yield_function;
+  material.compute_stress_invariants(updated, &state);
+  material.compute_yield_state(&yield_function, state);
+  REQUIRE(yield_function.allFinite());
+  REQUIRE(yield_function(0) <= 1.E-6);
+  REQUIRE(std::fabs(yield_function(1)) <= 1.E-6);
 }

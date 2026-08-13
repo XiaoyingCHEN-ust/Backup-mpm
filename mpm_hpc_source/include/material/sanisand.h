@@ -37,6 +37,10 @@ class Sanisand : public Material<Tdim> {
   mpm::dense_map initialise_state_variables_from_particle(
       double porosity) override;
 
+  //! Initialise SANISAND history from restored porosity and effective stress
+  mpm::dense_map initialise_state_variables_from_particle(
+      double porosity, const Vector6d& stress) override;
+
   //! Compute effective stress from an MPM strain increment
   Vector6d compute_stress(const Vector6d& stress, const Vector6d& dstrain,
                           const ParticleBase<Tdim>* ptr,

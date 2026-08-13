@@ -621,8 +621,11 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
     mesh_->iterate_over_particles(std::bind(
           &mpm::ParticleBase<Tdim>::record_time, std::placeholders::_1, current_time_));
 
-    if (mpi_rank == 0) console_->info("uuid : [{}], Step: {} of {}, timestep = {}, time = {}.\n", 
-                                       uuid_, step_, nsteps_, dt_, current_time_);
+    if (mpi_rank == 0 &&
+        (step_ <= 10 || step_ % output_steps_ == 0 || step_ == nsteps_))
+      console_->info(
+          "uuid : [{}], Step: {} of {}, timestep = {}, time = {}.\n",
+          uuid_, step_, nsteps_, dt_, current_time_);
 
     // Initialise nodes
     mesh_->iterate_over_nodes(
@@ -671,7 +674,11 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
         std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));  
 
     // Compute free surface cells, nodes, and particles
-    mesh_->compute_free_surface(free_surface_particle_, volume_tolerance_);
+    // Cell volume was mapped above, before the support-threshold velocity
+    // calculation. Reuse that same mapping so the acceleration stage applies
+    // an identical density threshold rather than seeing twice the volume.
+    mesh_->compute_free_surface(free_surface_particle_, volume_tolerance_,
+                                false);
 
     // // Assign heat capacity and heat to nodes
     // mesh_->iterate_over_particles(
@@ -1824,6 +1831,21 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::compute_critical_timestep_size(d
       critical_timestep_modulus <= 0.)
     throw std::runtime_error("Critical timestep modulus must be finite and positive");
   double density = materials->template property<double>(std::string("density"));
+  const double minimum_support_fraction =
+      analysis_.value("minimum_nodal_support_fraction", 0.0);
+  if (!std::isfinite(minimum_support_fraction) ||
+      minimum_support_fraction < 0. || minimum_support_fraction > 0.05)
+    throw std::runtime_error(
+        "minimum_nodal_support_fraction must lie in [0, 0.05]");
+  const double minimum_nodal_density =
+      minimum_support_fraction * (1. - porosity) * density;
+  mesh_->iterate_over_nodes(std::bind(
+      &mpm::NodeBase<Tdim>::assign_minimum_nodal_density,
+      std::placeholders::_1, minimum_nodal_density));
+  if (minimum_nodal_density > 0.)
+    console_->info(
+        "Minimum nodal support density is {} kg/m^3 (fraction={})",
+        minimum_nodal_density, minimum_support_fraction);
   double specific_heat = materials->template property<double>(std::string("specific_heat"));
   double thermal_conductivity = materials->template property<double>(std::string("thermal_conductivity"));
   // Compute timestep fpor one phase MPM                              

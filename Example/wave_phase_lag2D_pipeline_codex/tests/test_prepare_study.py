@@ -78,7 +78,15 @@ class PrepareStudyTest(unittest.TestCase):
             )
             self.assertFalse(equilibrium["analysis"]["APIC"])
             self.assertEqual(equilibrium["analysis"]["PIC"], 1.0)
+            self.assertEqual(
+                equilibrium["analysis"]["minimum_nodal_support_fraction"],
+                study.MINIMUM_NODAL_SUPPORT_FRACTION,
+            )
             self.assertTrue(low["analysis"]["APIC"])
+            self.assertEqual(
+                low["analysis"]["minimum_nodal_support_fraction"],
+                study.MINIMUM_NODAL_SUPPORT_FRACTION,
+            )
             self.assertEqual(
                 mc_handoff["materials"][0]["type"], "MohrCoulomb2D"
             )
@@ -166,6 +174,14 @@ class PrepareStudyTest(unittest.TestCase):
                     "liquid_densities",
                     config["post_processing"]["liquid_vtk"],
                 )
+                self.assertIn(
+                    "PIC_pore_pressure_excess",
+                    config["post_processing"]["liquid_vtk"],
+                )
+            self.assertNotIn(
+                "PIC_pore_pressure_excess",
+                equilibrium["post_processing"]["liquid_vtk"],
+            )
             low_fluid = copy.deepcopy(low["materials"][1])
             high_fluid = copy.deepcopy(high["materials"][1])
             for fluid in (low_fluid, high_fluid):
@@ -359,13 +375,13 @@ class PrepareStudyTest(unittest.TestCase):
 
     def test_validator_requires_primary_liquefaction_outputs(self):
         config = study.dynamic_config(
-            code="TEST",
+            code="SCREEN_HS_SANI",
             title="test",
             saturation=0.94,
             material_type="SANISAND2D",
-            equilibrium_uuid="EQ",
+            equilibrium_uuid="PLP_SCREEN_HS_EQ",
             result_path="results/test/",
-            nsteps=study.STEPS_PER_CYCLE,
+            nsteps=study.TIERS["screen"]["cycles"] * study.STEPS_PER_CYCLE,
             mesh_directory=".",
             cell_size=0.02,
             particle_spacing=0.01,
@@ -373,10 +389,91 @@ class PrepareStudyTest(unittest.TestCase):
             physical_wave=True,
         )
         config["post_processing"]["liquid_vtk"].remove(
-            "liquid_seepage_forces"
+            "PIC_pore_pressure_excess"
         )
         with self.assertRaisesRegex(ValueError, "primary liquefaction outputs"):
             study.validate_config(config)
+
+    def test_validator_rejects_registered_stage_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = study.generate_tier(
+                "screen",
+                Path(temporary),
+                mesh_directory=".",
+                cell_size=0.02,
+                particle_spacing=0.01,
+                wave_height=0.12,
+                label="baseline",
+            )
+
+            def load(name: str) -> dict:
+                return json.loads((manifest.parent / name).read_text(encoding="utf-8"))
+
+            mutations = [
+                ("01_EQ_LS.json", lambda c: c["analysis"].__setitem__("dt", 2.0e-4)),
+                (
+                    "01_EQ_LS.json",
+                    lambda c: c["analysis"]["rigid_pipeline"].__setitem__("fixed", False),
+                ),
+                (
+                    "01_EQ_LS.json",
+                    lambda c: c["materials"][1].__setitem__("wave_pressure", True),
+                ),
+                (
+                    "01_EQ_LS.json",
+                    lambda c: c["materials"][1].__setitem__("liquid_saturation", 0.98),
+                ),
+                (
+                    "02_MC_EQ.json",
+                    lambda c: c["analysis"]["resume"].__setitem__("uuid", "WRONG_EQ"),
+                ),
+                ("02_HS.json", lambda c: c["analysis"].__setitem__("nsteps", 13_000)),
+                ("02_HS.json", lambda c: c["analysis"].__setitem__("PIC", 0.1)),
+                (
+                    "02_HS.json",
+                    lambda c: c["analysis"]["damping"].__setitem__(
+                        "damping_factor", 1.0
+                    ),
+                ),
+                (
+                    "02_HS.json",
+                    lambda c: c["materials"][0].__setitem__("type", "MohrCoulomb2D"),
+                ),
+                (
+                    "02_HS.json",
+                    lambda c: c["analysis"]["rigid_pipeline"].__setitem__(
+                        "release_time", 4.0
+                    ),
+                ),
+                (
+                    "02_HS.json",
+                    lambda c: c["materials"][1].__setitem__("wave_pressure", False),
+                ),
+                (
+                    "02_HD.json",
+                    lambda c: c["analysis"]["rigid_pipeline"].__setitem__("fixed", False),
+                ),
+                (
+                    "04_RL.json",
+                    lambda c: c["analysis"].pop("prescribed_phase_pressures"),
+                ),
+                (
+                    "04_RE.json",
+                    lambda c: c["analysis"]["prescribed_phase_pressures"].__setitem__(
+                        "file_prefix", "pressure"
+                    ),
+                ),
+                (
+                    "04_RM.json",
+                    lambda c: c["materials"][0].__setitem__("type", "SANISAND2D"),
+                ),
+            ]
+            for filename, mutate in mutations:
+                with self.subTest(filename=filename, mutation=mutate):
+                    config = load(filename)
+                    mutate(config)
+                    with self.assertRaises(ValueError):
+                        study.validate_config(config)
 
 
 if __name__ == "__main__":

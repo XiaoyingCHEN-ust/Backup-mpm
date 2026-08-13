@@ -24,7 +24,9 @@ for required_test in \
   mohr_coulomb_handoff_test \
   hdf5_particle_test \
   prescribed_pressure_validation_test \
-  rigid_pipeline2d_test; do
+  rigid_pipeline2d_test \
+  free_surface_node_test \
+  seabed_pressure_boundary_test; do
   if ! grep -q "${required_test}" <<< "${registered_tests}"; then
     printf 'Required CTest target was not registered: %s\n' \
       "${required_test}" >&2
@@ -33,7 +35,7 @@ for required_test in \
 done
 
 ctest --test-dir "${build_dir}" --output-on-failure \
-  -R '^(sanisand_material_test|mohr_coulomb_handoff_test|hdf5_particle_test|prescribed_pressure_validation_test|rigid_pipeline2d_test)$'
+  -R '^(sanisand_material_test|mohr_coulomb_handoff_test|hdf5_particle_test|prescribed_pressure_validation_test|rigid_pipeline2d_test|free_surface_node_test|seabed_pressure_boundary_test)$'
 
 "${build_dir}/sanisand_low_pressure_driver" \
   > "${case_dir}/material_preflight_3kPa.csv"

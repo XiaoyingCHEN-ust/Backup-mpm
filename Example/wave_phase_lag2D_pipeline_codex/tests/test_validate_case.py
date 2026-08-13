@@ -43,8 +43,50 @@ EQUILIBRIUM_VTP = """<?xml version="1.0"?>
 </VTKFile>
 """
 
+FULL_FINAL_VTP = """<?xml version="1.0"?>
+<VTKFile type="PolyData" version="0.1" byte_order="LittleEndian">
+  <PolyData>
+    <Piece NumberOfPoints="1" NumberOfVerts="0" NumberOfLines="0" NumberOfStrips="0" NumberOfPolys="0">
+      <PointData>
+        <DataArray type="Int64" Name="ids" format="ascii">0</DataArray>
+        <DataArray type="Float64" Name="porosities" format="ascii">0.485</DataArray>
+        <DataArray type="Float64" Name="volumes" format="ascii">0.0001</DataArray>
+        <DataArray type="Float64" Name="displacements" NumberOfComponents="3" format="ascii">0 0 0</DataArray>
+        <DataArray type="Float64" Name="velocities" NumberOfComponents="3" format="ascii">0 0 0</DataArray>
+        <DataArray type="Float64" Name="stresses" NumberOfComponents="6" format="ascii">0 0 0 0 0 0</DataArray>
+      </PointData>
+      <Points><DataArray type="Float64" NumberOfComponents="3" format="ascii">0.5 0.5 0</DataArray></Points>
+    </Piece>
+  </PolyData>
+</VTKFile>
+"""
+
 
 class ValidateCaseTest(unittest.TestCase):
+    def test_final_vtp_rejects_particles_outside_mesh(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mesh = root / "mesh.txt"
+            mesh.write_text(
+                "4 1\n0 0\n1 0\n1 1\n0 1\n0 1 2 3\n", encoding="utf-8"
+            )
+            particles = root / "particles.txt"
+            particles.write_text("1\n0.5 0.5\n", encoding="utf-8")
+            vtp = root / "particle1.vtp"
+            vtp.write_text(FULL_FINAL_VTP, encoding="utf-8")
+            config = {
+                "mesh": {"mesh": "mesh.txt"},
+                "particles": [{"generator": {"location": "particles.txt"}}],
+            }
+            with patch.object(validate, "CASE_ROOT", root):
+                validate.validate_final_vtp(vtp, config)
+                vtp.write_text(
+                    FULL_FINAL_VTP.replace(">0.5 0.5 0<", ">1.1 0.5 0<"),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ValueError, "outside the mesh"):
+                    validate.validate_final_vtp(vtp, config)
+
     def test_ascii_scalar_reader_rejects_legacy_id_value_rows(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "pressures.txt"
@@ -166,6 +208,36 @@ class ValidateCaseTest(unittest.TestCase):
 
             with patch.object(validate, "CASE_ROOT", root):
                 with self.assertRaisesRegex(ValueError, "exceeds 1e-3"):
+                    validate.write_case_completion(config_path)
+            self.assertFalse((result / validate.COMPLETION_FILENAME).exists())
+
+    def test_completion_rejects_nonfinite_gated_checkpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "configs" / "case.json"
+            config_path.parent.mkdir(parents=True)
+            config = {
+                "analysis": {
+                    "uuid": "NONFINITE_EQ",
+                    "nsteps": 10,
+                    "stability_gate": True,
+                },
+                "post_processing": {"path": "results/test/", "write_hdf5": True},
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            result = root / "results" / "test" / "NONFINITE_EQ"
+            result.mkdir(parents=True)
+            nonfinite_vtp = EQUILIBRIUM_VTP.replace(
+                'Name="velocities" NumberOfComponents="3" format="ascii">0 0 0',
+                'Name="velocities" NumberOfComponents="3" format="ascii">nan 0 0',
+            )
+            (result / "particle10.vtp").write_text(nonfinite_vtp, encoding="utf-8")
+            (result / "particles10.h5").write_bytes(
+                validate.HDF5_SIGNATURE + b"nonfinite-checkpoint"
+            )
+
+            with patch.object(validate, "CASE_ROOT", root):
+                with self.assertRaisesRegex(ValueError, "NaN/Inf"):
                     validate.write_case_completion(config_path)
             self.assertFalse((result / validate.COMPLETION_FILENAME).exists())
 

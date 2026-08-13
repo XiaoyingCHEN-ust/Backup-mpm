@@ -561,6 +561,13 @@ void mpm::Node<Tdim, Tdof, Tnphases>::update_scalers(
 template <unsigned Tdim, unsigned Tdof, unsigned Tnphases>
 void mpm::Node<Tdim, Tdof, Tnphases>::compute_velocity(double dt) {
   const double tolerance = 1.E-15;
+  if (minimum_nodal_density_ > 0. && volume_(0) > tolerance &&
+      mass_(0) / volume_(0) < minimum_nodal_density_) {
+    velocity_.setZero();
+    acceleration_.setZero();
+    this->apply_velocity_constraints();
+    return;
+  }
   for (unsigned phase = 0; phase < Tnphases; ++phase) {
     if (mass_(phase) > tolerance) {
       velocity_.col(phase) = momentum_.col(phase) / mass_(phase);
@@ -570,13 +577,6 @@ void mpm::Node<Tdim, Tdof, Tnphases>::compute_velocity(double dt) {
     rigid_acceleration_ = (rigid_velocity_ - velocity_) / dt;
     velocity_ = rigid_velocity_;
     acceleration_ = rigid_acceleration_;
-  }
-
-  if (this->free_surface_) {
-    if (Tnphases == 3) {
-      velocity_.col(2) == velocity_.col(0);
-      velocity_.col(1) == velocity_.col(0);
-    }
   }
 
     // Check to see if value is below threshold
@@ -1510,7 +1510,4 @@ void mpm::Node<Tdim, Tdof, Tnphases>::assign_intermediate_velocity_from_rigid(
     acceleration_inter_ = rigid_acceleration_;
   }
 }
-
-
-
 

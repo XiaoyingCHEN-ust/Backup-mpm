@@ -551,9 +551,13 @@ class Mesh {
   mpm::Container<NodeBase<Tdim>> nodes() { return nodes_; }
 
   //! Compute free surface
+  //! \param[in] map_nodal_volume_for_density Map cell volume when detection
+  //! requires nodal density. Set false when the solver already mapped cell
+  //! volume during the current nodal initialisation cycle.
   bool compute_free_surface(
       std::string free_surface_particle,
-      double tolerance = std::numeric_limits<unsigned>::epsilon());
+      double tolerance = std::numeric_limits<unsigned>::epsilon(),
+      bool map_nodal_volume_for_density = true);
 
   //! Get free surface node set
   std::set<mpm::Index> free_surface_nodes();

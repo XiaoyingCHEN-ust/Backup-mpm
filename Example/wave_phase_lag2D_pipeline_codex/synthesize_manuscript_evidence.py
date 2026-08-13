@@ -6,15 +6,17 @@ The script deliberately keeps three questions separate:
 * RL--RE: does removing only the fitted fundamental phase lag reduce the
   hydraulic trigger and/or realised skeleton-stress loss?
 * RL--RM: under the identical lagged pressure database, does SANISAND's cyclic
-  state evolution produce a materially different stress/engineering path from
-  Mohr--Coulomb?
+  path and exported plastic-state proxy produce a materially different
+  stress/engineering path from Mohr--Coulomb?
 * LS--HS: what is the fully coupled physical context when saturation changes
   phase, amplitude and drainage together?
 
 It does not declare SANISAND "better" because of a chosen displacement order.
-The defensible advantage is representation of cyclic state/fabric evolution;
+The defensible advantage tested here is a cyclic, state-dependent stress path;
 whether that additional mechanism matters in this case is decided from the
-observed paths and responses.
+exported q-p' paths, accumulated plastic-strain proxy and field responses.
+The internal SANISAND Alpha/Z fabric tensors are not exported by this study, so
+this audit never claims that fabric evolution was directly observed.
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ PHASE_REDUCTION_MINIMUM_DEG = 5.0
 RESPONSE_MATERIALITY_RELATIVE = 0.05
 CONSTITUTIVE_INITIAL_STATE_RELATIVE_TOLERANCE = 0.05
 STATE_EVOLUTION_ABSOLUTE_TOLERANCE = 1.0e-8
+CYCLIC_PATH_MINIMUM_PROBES = 2
+CYCLIC_PATH_MINIMUM_SAMPLES = 3
+CYCLIC_PATH_MINIMUM_PATH_TO_NET_RATIO = 1.05
 TRANSFORM_INVARIANT_ABSOLUTE_TOLERANCE_PA = 1.0e-6
 
 IF_PREFIX = "support_ROI_upward_seepage_IF_ge_1"
@@ -53,14 +58,24 @@ def case_code(path: Path) -> str:
     return stem.split("_", 1)[1]
 
 
-def load_summaries(directory: Path, *, require_full: bool) -> dict[str, dict[str, Any]]:
+def load_summaries(
+    directory: Path,
+    *,
+    require_full: bool,
+    include_constitutive: bool = True,
+) -> dict[str, dict[str, Any]]:
     summaries: dict[str, dict[str, Any]] = {}
     for path in sorted(directory.glob("*_summary.json")):
         code = case_code(path)
         if code in summaries:
             raise ValueError(f"Duplicate summary for case {code}")
         summaries[code] = json.loads(path.read_text(encoding="utf-8"))
-    required = EXPECTED_CODES if require_full else ("LS", "HS", "HM")
+    if require_full:
+        required = ("LS", "HS", "RL", "RE")
+        if include_constitutive:
+            required += ("HM", "RM")
+    else:
+        required = ("LS", "HS")
     missing = [code for code in required if code not in summaries]
     if missing:
         raise FileNotFoundError(
@@ -80,22 +95,114 @@ def threshold_metric(summary: dict[str, Any], prefix: str, metric: str) -> float
     return particle_metric(summary, f"{prefix}_{metric}")
 
 
-def materially_higher(left: float, right: float) -> bool:
+def materially_higher(
+    left: float, right: float, *, absolute_resolution: float | None = None
+) -> bool:
     scale = max(abs(left), abs(right), 1.0e-15)
-    return left - right > RESPONSE_MATERIALITY_RELATIVE * scale
+    threshold = RESPONSE_MATERIALITY_RELATIVE * scale
+    if absolute_resolution is not None:
+        threshold = max(threshold, absolute_resolution)
+    return left - right > threshold
 
 
-def materially_different(left: float, right: float) -> bool:
+def materially_different(
+    left: float, right: float, *, absolute_resolution: float | None = None
+) -> bool:
     scale = max(abs(left), abs(right), 1.0e-15)
-    return abs(left - right) > RESPONSE_MATERIALITY_RELATIVE * scale
+    threshold = RESPONSE_MATERIALITY_RELATIVE * scale
+    if absolute_resolution is not None:
+        threshold = max(threshold, absolute_resolution)
+    return abs(left - right) > threshold
 
 
-def direction(left: float, right: float) -> str:
-    if materially_higher(left, right):
+def direction(
+    left: float, right: float, *, absolute_resolution: float | None = None
+) -> str:
+    if materially_higher(left, right, absolute_resolution=absolute_resolution):
         return "left_higher"
-    if materially_higher(right, left):
+    if materially_higher(right, left, absolute_resolution=absolute_resolution):
         return "right_higher"
     return "not_materially_different"
+
+
+def area_time_resolution(summary: dict[str, Any]) -> dict[str, Any]:
+    """Return one particle-area times one saved-output interval when available."""
+
+    particles = summary["particles"]
+    area_value = particles.get("nominal_reference_area_per_particle_m2")
+    interval_value = particles.get("saved_particle_output_interval_s")
+    interval_source = "saved_particle_output_interval_s"
+    regular_interval = True
+    if interval_value is None:
+        frame_times = particles.get("saved_particle_frame_times_s")
+        if frame_times is not None and len(frame_times) > 1:
+            times = [finite_float(value, "saved particle frame time") for value in frame_times]
+            intervals = [
+                current - previous
+                for previous, current in zip(times, times[1:])
+            ]
+            if any(interval <= 0.0 for interval in intervals):
+                raise ValueError("Saved particle frame times must increase")
+            interval_value = max(intervals)
+            interval_source = "maximum saved_particle_frame_times_s difference"
+            regular_interval = math.isclose(
+                min(intervals), max(intervals), rel_tol=1.0e-9, abs_tol=1.0e-12
+            )
+        else:
+            frames = particles.get("frames")
+            last_time = particles.get("last_particle_time_s")
+            if frames is not None and last_time is not None and int(frames) > 1:
+                # Registered VTK output starts after one output interval (there
+                # is no step-zero particle VTP), so last_time/frames recovers
+                # the interval from the existing summary metadata.
+                interval_value = finite_float(last_time, "last particle time") / int(
+                    frames
+                )
+                interval_source = "last_particle_time_s/frames (no step-zero VTP)"
+    if area_value is None or interval_value is None:
+        return {
+            "available": False,
+            "particle_area_m2": None,
+            "output_interval_s": None,
+            "area_time_m2_s": None,
+            "interval_source": None,
+            "regular_interval": None,
+        }
+    area = finite_float(area_value, "nominal particle area")
+    interval = finite_float(interval_value, "saved particle output interval")
+    if area <= 0.0 or interval <= 0.0:
+        raise ValueError("Particle area and saved-output interval must be positive")
+    return {
+        "available": True,
+        "particle_area_m2": area,
+        "output_interval_s": interval,
+        "area_time_m2_s": area * interval,
+        "interval_source": interval_source,
+        "regular_interval": regular_interval,
+    }
+
+
+def paired_area_time_resolution(
+    left: dict[str, Any], right: dict[str, Any]
+) -> dict[str, Any]:
+    left_resolution = area_time_resolution(left)
+    right_resolution = area_time_resolution(right)
+    available = left_resolution["available"] and right_resolution["available"]
+    absolute = (
+        max(
+            left_resolution["area_time_m2_s"],
+            right_resolution["area_time_m2_s"],
+        )
+        if available
+        else None
+    )
+    return {
+        "available": available,
+        "required_absolute_difference_m2_s": absolute,
+        "basis": "max(one particle area x one saved-output interval across cases)",
+        "left": left_resolution,
+        "right": right_resolution,
+    }
 
 
 def phase_control_qa(
@@ -227,7 +334,13 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
         erased, "minimum_vertical_stress_remaining_ratio"
     )
 
-    hydraulic_direction = direction(lagged_if_area, erased_if_area)
+    resolution = paired_area_time_resolution(lagged, erased)
+    absolute_resolution = resolution["required_absolute_difference_m2_s"]
+    hydraulic_direction = direction(
+        lagged_if_area,
+        erased_if_area,
+        absolute_resolution=absolute_resolution,
+    )
     if hydraulic_direction == "left_higher" and lagged_max_if >= 1.0:
         hydraulic_status = "supported"
     elif hydraulic_direction == "right_higher":
@@ -235,7 +348,11 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
     else:
         hydraulic_status = "not_materially_resolved"
 
-    stress_direction = direction(lagged_stress_area, erased_stress_area)
+    stress_direction = direction(
+        lagged_stress_area,
+        erased_stress_area,
+        absolute_resolution=absolute_resolution,
+    )
     if stress_direction == "left_higher" and lagged_min_rsigma <= 0.05:
         stress_status = "supported"
     elif stress_direction == "right_higher":
@@ -252,6 +369,7 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
             "direction": hydraulic_direction,
             "lagged_max_IF": lagged_max_if,
             "phase_erased_max_IF": erased_max_if,
+            "absolute_resolution": resolution,
         },
         "realised_skeleton_stress_loss": {
             "status": stress_status,
@@ -261,6 +379,7 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
             "direction": stress_direction,
             "lagged_min_Rsigma": lagged_min_rsigma,
             "phase_erased_min_Rsigma": erased_min_rsigma,
+            "absolute_resolution": resolution,
         },
         "engineering_response": response_comparison(lagged, erased),
     }
@@ -322,6 +441,18 @@ def probe_path_metrics(rows: list[dict[str, float]], state_name: str) -> dict[st
         )
         net_distance = math.hypot(p[-1] - p[0], q[-1] - q[0])
         state_values = [row[state_key] for row in selected if state_key in row]
+        q_increments = [q[i] - q[i - 1] for i in range(1, len(q))]
+        nonzero_directions = [
+            math.copysign(1.0, increment)
+            for increment in q_increments
+            if not math.isclose(increment, 0.0, abs_tol=1.0e-15)
+        ]
+        loading_direction_reversals = sum(
+            current != previous
+            for previous, current in zip(
+                nonzero_directions, nonzero_directions[1:]
+            )
+        )
         output[probe] = {
             "q_p_path_length_pa": path_length,
             "q_p_net_distance_pa": net_distance,
@@ -337,6 +468,9 @@ def probe_path_metrics(rows: list[dict[str, float]], state_name: str) -> dict[st
             "state_max_abs": (
                 max(abs(value) for value in state_values) if state_values else None
             ),
+            "samples": len(selected),
+            "state_samples": len(state_values),
+            "q_loading_direction_reversals": loading_direction_reversals,
         }
     if not output:
         raise ValueError(f"No q-p' probe paths are available for {state_name}")
@@ -401,11 +535,20 @@ def constitutive_effect(
     initial_state_qa = constitutive_initial_state_qa(sani_rows, mc_rows)
     sani_paths = probe_path_metrics(sani_rows, "eps_p_q")
     mc_paths = probe_path_metrics(mc_rows, "pdstrain")
-    state_active = any(
-        values["state_range"] is not None
-        and values["state_range"] > STATE_EVOLUTION_ABSOLUTE_TOLERANCE
-        for values in sani_paths.values()
-    )
+    cyclic_probe_criteria = {
+        probe: bool(
+            values["samples"] >= CYCLIC_PATH_MINIMUM_SAMPLES
+            and values["state_samples"] == values["samples"]
+            and values["state_range"] is not None
+            and values["state_range"] > STATE_EVOLUTION_ABSOLUTE_TOLERANCE
+            and values["q_loading_direction_reversals"] >= 1
+            and values["q_p_path_to_net_ratio"]
+            >= CYCLIC_PATH_MINIMUM_PATH_TO_NET_RATIO
+        )
+        for probe, values in sani_paths.items()
+    }
+    active_probe_count = sum(cyclic_probe_criteria.values())
+    state_active = active_probe_count >= CYCLIC_PATH_MINIMUM_PROBES
 
     stress_metrics = {
         "stress_loss_area_time": {
@@ -426,9 +569,16 @@ def constitutive_effect(
         },
     }
     response = response_comparison(sanisand, mohr_coulomb)
-    stress_separated = any(
-        materially_different(values["SANISAND"], values["Mohr_Coulomb"])
-        for values in stress_metrics.values()
+    stress_resolution = paired_area_time_resolution(sanisand, mohr_coulomb)
+    stress_area = stress_metrics["stress_loss_area_time"]
+    stress_area["absolute_resolution"] = stress_resolution
+    stress_separated = materially_different(
+        stress_area["SANISAND"],
+        stress_area["Mohr_Coulomb"],
+        absolute_resolution=stress_resolution["required_absolute_difference_m2_s"],
+    ) or materially_different(
+        stress_metrics["minimum_Rsigma"]["SANISAND"],
+        stress_metrics["minimum_Rsigma"]["Mohr_Coulomb"],
     )
     consequence_observed = stress_separated or response["materially_separated"]
     if initial_state_qa["passed"] and state_active and consequence_observed:
@@ -442,11 +592,21 @@ def constitutive_effect(
     return {
         "status": status,
         "interpretation": (
-            "SANISAND's advantage is the resolved cyclic state-dependent path, "
-            "not a pre-assumed ordering of final displacement. Predictive "
-            "superiority would require independent field or laboratory response data."
+            "SANISAND's advantage is assessed from the exported cyclic q-p' path "
+            "and eps_p_q accumulated-plastic-strain proxy, not a pre-assumed "
+            "ordering of final displacement. Alpha/Z fabric tensors were not "
+            "exported, so fabric evolution is not claimed. Predictive superiority "
+            "would require independent field or laboratory response data."
         ),
         "sanisand_cyclic_state_evolution_active": state_active,
+        "sanisand_cyclic_plastic_state_proxy_active": state_active,
+        "cyclic_probe_criteria": cyclic_probe_criteria,
+        "cyclic_probe_count": active_probe_count,
+        "fabric_state_outputs_available": False,
+        "fabric_state_output_note": (
+            "SANISAND Alpha/Z fabric tensors were not exported; eps_p_q is the "
+            "only accumulated plastic-state proxy used by this gate."
+        ),
         "material_response_consequence_observed": consequence_observed,
         "initial_state_QA": initial_state_qa,
         "stress_metrics": stress_metrics,
@@ -481,9 +641,17 @@ def physical_context(low: dict[str, Any], high: dict[str, Any]) -> dict[str, Any
 
 
 def synthesize(
-    directory: Path, metadata_path: Path, *, require_full: bool = True
+    directory: Path,
+    metadata_path: Path,
+    *,
+    require_full: bool = True,
+    include_constitutive: bool = True,
 ) -> dict[str, Any]:
-    summaries = load_summaries(directory, require_full=require_full)
+    summaries = load_summaries(
+        directory,
+        require_full=require_full,
+        include_constitutive=include_constitutive,
+    )
     constants = {
         "pressure_response_relative_tolerance": (
             PRESSURE_RESPONSE_RELATIVE_TOLERANCE
@@ -494,6 +662,11 @@ def synthesize(
             CONSTITUTIVE_INITIAL_STATE_RELATIVE_TOLERANCE
         ),
         "state_evolution_absolute_tolerance": STATE_EVOLUTION_ABSOLUTE_TOLERANCE,
+        "cyclic_path_minimum_probes": CYCLIC_PATH_MINIMUM_PROBES,
+        "cyclic_path_minimum_samples": CYCLIC_PATH_MINIMUM_SAMPLES,
+        "cyclic_path_minimum_path_to_net_ratio": (
+            CYCLIC_PATH_MINIMUM_PATH_TO_NET_RATIO
+        ),
         "transform_invariant_absolute_tolerance_pa": (
             TRANSFORM_INVARIANT_ABSOLUTE_TOLERANCE_PA
         ),
@@ -507,9 +680,18 @@ def synthesize(
         qa = phase_control_qa(summaries["RL"], summaries["RE"], metadata_path)
         lag_contrast = phase_lag_contrast(summaries["RL"], summaries["RE"])
         phase = phase_effect(summaries["RL"], summaries["RE"])
-        constitutive = constitutive_effect(
-            directory, summaries["RL"], summaries["RM"]
-        )
+        if include_constitutive:
+            constitutive = constitutive_effect(
+                directory, summaries["RL"], summaries["RM"]
+            )
+        else:
+            constitutive = {
+                "status": "unavailable",
+                "reason": (
+                    "The zero-cohesion Mohr-Coulomb handoff did not pass the "
+                    "unchanged equilibrium stability gate; no RL--RM claim is permitted."
+                ),
+            }
         evidence.update(
             {
                 "phase_only_RL_RE": {
@@ -528,11 +710,13 @@ def synthesize(
                     "phase_lag_realised_liquefaction_supported": bool(
                         qa["passed"]
                         and lag_contrast["passed"]
+                        and phase["hydraulic_trigger"]["status"] == "supported"
                         and phase["realised_skeleton_stress_loss"]["status"]
                         == "supported"
                     ),
                     "sanisand_mechanistic_advantage_supported": (
-                        constitutive["status"] == "mechanistic_advantage_observed"
+                        include_constitutive
+                        and constitutive["status"] == "mechanistic_advantage_observed"
                     ),
                 },
             }
@@ -562,25 +746,34 @@ def markdown_report(evidence: dict[str, Any]) -> str:
     hydraulic = phase["hydraulic_trigger"]
     stress = phase["realised_skeleton_stress_loss"]
     constitutive = evidence["constitutive_RL_RM"]
+    constitutive_available = constitutive.get("status") != "unavailable"
     lines.extend(
         [
             "## Claim gates",
             "",
             f"- Phase-control pressure QA passed: `{phase['pressure_control_QA']['passed']}`.",
-            f"- Fundamental phase lag was materially reduced: `{phase['phase_lag_contrast']['passed']}` "
-            f"(mean reduction `{phase['phase_lag_contrast']['mean_abs_phase_lag_reduction_deg']:.4g} deg`).",
+            f"- Fundamental phase lag was materially reduced: "
+            f"`{phase['phase_lag_contrast']['passed']}` (mean reduction "
+            f"`{phase['phase_lag_contrast']['mean_abs_phase_lag_reduction_deg']:.4g} deg`).",
             f"- Lagged pressure increased the hydraulic trigger: "
             f"`{gate['phase_lag_hydraulic_trigger_supported']}` "
             f"(RL/RE support-zone IF area-time = `{hydraulic['lagged']:.6g}` / "
-            f"`{hydraulic['phase_erased']:.6g} m2 s`).",
+            f"`{hydraulic['phase_erased']:.6g} m2 s`; absolute resolution = "
+            f"`{hydraulic['absolute_resolution']['required_absolute_difference_m2_s']}`).",
             f"- Lagged pressure increased realised skeleton-stress loss: "
             f"`{gate['phase_lag_realised_liquefaction_supported']}` "
             f"(RL/RE support-zone Rsigma area-time = `{stress['lagged']:.6g}` / "
-            f"`{stress['phase_erased']:.6g} m2 s`).",
-            f"- SANISAND mechanistic advantage was expressed in the response: "
-            f"`{gate['sanisand_mechanistic_advantage_supported']}` "
-            f"(status `{constitutive['status']}`; initial-state QA "
-            f"`{constitutive['initial_state_QA']['passed']}`).",
+            f"`{stress['phase_erased']:.6g} m2 s`; absolute resolution = "
+            f"`{stress['absolute_resolution']['required_absolute_difference_m2_s']}`).",
+            (
+                f"- SANISAND mechanistic advantage was expressed in the response: "
+                f"`{gate['sanisand_mechanistic_advantage_supported']}` "
+                f"(status `{constitutive['status']}`; initial-state QA "
+                f"`{constitutive['initial_state_QA']['passed']}`)."
+                if constitutive_available
+                else "- RL--RM constitutive evidence is unavailable because MC_EQ "
+                "did not pass the unchanged stability gate."
+            ),
             "",
             "## Permitted wording",
             "",
@@ -610,17 +803,24 @@ def markdown_report(evidence: dict[str, Any]) -> str:
             "realised skeleton-stress loss; restrict the conclusion to hydraulic potential."
         )
     lines.append("")
-    if gate["sanisand_mechanistic_advantage_supported"]:
+    if not constitutive_available:
         lines.append(
-            "Under the identical lagged pressure history, SANISAND resolves cyclic "
-            "state evolution and a materially different stress/engineering path from "
-            "Mohr-Coulomb. This demonstrates a mechanistic modelling advantage, not "
-            "universal superiority or a pre-assumed displacement ordering."
+            "No SANISAND-versus-Mohr-Coulomb field-scale advantage claim is made: "
+            + constitutive["reason"]
+        )
+    elif gate["sanisand_mechanistic_advantage_supported"]:
+        lines.append(
+            "Under the identical lagged pressure history, SANISAND resolves a cyclic "
+            "q-p' path, evolution of the exported eps_p_q plastic-state proxy, and a "
+            "materially different stress/engineering path from Mohr-Coulomb. This "
+            "demonstrates a mechanistic modelling advantage, not universal superiority "
+            "or a pre-assumed displacement ordering. Alpha/Z fabric evolution is not "
+            "claimed because those tensors were not exported."
         )
     else:
         lines.append(
             "The matched-pressure comparison does not yet demonstrate a material field-"
-            "scale consequence of SANISAND's additional cyclic state variables. Do not "
+            "scale consequence of SANISAND's exported cyclic plastic-state proxy. Do not "
             "claim predictive superiority from model complexity alone."
         )
     lines.extend(
@@ -645,15 +845,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write only LS--HS context without requiring replay cases",
     )
+    parser.add_argument(
+        "--phase-only",
+        action="store_true",
+        help=(
+            "write LS--HS and RL--RE evidence without requiring the failed "
+            "Mohr-Coulomb branch"
+        ),
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.physical_only and args.phase_only:
+        raise ValueError("--physical-only and --phase-only are mutually exclusive")
     evidence = synthesize(
         args.analysis_dir,
         args.phase_metadata,
         require_full=not args.physical_only,
+        include_constitutive=not args.phase_only,
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_markdown.parent.mkdir(parents=True, exist_ok=True)

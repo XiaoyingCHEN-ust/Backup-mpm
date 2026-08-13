@@ -189,6 +189,11 @@ public:
   // Compute velocity from the momentum
   void compute_velocity(double dt) override;
 
+  //! Set the minimum supported solid density for nodal momentum updates
+  void assign_minimum_nodal_density(double density) noexcept override {
+    minimum_nodal_density_ = density;
+  }
+
   // Compute nodal temperature from heat
   void compute_temperature(unsigned phase) override;
 
@@ -629,6 +634,8 @@ private:
   double pore_pressure_increment_;
   double mean_length_;
   double gas_saturation_;
+  //! Ignore newly activated nodes with vanishing particle support
+  double minimum_nodal_density_{0.};
 
   // Vector properties
   Eigen::Matrix<double, Tdim, Tnphases> velocity_;
@@ -707,4 +714,3 @@ private:
 #include "node_twophase.tcc"
 #include "node_threephase.tcc"
 #endif  // MPM_NODE_H_
-

@@ -223,6 +223,7 @@
     "pressure_smoothing": true,
     "pressure_smoothing_iterations": 1,
     "pressure_smoothing_in_loop": false,
+    "minimum_nodal_support_fraction": 0.01,
     "rigid_pipeline": {
       "enable": true,
       "fixed": true,
@@ -288,6 +289,7 @@
     ],
     "liquid_vtk": [
       "PIC_pore_pressures",
+      "PIC_pore_pressure_excess",
       "PIC_liquid_pressures",
       "PIC_gas_pressures",
       "PIC_ru",

@@ -18,6 +18,8 @@ def threshold_particles(if_area: float, stress_area: float) -> dict[str, float]:
     return {
         "max_upward_seepage_IF": 1.5,
         "minimum_vertical_stress_remaining_ratio": 0.01,
+        "nominal_reference_area_per_particle_m2": 0.01,
+        "saved_particle_frame_times_s": [0.0, 0.1, 0.2],
         (
             "support_ROI_upward_seepage_IF_ge_1_"
             "time_integrated_area_m2_s"
@@ -144,6 +146,16 @@ class ManuscriptEvidenceTest(unittest.TestCase):
             evidence["constitutive_RL_RM"]["status"],
             "mechanistic_advantage_observed",
         )
+        resolution = evidence["phase_only_RL_RE"]["hydraulic_trigger"][
+            "absolute_resolution"
+        ]
+        self.assertTrue(resolution["available"])
+        self.assertAlmostEqual(
+            resolution["required_absolute_difference_m2_s"], 0.001
+        )
+        self.assertFalse(
+            evidence["constitutive_RL_RM"]["fabric_state_outputs_available"]
+        )
         report = synthesis.markdown_report(evidence)
         self.assertIn("one-way numerical counterfactual", report)
         self.assertIn("not universal superiority", report)
@@ -156,10 +168,70 @@ class ManuscriptEvidenceTest(unittest.TestCase):
         self.assertFalse(
             evidence["claim_gate"]["phase_lag_hydraulic_trigger_supported"]
         )
+        self.assertFalse(
+            evidence["claim_gate"]["phase_lag_realised_liquefaction_supported"]
+        )
         self.assertEqual(
             evidence["phase_only_RL_RE"]["hydraulic_trigger"]["status"],
             "opposite",
         )
+
+    def test_absolute_area_time_resolution_blocks_unresolved_five_percent_change(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = self.write_study(root)
+            for code, if_area, stress_area in (
+                ("RL", 0.0105, 0.0105),
+                ("RE", 0.0100, 0.0100),
+            ):
+                path = root / "analysis" / f"04_{code}_summary.json"
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["particles"].update(threshold_particles(if_area, stress_area))
+                path.write_text(json.dumps(data), encoding="utf-8")
+            evidence = synthesis.synthesize(root / "analysis", metadata)
+        phase = evidence["phase_only_RL_RE"]
+        self.assertEqual(
+            phase["hydraulic_trigger"]["status"], "not_materially_resolved"
+        )
+        self.assertEqual(
+            phase["realised_skeleton_stress_loss"]["status"],
+            "not_materially_resolved",
+        )
+        self.assertFalse(
+            evidence["claim_gate"]["phase_lag_hydraulic_trigger_supported"]
+        )
+        self.assertFalse(
+            evidence["claim_gate"]["phase_lag_realised_liquefaction_supported"]
+        )
+
+    def test_monotonic_plastic_accumulation_is_not_cyclic_state_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = self.write_study(root)
+            path = root / "analysis" / "04_RL_probe_history.csv"
+            with path.open(newline="", encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            for index, row in enumerate(rows):
+                for probe_index, probe in enumerate(
+                    ("crown", "shoulder", "invert")
+                ):
+                    row[f"{probe}_q_pa"] = str(
+                        600.0 + probe_index + 100.0 * index
+                    )
+            with path.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+                writer.writeheader()
+                writer.writerows(rows)
+            evidence = synthesis.synthesize(root / "analysis", metadata)
+        constitutive = evidence["constitutive_RL_RM"]
+        self.assertFalse(constitutive["sanisand_cyclic_state_evolution_active"])
+        self.assertEqual(constitutive["cyclic_probe_count"], 0)
+        self.assertEqual(constitutive["status"], "field_evidence_insufficient")
+        self.assertFalse(
+            evidence["claim_gate"]["sanisand_mechanistic_advantage_supported"]
+        )
+        report = synthesis.markdown_report(evidence)
+        self.assertNotIn("resolves cyclic state evolution", report)
 
     def test_state_activity_without_response_separation_is_not_overclaimed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -211,6 +283,28 @@ class ManuscriptEvidenceTest(unittest.TestCase):
             (root / "analysis" / "04_RE_summary.json").unlink()
             with self.assertRaisesRegex(FileNotFoundError, "RE"):
                 synthesis.synthesize(root / "analysis", metadata)
+
+    def test_phase_only_evidence_does_not_require_mc_branch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = self.write_study(root)
+            for code, prefix in (("HM", "02"), ("RM", "04")):
+                (root / "analysis" / f"{prefix}_{code}_summary.json").unlink()
+            (root / "analysis" / "04_RM_probe_history.csv").unlink()
+            evidence = synthesis.synthesize(
+                root / "analysis", metadata, include_constitutive=False
+            )
+        self.assertTrue(
+            evidence["claim_gate"]["phase_lag_hydraulic_trigger_supported"]
+        )
+        self.assertTrue(
+            evidence["claim_gate"]["phase_lag_realised_liquefaction_supported"]
+        )
+        self.assertFalse(
+            evidence["claim_gate"]["sanisand_mechanistic_advantage_supported"]
+        )
+        self.assertEqual(evidence["constitutive_RL_RM"]["status"], "unavailable")
+        self.assertIn("No SANISAND-versus-Mohr-Coulomb", synthesis.markdown_report(evidence))
 
 
 if __name__ == "__main__":
