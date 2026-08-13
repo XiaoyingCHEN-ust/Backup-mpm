@@ -335,6 +335,10 @@ public:
   // Assign free surface
   virtual void assign_free_surface(bool free_surface) = 0;
 
+  //! Assign the three-phase kinematic boundary independently of geometric
+  //! free-surface status
+  virtual void assign_phase_kinematic_boundary(bool boundary) = 0;
+
   // Assign water table
   virtual bool assign_water_table(const std::shared_ptr<FunctionBase>& function,
                                   const unsigned dir, const double h0) = 0;
@@ -468,6 +472,9 @@ public:
 
   // Return free surface
   virtual bool free_surface() = 0;
+
+  //! Return whether pore-phase kinematics follow the solid skeleton
+  virtual bool phase_kinematic_boundary() = 0;
 
   // Return free surface
   virtual bool set_velocity_constraints() = 0;  

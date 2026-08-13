@@ -1,5 +1,6 @@
 #include "hdf5_particle.h"
 
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -769,8 +770,7 @@ void validate_table_metadata(hsize_t field_count, hsize_t record_count,
 void prepare_state_variables_for_restart(hsize_t field_count,
                                          HDF5Particle* particles,
                                          std::size_t particle_count) {
-  if (field_count == NFIELDS) return;
-  if (field_count != LEGACY_NFIELDS)
+  if (field_count != NFIELDS && field_count != LEGACY_NFIELDS)
     throw std::runtime_error(
         "Cannot validate state variables for an unsupported HDF5 particle "
         "schema");
@@ -778,14 +778,26 @@ void prepare_state_variables_for_restart(hsize_t field_count,
     throw std::invalid_argument("HDF5 particle buffer is null");
 
   for (std::size_t i = 0; i < particle_count; ++i) {
-    if (particles[i].nstate_vars > LEGACY_NSTATE_VARS)
+    const unsigned capacity =
+        field_count == LEGACY_NFIELDS ? LEGACY_NSTATE_VARS : 20U;
+    if (particles[i].nstate_vars > capacity)
       throw std::runtime_error(
-          "Legacy HDF5 particle schema stores only svars_0..svars_5, but "
-          "particle " +
+          (field_count == LEGACY_NFIELDS
+               ? "Legacy HDF5 particle schema stores only svars_0..svars_5, "
+                 "but particle "
+               : "HDF5 particle schema stores at most twenty state variables, "
+                 "but particle ") +
           std::to_string(particles[i].id) + " declares " +
           std::to_string(particles[i].nstate_vars) +
           " state variables; refusing a lossy restart");
+    for (unsigned state = 0; state < particles[i].nstate_vars; ++state)
+      if (!std::isfinite(particles[i].svars[state]))
+        throw std::runtime_error(
+            "Particle " + std::to_string(particles[i].id) +
+            " has a non-finite active constitutive state variable");
   }
+
+  if (field_count == NFIELDS) return;
 
   // A legacy compound table has no named svars_6..svars_19 fields. HDF5 may
   // nevertheless copy bytes from the unnamed gap in the old in-memory

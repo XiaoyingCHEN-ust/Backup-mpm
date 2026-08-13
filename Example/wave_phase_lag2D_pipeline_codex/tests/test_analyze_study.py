@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import json
+import hashlib
+import struct
 import sys
 import tempfile
 import unittest
@@ -15,6 +17,76 @@ CASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CASE_DIR))
 
 import analyze_study as analysis  # noqa: E402
+
+
+def artifact_record(path: Path, root: Path) -> dict[str, object]:
+    return {
+        "path": path.resolve().relative_to(root.resolve()).as_posix(),
+        "size_bytes": path.stat().st_size,
+        "sha256": analysis.file_sha256(path),
+    }
+
+
+def passing_hdf5_vtp_audit(
+    hdf5: Path, vtp: Path, particle_count: int = 1
+) -> dict[str, object]:
+    identifier_hash = hashlib.sha256(
+        b"".join(index.to_bytes(8, "little") for index in range(particle_count))
+    ).hexdigest()
+    return {
+        "schema": analysis.qa.HDF5_VTP_AUDIT_SCHEMA,
+        "passed": True,
+        "hdf5": str(hdf5.resolve()),
+        "vtp": str(vtp.resolve()),
+        "particle_count_hdf5": particle_count,
+        "particle_count_vtp": particle_count,
+        "ids_sha256_hdf5": identifier_hash,
+        "ids_sha256_vtp": identifier_hash,
+        "compared_fields": list(analysis.qa.HDF5_VTP_COMPARED_FIELDS),
+        "maximum_absolute_differences": {
+            field: 0.0 for field in analysis.qa.HDF5_VTP_COMPARED_FIELDS
+        },
+        "tolerances": dict(analysis.qa.HDF5_VTP_ABSOLUTE_TOLERANCES),
+        "hdf5_structure": {
+            "schema": analysis.qa.HDF5_STRUCTURE_AUDIT_SCHEMA,
+            "passed": True,
+            "hdf5": str(hdf5.resolve()),
+            "table": "table",
+            "table_fields": analysis.qa.HDF5_FORMAL_TABLE_FIELDS,
+            "particle_count": particle_count,
+            "minimum_id": 0,
+            "maximum_id": particle_count - 1,
+            "ids_contiguous_unique": True,
+            "formal_schema": True,
+            "legacy_schema": False,
+            "compared_fields": list(analysis.qa.HDF5_STRUCTURE_COMPARED_FIELDS),
+        },
+    }
+
+
+def passing_mc_qa(particle_count: int = 1) -> dict[str, object]:
+    return {
+        "schema": analysis.qa.STABILITY_QA_SCHEMA,
+        "mode": analysis.qa.MC_HANDOFF_MODE,
+        "limits": analysis.qa.stability_contract(analysis.qa.MC_HANDOFF_MODE)[
+            "limits"
+        ],
+        "observed": {
+            "maximum_velocity_m_s": 0.0,
+            "maximum_displacement_m": 0.0,
+            "porosity_min": 0.485,
+            "porosity_max": 0.485,
+            "particle_count": particle_count,
+        },
+        "mc_feasibility": {
+            "particle_count": particle_count,
+            "maximum_tension_residual_pa": 0.0,
+            "maximum_shear_residual_pa": 0.0,
+            "maximum_positive_residual_pa": 0.0,
+            "violating_particle_count": 0,
+        },
+        "summary": "passing synthetic MC handoff QA",
+    }
 
 
 class StudyAnalysisTest(unittest.TestCase):
@@ -224,7 +296,7 @@ class StudyAnalysisTest(unittest.TestCase):
             config_path = root / "04_RL.json"
             config = {
                 "analysis": {"uuid": "CASE", "nsteps": 20, "dt": 0.1},
-                "post_processing": {"output_steps": 10},
+                "post_processing": {"output_steps": 10, "write_hdf5": False},
             }
             config_path.write_text(json.dumps(config), encoding="utf-8")
             result = root / "results" / "CASE"
@@ -232,7 +304,8 @@ class StudyAnalysisTest(unittest.TestCase):
             files = [result / "particle10.vtp", result / "particle20.vtp"]
             for path in files:
                 path.write_text(f"frame-{path.stem}", encoding="utf-8")
-            final = files[-1]
+            history = result / "pipeline-history00.csv"
+            history.write_text("step,time\n0,0\n", encoding="utf-8")
             sentinel = {
                 "schema": analysis.COMPLETION_SCHEMA,
                 "config": {
@@ -243,11 +316,11 @@ class StudyAnalysisTest(unittest.TestCase):
                     "validation_profile": "registered-study-v1",
                 },
                 "artifacts": {
-                    "final_vtp": {
-                        "path": str(final.relative_to(root)),
-                        "size_bytes": final.stat().st_size,
-                        "sha256": analysis.file_sha256(final),
-                    }
+                    "particle_vtp_grid": {
+                        "steps": [10, 20],
+                        "files": [artifact_record(path, root) for path in files],
+                    },
+                    "pipeline_history_csv": artifact_record(history, root),
                 },
                 "runtime_dependencies": {},
             }
@@ -259,6 +332,24 @@ class StudyAnalysisTest(unittest.TestCase):
             )
             self.assertEqual(audit["expected_particle_steps"], [10, 20])
             self.assertEqual(audit["expected_particle_times_s"], [1.0, 2.0])
+            sentinel["stability_qa"] = None
+            (result / analysis.COMPLETION_FILENAME).write_text(
+                json.dumps(sentinel), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "unexpected own-stage QA"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files
+                )
+            del sentinel["stability_qa"]
+            sentinel["schema"] = "pipeline-case-completion-v2"
+            (result / analysis.COMPLETION_FILENAME).write_text(
+                json.dumps(sentinel), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "schema"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files
+                )
+            sentinel["schema"] = analysis.COMPLETION_SCHEMA
             sentinel["config"]["validation_profile"] = "pipeline-local-smoke-v1"
             (result / analysis.COMPLETION_FILENAME).write_text(
                 json.dumps(sentinel), encoding="utf-8"
@@ -271,14 +362,171 @@ class StudyAnalysisTest(unittest.TestCase):
             (result / analysis.COMPLETION_FILENAME).write_text(
                 json.dumps(sentinel), encoding="utf-8"
             )
-            with self.assertRaisesRegex(ValueError, "time grid"):
+            with self.assertRaisesRegex(ValueError, "inventory|time grid"):
                 analysis.validate_completed_result(
                     config_path, root, config, result, files[-1:]
                 )
-            final.write_text("corrupt", encoding="utf-8")
+
+            middle_original = files[0].read_text(encoding="utf-8")
+            files[0].write_text("corrupt-middle", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "size|hash"):
                 analysis.validate_completed_result(
                     config_path, root, config, result, files
+                )
+            files[0].write_text(middle_original, encoding="utf-8")
+
+            history_original = history.read_text(encoding="utf-8")
+            history.write_text("corrupt-history", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "size|hash"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files
+                )
+            history.write_text(history_original, encoding="utf-8")
+
+            files[-1].write_text("corrupt", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "size|hash"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, files
+                )
+
+    def test_completed_result_binds_resume_and_pressure_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "04_RL.json"
+            config = {
+                "analysis": {
+                    "uuid": "DYNAMIC",
+                    "nsteps": 10,
+                    "dt": 0.1,
+                    "resume": {
+                        "resume": True,
+                        "uuid": "SOURCE_MC_RELAX",
+                        "step": 10,
+                        "nsteps": 10,
+                    },
+                    "resume_stability_qa_contract": analysis.qa.stability_contract(
+                        analysis.qa.MC_HANDOFF_MODE
+                    ),
+                    "prescribed_phase_pressures": {
+                        "enable": True,
+                        "write": False,
+                        "path": "pressure_databases/lagged",
+                        "file_prefix": "pressure",
+                        "source_dt": 0.1,
+                        "step_interval": 10,
+                        "max_step": 10,
+                    },
+                },
+                "post_processing": {
+                    "path": "results/",
+                    "output_steps": 10,
+                    "write_hdf5": False,
+                },
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            result = root / "results" / "DYNAMIC"
+            source = root / "results" / "SOURCE_MC_RELAX"
+            result.mkdir(parents=True)
+            source.mkdir(parents=True)
+            final_vtp = result / "particle10.vtp"
+            final_vtp.write_text("dynamic-frame", encoding="utf-8")
+            history = result / "pipeline-history00.csv"
+            history.write_text("step,time\n0,0\n", encoding="utf-8")
+            checkpoint = source / "particles10.h5"
+            source_vtp = source / "particle10.vtp"
+            checkpoint.write_text("checkpoint", encoding="utf-8")
+            source_vtp.write_text("source-frame", encoding="utf-8")
+
+            database = root / "pressure_databases" / "lagged"
+            database.mkdir(parents=True)
+            points = database / "pressure_points.txt"
+            values = database / "pressure_values.bin"
+            points.write_text("0 0.0 0.0\n", encoding="utf-8")
+            payload = bytearray(
+                struct.pack("<16sIIQQQd", b"MPM_PRESSURE_V2\0", 2, 2, 1, 10, 10, 0.1)
+            )
+            for step in (0, 10):
+                payload.extend(struct.pack("<Qdd", step, 1000.0, 100.0))
+            values.write_bytes(payload)
+            pressure_header = {
+                "format_version": "V2",
+                "dimension": 2,
+                "particle_count": 1,
+                "step_interval": 10,
+                "max_step": 10,
+                "source_dt_s": 0.1,
+                "frame_count": 2,
+            }
+            sentinel = {
+                "schema": analysis.COMPLETION_SCHEMA,
+                "config": {
+                    "path": config_path.name,
+                    "sha256": analysis.file_sha256(config_path),
+                    "uuid": "DYNAMIC",
+                    "nsteps": 10,
+                    "validation_profile": "registered-study-v1",
+                },
+                "artifacts": {
+                    "particle_vtp_grid": {
+                        "steps": [10],
+                        "files": [artifact_record(final_vtp, root)],
+                    },
+                    "pipeline_history_csv": artifact_record(history, root),
+                },
+                "runtime_dependencies": {
+                    "resume_equilibrium": {
+                        "checkpoint_hdf5": artifact_record(checkpoint, root),
+                        "qa_vtp": artifact_record(source_vtp, root),
+                        "hdf5_vtp_crosscheck": passing_hdf5_vtp_audit(
+                            checkpoint, source_vtp
+                        ),
+                        "stability_qa": passing_mc_qa(),
+                    },
+                    "read_pressure_database": {
+                        "points": artifact_record(points, root),
+                        "values": artifact_record(values, root),
+                        "header": pressure_header,
+                    },
+                },
+            }
+            sentinel_path = result / analysis.COMPLETION_FILENAME
+            sentinel_path.write_text(json.dumps(sentinel), encoding="utf-8")
+            analysis.validate_completed_result(
+                config_path, root, config, result, [final_vtp]
+            )
+
+            alternate_checkpoint = source / "alternate.h5"
+            alternate_checkpoint.write_bytes(checkpoint.read_bytes())
+            replaced_resume = json.loads(json.dumps(sentinel))
+            replaced_resume["runtime_dependencies"]["resume_equilibrium"][
+                "checkpoint_hdf5"
+            ] = artifact_record(alternate_checkpoint, root)
+            sentinel_path.write_text(json.dumps(replaced_resume), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "configured path"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, [final_vtp]
+                )
+
+            missing_pressure = json.loads(json.dumps(sentinel))
+            del missing_pressure["runtime_dependencies"]["read_pressure_database"][
+                "header"
+            ]
+            sentinel_path.write_text(json.dumps(missing_pressure), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "pressure.*malformed"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, [final_vtp]
+                )
+
+            alternate_points = database / "alternate_points.txt"
+            alternate_points.write_bytes(points.read_bytes())
+            replaced_pressure = json.loads(json.dumps(sentinel))
+            replaced_pressure["runtime_dependencies"]["read_pressure_database"][
+                "points"
+            ] = artifact_record(alternate_points, root)
+            sentinel_path.write_text(json.dumps(replaced_pressure), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "configured path"):
+                analysis.validate_completed_result(
+                    config_path, root, config, result, [final_vtp]
                 )
 
     def test_RL_RE_comparison_rejects_different_time_grids(self):

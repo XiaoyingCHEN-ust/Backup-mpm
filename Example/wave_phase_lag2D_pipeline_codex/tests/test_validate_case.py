@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -11,10 +12,19 @@ from unittest.mock import patch
 
 CASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CASE_DIR))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import prepare_study as study  # noqa: E402
+import qa_contract as qa  # noqa: E402
 import validate_case as validate  # noqa: E402
 from phase_controls import FRAME_STEP, PressureHeader, write_header  # noqa: E402
+from qa_test_helpers import (  # noqa: E402
+    linear_equilibrium_config,
+    write_fake_hdf5_auditor,
+    write_linear_qa_fixture,
+    write_mc_qa_fixture,
+    write_pipeline_history_fixture,
+)
 
 
 MINIMAL_VTP = """<?xml version="1.0"?>
@@ -144,32 +154,39 @@ class ValidateCaseTest(unittest.TestCase):
             root = Path(temporary)
             config_path = root / "configs" / "case.json"
             config_path.parent.mkdir(parents=True)
-            config = {
-                "analysis": {
-                    "uuid": "TEST_EQ",
-                    "nsteps": 10,
-                    "stability_gate": True,
-                },
-                "post_processing": {"path": "results/test/", "write_hdf5": True},
-            }
+            config = linear_equilibrium_config(uuid="TEST_EQ")
             config_path.write_text(json.dumps(config), encoding="utf-8")
             result = root / "results" / "test" / "TEST_EQ"
-            result.mkdir(parents=True)
-            (result / "particle10.vtp").write_text(
-                EQUILIBRIUM_VTP, encoding="utf-8"
+            write_linear_qa_fixture(
+                root, config, result / "particles10.h5"
             )
-            (result / "particles10.h5").write_bytes(
-                validate.HDF5_SIGNATURE + b"completion-test"
-            )
+            auditor = write_fake_hdf5_auditor(root)
 
-            with patch.object(validate, "CASE_ROOT", root):
+            with patch.dict(os.environ, {"MPM_HDF5_AUDITOR": str(auditor)}), patch.object(
+                validate, "CASE_ROOT", root
+            ):
                 sentinel = validate.write_case_completion(config_path)
                 payload = json.loads(sentinel.read_text(encoding="utf-8"))
                 self.assertEqual(payload["schema"], validate.COMPLETION_SCHEMA)
                 self.assertEqual(payload["config"]["uuid"], "TEST_EQ")
-                self.assertIn("final_vtp", payload["artifacts"])
+                self.assertEqual(
+                    payload["artifacts"]["particle_vtp_grid"]["steps"], [10]
+                )
+                self.assertEqual(
+                    len(payload["artifacts"]["particle_vtp_grid"]["files"]), 1
+                )
+                self.assertIn("pipeline_history_csv", payload["artifacts"])
                 self.assertIn("final_hdf5", payload["artifacts"])
-                self.assertIn("max|v|=0.000e+00", payload["stability_qa"])
+                self.assertTrue(
+                    payload["artifacts"]["hdf5_vtp_crosscheck"]["passed"]
+                )
+                self.assertIn(
+                    "max|v|=0.000e+00", payload["stability_qa"]["summary"]
+                )
+                self.assertEqual(
+                    payload["stability_qa"]["mode"],
+                    qa.LINEAR_EQUILIBRIUM_MODE,
+                )
                 self.assertFalse(list(result.glob(".*.tmp")))
 
                 unrelated = result / "keep-me.txt"
@@ -184,29 +201,20 @@ class ValidateCaseTest(unittest.TestCase):
             root = Path(temporary)
             config_path = root / "configs" / "case.json"
             config_path.parent.mkdir(parents=True)
-            config = {
-                "analysis": {
-                    "uuid": "UNSTABLE_EQ",
-                    "nsteps": 10,
-                    "stability_gate": True,
-                },
-                "post_processing": {"path": "results/test/", "write_hdf5": True},
-            }
+            config = linear_equilibrium_config(uuid="UNSTABLE_EQ")
             config_path.write_text(json.dumps(config), encoding="utf-8")
             result = root / "results" / "test" / "UNSTABLE_EQ"
-            result.mkdir(parents=True)
-            unstable_vtp = EQUILIBRIUM_VTP.replace(
-                'Name="velocities" NumberOfComponents="3" format="ascii">0 0 0',
-                'Name="velocities" NumberOfComponents="3" format="ascii">0.002 0 0',
+            write_linear_qa_fixture(
+                root,
+                config,
+                result / "particles10.h5",
+                maximum_velocity=0.002,
             )
-            (result / "particle10.vtp").write_text(
-                unstable_vtp, encoding="utf-8"
-            )
-            (result / "particles10.h5").write_bytes(
-                validate.HDF5_SIGNATURE + b"unstable-checkpoint"
-            )
+            auditor = write_fake_hdf5_auditor(root)
 
-            with patch.object(validate, "CASE_ROOT", root):
+            with patch.dict(os.environ, {"MPM_HDF5_AUDITOR": str(auditor)}), patch.object(
+                validate, "CASE_ROOT", root
+            ):
                 with self.assertRaisesRegex(ValueError, "exceeds 1e-3"):
                     validate.write_case_completion(config_path)
             self.assertFalse((result / validate.COMPLETION_FILENAME).exists())
@@ -216,28 +224,21 @@ class ValidateCaseTest(unittest.TestCase):
             root = Path(temporary)
             config_path = root / "configs" / "case.json"
             config_path.parent.mkdir(parents=True)
-            config = {
-                "analysis": {
-                    "uuid": "NONFINITE_EQ",
-                    "nsteps": 10,
-                    "stability_gate": True,
-                },
-                "post_processing": {"path": "results/test/", "write_hdf5": True},
-            }
+            config = linear_equilibrium_config(uuid="NONFINITE_EQ")
             config_path.write_text(json.dumps(config), encoding="utf-8")
             result = root / "results" / "test" / "NONFINITE_EQ"
-            result.mkdir(parents=True)
-            nonfinite_vtp = EQUILIBRIUM_VTP.replace(
-                'Name="velocities" NumberOfComponents="3" format="ascii">0 0 0',
-                'Name="velocities" NumberOfComponents="3" format="ascii">nan 0 0',
+            write_linear_qa_fixture(
+                root,
+                config,
+                result / "particles10.h5",
+                maximum_velocity=float("nan"),
             )
-            (result / "particle10.vtp").write_text(nonfinite_vtp, encoding="utf-8")
-            (result / "particles10.h5").write_bytes(
-                validate.HDF5_SIGNATURE + b"nonfinite-checkpoint"
-            )
+            auditor = write_fake_hdf5_auditor(root)
 
-            with patch.object(validate, "CASE_ROOT", root):
-                with self.assertRaisesRegex(ValueError, "NaN/Inf"):
+            with patch.dict(os.environ, {"MPM_HDF5_AUDITOR": str(auditor)}), patch.object(
+                validate, "CASE_ROOT", root
+            ):
+                with self.assertRaisesRegex(ValueError, "non-finite|NaN/Inf"):
                     validate.write_case_completion(config_path)
             self.assertFalse((result / validate.COMPLETION_FILENAME).exists())
 
@@ -260,12 +261,17 @@ class ValidateCaseTest(unittest.TestCase):
                         "max_step": 10,
                     },
                 },
-                "post_processing": {"path": "results/test/", "write_hdf5": False},
+                "post_processing": {
+                    "path": "results/test/",
+                    "write_hdf5": False,
+                    "output_steps": 10,
+                },
             }
             config_path.write_text(json.dumps(config), encoding="utf-8")
             result = root / "results" / "test" / "TEST_HD"
             result.mkdir(parents=True)
             (result / "particle10.vtp").write_text(MINIMAL_VTP, encoding="utf-8")
+            write_pipeline_history_fixture(config, result)
             database = root / "pressure_databases" / "test" / "lagged"
             database.mkdir(parents=True)
             (database / "pressure_points.txt").write_text("0 0.0 0.0\n", encoding="utf-8")
@@ -292,40 +298,40 @@ class ValidateCaseTest(unittest.TestCase):
             root = Path(temporary)
             config_path = root / "configs" / "replay.json"
             config_path.parent.mkdir(parents=True)
-            config = {
-                "analysis": {
-                    "uuid": "REPLAY",
-                    "nsteps": 10,
-                    "resume": {
-                        "resume": True,
-                        "uuid": "EQ",
-                        "step": 10,
-                        "nsteps": 10,
-                    },
-                    "prescribed_phase_pressures": {
-                        "enable": True,
-                        "write": False,
-                        "path": "pressure_databases/test/lagged",
-                        "file_prefix": "pressure",
-                        "source_dt": 0.1,
-                        "step_interval": 10,
-                        "max_step": 10,
-                    },
-                },
-                "post_processing": {"path": "results/test/", "write_hdf5": False},
+            config = linear_equilibrium_config(uuid="REPLAY")
+            config["analysis"].pop("stability_gate")
+            config["analysis"].pop("stability_qa_contract")
+            config["analysis"]["resume"] = {
+                "resume": True,
+                "uuid": "SOURCE_EQ",
+                "step": 10,
+                "nsteps": 10,
             }
+            config["analysis"]["resume_stability_qa_contract"] = (
+                qa.stability_contract(qa.LINEAR_EQUILIBRIUM_MODE)
+            )
+            config["analysis"]["prescribed_phase_pressures"] = {
+                "enable": True,
+                "write": False,
+                "path": "pressure_databases/test/lagged",
+                "file_prefix": "pressure",
+                "source_dt": 0.1,
+                "step_interval": 10,
+                "max_step": 10,
+            }
+            config["post_processing"]["write_hdf5"] = False
             config_path.write_text(json.dumps(config), encoding="utf-8")
-            equilibrium = root / "results" / "test" / "EQ"
+            equilibrium = root / "results" / "test" / "SOURCE_EQ"
             replay = root / "results" / "test" / "REPLAY"
-            equilibrium.mkdir(parents=True)
+            source = write_linear_qa_fixture(
+                root, config, equilibrium / "particles10.h5"
+            )
             replay.mkdir(parents=True)
-            (equilibrium / "particles10.h5").write_bytes(
-                validate.HDF5_SIGNATURE + b"equilibrium-checkpoint"
+            (replay / "particle10.vtp").write_text(
+                source["vtp"].read_text(encoding="utf-8"), encoding="utf-8"
             )
-            (equilibrium / "particle10.vtp").write_text(
-                EQUILIBRIUM_VTP, encoding="utf-8"
-            )
-            (replay / "particle10.vtp").write_text(MINIMAL_VTP, encoding="utf-8")
+            write_pipeline_history_fixture(config, replay)
+            auditor = write_fake_hdf5_auditor(root)
 
             database = root / "pressure_databases" / "test" / "lagged"
             database.mkdir(parents=True)
@@ -340,7 +346,9 @@ class ValidateCaseTest(unittest.TestCase):
                     stream.write(FRAME_STEP.pack(step))
                     stream.write(struct.pack("<dd", 1000.0 + step, 100.0 + step))
 
-            with patch.object(validate, "CASE_ROOT", root):
+            with patch.dict(os.environ, {"MPM_HDF5_AUDITOR": str(auditor)}), patch.object(
+                validate, "CASE_ROOT", root
+            ):
                 sentinel = validate.write_case_completion(config_path)
             payload = json.loads(sentinel.read_text(encoding="utf-8"))
             dependencies = payload["runtime_dependencies"]
@@ -349,9 +357,173 @@ class ValidateCaseTest(unittest.TestCase):
             self.assertIn(
                 "checkpoint_hdf5", dependencies["resume_equilibrium"]
             )
+            self.assertTrue(
+                dependencies["resume_equilibrium"]["hdf5_vtp_crosscheck"][
+                    "passed"
+                ]
+            )
+            self.assertEqual(
+                dependencies["resume_equilibrium"]["stability_qa"]["mode"],
+                qa.LINEAR_EQUILIBRIUM_MODE,
+            )
             self.assertEqual(
                 dependencies["read_pressure_database"]["header"]["frame_count"],
                 2,
+            )
+
+    def test_completion_fails_closed_without_hdf5_auditor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config_path = root / "configs" / "case.json"
+            config_path.parent.mkdir(parents=True)
+            config = linear_equilibrium_config(uuid="NO_AUDITOR_EQ")
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            result = root / "results" / "test" / "NO_AUDITOR_EQ"
+            write_linear_qa_fixture(root, config, result / "particles10.h5")
+            missing = root / "missing-hdf5-auditor"
+
+            with patch.dict(
+                os.environ, {"MPM_HDF5_AUDITOR": str(missing)}
+            ), patch.object(validate, "CASE_ROOT", root):
+                with self.assertRaisesRegex(FileNotFoundError, "auditor.*missing"):
+                    validate.write_case_completion(config_path)
+            self.assertFalse((result / validate.COMPLETION_FILENAME).exists())
+
+    def test_normal_stress_rejects_old_positive_1p2_kpa_offset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = linear_equilibrium_config(uuid="DRIFT_EQ")
+            checkpoint = root / "results" / "test" / "DRIFT_EQ" / "particles10.h5"
+            write_linear_qa_fixture(
+                root, config, checkpoint, stress_offset_pa=1_200.0
+            )
+            with patch.object(validate, "CASE_ROOT", root):
+                with self.assertRaisesRegex(ValueError, "gamma_eff\\*h"):
+                    validate.validate_equilibrium_vtp(
+                        checkpoint,
+                        config,
+                        mode=qa.LINEAR_EQUILIBRIUM_MODE,
+                    )
+
+    def test_normal_stress_rejects_more_than_five_percent_tension(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = linear_equilibrium_config(uuid="TENSION_EQ")
+            checkpoint = root / "results" / "test" / "TENSION_EQ" / "particles10.h5"
+            fixture = write_linear_qa_fixture(
+                root, config, checkpoint, tensile_quiet_per_row=8
+            )
+            self.assertGreater(
+                8 / len(fixture["quiet_ids_by_row"][0]),
+                qa.NORMAL_STRESS_MAXIMUM_TENSILE_FRACTION,
+            )
+            with patch.object(validate, "CASE_ROOT", root):
+                with self.assertRaisesRegex(ValueError, "tensile fraction"):
+                    validate.validate_equilibrium_vtp(
+                        checkpoint,
+                        config,
+                        mode=qa.LINEAR_EQUILIBRIUM_MODE,
+                    )
+
+    def test_normal_stress_aligns_shuffled_vtp_rows_by_particle_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = linear_equilibrium_config(uuid="SHUFFLED_EQ")
+            checkpoint = root / "results" / "test" / "SHUFFLED_EQ" / "particles10.h5"
+            write_linear_qa_fixture(
+                root,
+                config,
+                checkpoint,
+                row_spacing=0.05,
+                shuffled_ids=True,
+            )
+            with patch.object(validate, "CASE_ROOT", root):
+                record = validate.validate_equilibrium_vtp(
+                    checkpoint,
+                    config,
+                    mode=qa.LINEAR_EQUILIBRIUM_MODE,
+                )
+            self.assertEqual(
+                [row["median_drift_pa"] for row in record["normal_stress"]["rows"]],
+                [0.0, 0.0],
+            )
+
+    def test_normal_stress_tolerance_uses_cellsize_not_particle_spacing(self):
+        records = []
+        counts = []
+        for spacing in (0.01, 0.005):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                config = linear_equilibrium_config(
+                    uuid="PPC_EQ", particle_spacing=spacing
+                )
+                checkpoint = root / "results" / "test" / "PPC_EQ" / "particles10.h5"
+                fixture = write_linear_qa_fixture(
+                    root,
+                    config,
+                    checkpoint,
+                    row_spacing=spacing,
+                    x_spacing=spacing,
+                )
+                with patch.object(validate, "CASE_ROOT", root):
+                    records.append(
+                        validate.validate_equilibrium_vtp(
+                            checkpoint,
+                            config,
+                            mode=qa.LINEAR_EQUILIBRIUM_MODE,
+                        )
+                    )
+                counts.append(fixture["particle_count"])
+        tolerances = [
+            record["normal_stress"]["median_drift_tolerance_pa"]
+            for record in records
+        ]
+        self.assertNotEqual(counts[0], counts[1])
+        self.assertAlmostEqual(tolerances[0], tolerances[1], places=12)
+        self.assertAlmostEqual(
+            tolerances[0],
+            records[0]["normal_stress"]["effective_unit_weight_n_m3"] * 0.02,
+            places=12,
+        )
+
+    def test_mohr_coulomb_handoff_residual_passes_and_fails_at_one_micro_pa(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = linear_equilibrium_config(uuid="UNIT_MC_RELAX")
+            config["materials"][0]["type"] = "MohrCoulomb2D"
+            config["materials"][0]["tension_cutoff"] = 0.0
+            checkpoint = root / "results" / "test" / "UNIT_MC_RELAX" / "particles10.h5"
+            write_mc_qa_fixture(root, config, checkpoint)
+            with patch.object(validate, "CASE_ROOT", root):
+                record = validate.validate_equilibrium_vtp(
+                    checkpoint,
+                    config,
+                    mode=qa.MC_HANDOFF_MODE,
+                )
+            self.assertEqual(
+                record["mc_feasibility"]["maximum_positive_residual_pa"], 0.0
+            )
+
+            write_mc_qa_fixture(
+                root,
+                config,
+                checkpoint,
+                tensile_stress_pa=2.0e-6,
+            )
+            with patch.object(validate, "CASE_ROOT", root):
+                with self.assertRaisesRegex(ValueError, "positive yield residual"):
+                    validate.validate_equilibrium_vtp(
+                        checkpoint,
+                        config,
+                        mode=qa.MC_HANDOFF_MODE,
+                    )
+
+    def test_registered_velocity_limit_remains_one_millimetre_per_second(self):
+        self.assertEqual(qa.MAXIMUM_VELOCITY_M_S, 1.0e-3)
+        for mode in qa.STABILITY_MODES:
+            self.assertEqual(
+                qa.stability_contract(mode)["limits"]["maximum_velocity_m_s"],
+                1.0e-3,
             )
 
 

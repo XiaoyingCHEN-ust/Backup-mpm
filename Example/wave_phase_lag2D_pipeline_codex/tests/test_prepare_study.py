@@ -162,6 +162,17 @@ class PrepareStudyTest(unittest.TestCase):
                     ],
                     expected_surface_loading,
                 )
+                self.assertEqual(
+                    config["mesh"]["boundary_conditions"][
+                        "particles_at_free_surface"
+                    ],
+                    [
+                        {
+                            "pset_id": study.PHYSICAL_SURFACE_PSET_ID,
+                            "nonfree_pset_id": 3,
+                        }
+                    ],
+                )
             self.assertEqual(study.SUBMERGED_SURFACE_TRACTION, -4_905.0)
             self.assertNotIn("particles_stresses", low["mesh"])
             self.assertNotIn("particles_pore_pressures", low["mesh"])
@@ -424,11 +435,36 @@ class PrepareStudyTest(unittest.TestCase):
                     lambda c: c["materials"][1].__setitem__("liquid_saturation", 0.98),
                 ),
                 (
+                    "01_EQ_LS.json",
+                    lambda c: c["analysis"]["stability_qa_contract"][
+                        "limits"
+                    ].__setitem__("maximum_velocity_m_s", 2.0e-3),
+                ),
+                (
+                    "01_EQ_LS.json",
+                    lambda c: c["mesh"]["boundary_conditions"].__setitem__(
+                        "particles_at_free_surface",
+                        [{"pset_id": 0, "nonfree_pset_id": 3}],
+                    ),
+                ),
+                (
+                    "01_EQ_LS.json",
+                    lambda c: c["external_loading_conditions"][
+                        "particle_surface_traction"
+                    ][0].__setitem__("pset_id", 0),
+                ),
+                (
                     "02_MC_EQ.json",
                     lambda c: c["analysis"]["resume"].__setitem__("uuid", "WRONG_EQ"),
                 ),
                 ("02_HS.json", lambda c: c["analysis"].__setitem__("nsteps", 13_000)),
                 ("02_HS.json", lambda c: c["analysis"].__setitem__("PIC", 0.1)),
+                (
+                    "02_HS.json",
+                    lambda c: c["analysis"].pop(
+                        "resume_stability_qa_contract"
+                    ),
+                ),
                 (
                     "02_HS.json",
                     lambda c: c["analysis"]["damping"].__setitem__(

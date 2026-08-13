@@ -73,7 +73,7 @@
       ],
       "particles_at_free_surface": [
         {
-          "pset_id": 0,
+          "pset_id": 4,
           "nonfree_pset_id": 3
         }
       ],
@@ -238,6 +238,20 @@
     "dt": 0.0001,
     "nsteps": 40000,
     "stability_gate": true,
+    "stability_qa_contract": {
+      "schema": "pipeline-stability-qa-v1",
+      "mode": "linear-elastic-equilibrium",
+      "limits": {
+        "maximum_velocity_m_s": 0.001,
+        "maximum_displacement_m": 0.02,
+        "porosity_min_exclusive": 0.0,
+        "porosity_max_exclusive": 1.0,
+        "quiet_side_buffer_cells": 2.0,
+        "quiet_pipe_buffer_cells": 2.0,
+        "median_drift_cell_weights": 1.0,
+        "maximum_tensile_fraction": 0.05
+      }
+    },
     "resume": {
       "resume": false,
       "uuid": "PLP_SCREEN_LS_EQ",

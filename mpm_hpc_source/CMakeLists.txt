@@ -98,6 +98,11 @@ find_package(TBB REQUIRED)
 add_definitions(${TBB_DEFINITIONS})
 include_directories(${TBB_INCLUDE_DIRS})
 link_libraries(${TBB_LIBRARIES})
+if(NOT EXISTS "${TBB_INCLUDE_DIRS}/tbb/global_control.h")
+  message(FATAL_ERROR
+    "MPM requires TBB global_control support so -p can bound solver "
+    "parallelism (TBB 2017 preview / 2019 U4 or newer)")
+endif()
 
 # pthreads
 find_package (Threads)
@@ -272,6 +277,16 @@ if(MPM_BUILD_TESTING)
     ${mpm_SOURCE_DIR}/src/material.cc
     ${mpm_SOURCE_DIR}/src/io/logger.cc)
 
+  # Audited single-point mechanism comparison. Its CSV stdout is consumed by
+  # the phase-lag manuscript workflow; the executable returns nonzero if the
+  # shared path, constitutive states, or pressure/tangent checks fail.
+  add_executable(cyclic_constitutive_comparison_driver
+    ${mpm_SOURCE_DIR}/tests/materials/cyclic_constitutive_comparison_driver.cc
+    ${mpm_SOURCE_DIR}/src/material.cc
+    ${mpm_SOURCE_DIR}/src/io/logger.cc)
+  add_test(NAME cyclic_constitutive_comparison_driver
+    COMMAND cyclic_constitutive_comparison_driver)
+
   add_executable(mohr_coulomb_handoff_test
     ${mpm_SOURCE_DIR}/tests/materials/mohr_coulomb_handoff_test.cc
     ${mpm_SOURCE_DIR}/src/material.cc
@@ -283,6 +298,29 @@ if(MPM_BUILD_TESTING)
       ${mpm_SOURCE_DIR}/tests/io/hdf5_particle_test.cc
       ${mpm_SOURCE_DIR}/src/hdf5_particle.cc)
     add_test(NAME hdf5_particle_test COMMAND hdf5_particle_test)
+
+    add_executable(hdf5_checkpoint_audit
+      ${mpm_SOURCE_DIR}/src/hdf5_checkpoint_audit.cc
+      ${mpm_SOURCE_DIR}/src/hdf5_particle.cc)
+    add_executable(hdf5_checkpoint_audit_fixture
+      ${mpm_SOURCE_DIR}/tests/io/hdf5_checkpoint_audit_fixture.cc
+      ${mpm_SOURCE_DIR}/src/hdf5_particle.cc)
+    foreach(audit_mode IN ITEMS valid duplicate nonfinite bad_porosity false_status
+                                bad_nstate nonfinite_svar legacy legacy_allowed)
+      if(audit_mode STREQUAL valid OR audit_mode STREQUAL legacy_allowed)
+        set(audit_expect_success ON)
+      else()
+        set(audit_expect_success OFF)
+      endif()
+      add_test(
+        NAME hdf5_checkpoint_audit_${audit_mode}
+        COMMAND ${CMAKE_COMMAND}
+          -DFIXTURE=$<TARGET_FILE:hdf5_checkpoint_audit_fixture>
+          -DAUDITOR=$<TARGET_FILE:hdf5_checkpoint_audit>
+          -DMODE=${audit_mode}
+          -DEXPECT_SUCCESS=${audit_expect_success}
+          -P ${mpm_SOURCE_DIR}/tests/io/hdf5_checkpoint_audit_test.cmake)
+    endforeach()
   endif()
 
   add_executable(prescribed_pressure_validation_test
@@ -301,8 +339,17 @@ if(MPM_BUILD_TESTING)
   add_test(NAME free_surface_node_test COMMAND free_surface_node_test)
 
   add_executable(seabed_pressure_boundary_test
-    ${mpm_SOURCE_DIR}/tests/particles/seabed_pressure_boundary_test.cc)
+    ${mpm_SOURCE_DIR}/tests/particles/seabed_pressure_boundary_test.cc
+    ${mpm_SOURCE_DIR}/src/affine_transform.cc)
   add_test(NAME seabed_pressure_boundary_test
     COMMAND seabed_pressure_boundary_test)
+
+  add_executable(parallelism_test
+    ${mpm_SOURCE_DIR}/tests/runtime/parallelism_test.cc
+    ${mpm_SOURCE_DIR}/src/io/io.cc
+    ${mpm_SOURCE_DIR}/src/io/logger.cc)
+  target_compile_definitions(parallelism_test PRIVATE
+    MPM_TEST_FIXTURE_DIR="${mpm_SOURCE_DIR}/tests/runtime/fixtures/")
+  add_test(NAME parallelism_test COMMAND parallelism_test)
 
 endif()

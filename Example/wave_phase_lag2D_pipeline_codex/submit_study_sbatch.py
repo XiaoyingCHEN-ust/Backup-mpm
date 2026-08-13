@@ -18,11 +18,12 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import prepare_study as study
+import qa_contract as qa
 
 
 CASE_DIR = Path(__file__).resolve().parent
 RUN_TASK = "run_task.sbatch"
-COMPLETION_SCHEMA = "pipeline-case-completion-v2"
+COMPLETION_SCHEMA = qa.COMPLETION_SCHEMA
 COMPLETION_FILENAME = "pipeline_completion.json"
 PRESSURE_HEADER = struct.Struct("<16sIIQQQd")
 PRESSURE_FRAME_STEP_BYTES = struct.calcsize("<Q")
@@ -83,8 +84,7 @@ def resolve_case_path(value: str | Path) -> Path:
 
 
 def verify_artifact(record: Any, expected_path: Path) -> None:
-    if not isinstance(record, dict):
-        raise ValueError("Completion artifact record is not an object")
+    qa.validate_artifact_record(record, "completion")
     expected_path = checked_case_path(expected_path)
     recorded_path = resolve_case_path(record["path"])
     if recorded_path != expected_path:
@@ -96,6 +96,90 @@ def verify_artifact(record: Any, expected_path: Path) -> None:
         raise ValueError("Completion artifact size differs from the sentinel")
     if str(record["sha256"]) != file_sha256(expected_path):
         raise ValueError("Completion artifact hash differs from the sentinel")
+
+
+def expected_particle_steps(config: dict[str, Any]) -> list[int]:
+    nsteps = int(config["analysis"]["nsteps"])
+    output_steps = int(config["post_processing"]["output_steps"])
+    if nsteps <= 0 or output_steps <= 0:
+        raise ValueError("Configured nsteps and output_steps must be positive")
+    steps = list(range(output_steps, nsteps + 1, output_steps))
+    if not steps or steps[-1] != nsteps:
+        steps.append(nsteps)
+    return steps
+
+
+def expected_result_directory(config: dict[str, Any]) -> Path:
+    base = resolve_case_path(config["post_processing"].get("path", "results/"))
+    return checked_case_path(base / str(config["analysis"]["uuid"]))
+
+
+def expected_particle_vtp_paths(config: dict[str, Any]) -> list[Path]:
+    directory = expected_result_directory(config)
+    digits = len(str(int(config["analysis"]["nsteps"])))
+    return [
+        directory / f"particle{step:0{digits}d}.vtp"
+        for step in expected_particle_steps(config)
+    ]
+
+
+def expected_pipeline_history_path(config: dict[str, Any]) -> Path:
+    digits = len(str(int(config["analysis"]["nsteps"])))
+    return expected_result_directory(config) / f"pipeline-history{0:0{digits}d}.csv"
+
+
+def verify_particle_vtp_grid(config: dict[str, Any], record: Any) -> None:
+    if not isinstance(record, dict) or set(record) != {"steps", "files"}:
+        raise ValueError("Particle VTP grid audit is malformed")
+    steps = expected_particle_steps(config)
+    paths = expected_particle_vtp_paths(config)
+    if record["steps"] != steps:
+        raise ValueError("Particle VTP grid steps differ from config")
+    files = record["files"]
+    if not isinstance(files, list) or len(files) != len(paths):
+        raise ValueError("Particle VTP grid file audit is incomplete")
+    actual = sorted(expected_result_directory(config).glob("particle*.vtp"))
+    if [path.name for path in actual] != [path.name for path in paths]:
+        raise ValueError("Particle VTP result inventory is incomplete or unexpected")
+    for artifact, path in zip(files, paths):
+        verify_artifact(artifact, path)
+
+
+def verify_pipeline_history(config: dict[str, Any], record: Any) -> None:
+    expected = expected_pipeline_history_path(config)
+    actual = sorted(expected_result_directory(config).glob("pipeline-history*.csv"))
+    if [path.name for path in actual] != [expected.name]:
+        raise ValueError("Pipeline-history inventory is incomplete or unexpected")
+    verify_artifact(record, expected)
+
+
+def verify_hdf5_vtp_crosscheck(
+    record: Any, expected_hdf5: Path, expected_vtp: Path
+) -> None:
+    """Bind a stored cross-format pass to the exact configured checkpoint pair."""
+
+    expected_hdf5 = checked_case_path(expected_hdf5)
+    expected_vtp = checked_case_path(expected_vtp)
+    qa.validate_hdf5_vtp_audit(
+        record,
+        expected_hdf5=str(expected_hdf5),
+        expected_vtp=str(expected_vtp),
+    )
+
+
+def verify_embedded_artifact_audits(value: Any) -> None:
+    """Verify hash records embedded in structured QA payloads."""
+
+    if isinstance(value, dict):
+        if set(value) == {"path", "size_bytes", "sha256"}:
+            qa.validate_artifact_record(value, "embedded QA")
+            verify_artifact(value, resolve_case_path(value["path"]))
+            return
+        for child in value.values():
+            verify_embedded_artifact_audits(child)
+    elif isinstance(value, list):
+        for child in value:
+            verify_embedded_artifact_audits(child)
 
 
 def pressure_database_header(values_path: Path) -> dict[str, Any]:
@@ -160,6 +244,11 @@ def verify_pressure_database(config: dict[str, Any], record: Any) -> None:
     pressure = config["analysis"]["prescribed_phase_pressures"]
     directory = resolve_case_path(pressure["path"])
     prefix = str(pressure["file_prefix"])
+    expected_keys = {"points", "values", "header"}
+    if prefix == "phase_erased":
+        expected_keys.add("metadata")
+    if set(record) != expected_keys:
+        raise ValueError("Pressure database audit fields are malformed")
     points_path = directory / f"{prefix}_points.txt"
     values_path = directory / f"{prefix}_values.bin"
     verify_artifact(record["points"], points_path)
@@ -213,8 +302,25 @@ def verify_runtime_dependencies(config: dict[str, Any], record: Any) -> None:
         expected_keys.add("resume_equilibrium")
         checkpoint, qa_vtp = resume_checkpoint_paths(config)
         resume_record = record["resume_equilibrium"]
+        if not isinstance(resume_record, dict) or set(resume_record) != {
+            "checkpoint_hdf5",
+            "qa_vtp",
+            "hdf5_vtp_crosscheck",
+            "stability_qa",
+        }:
+            raise ValueError("Resume equilibrium audit is malformed")
         verify_artifact(resume_record["checkpoint_hdf5"], checkpoint)
         verify_artifact(resume_record["qa_vtp"], qa_vtp)
+        verify_hdf5_vtp_crosscheck(
+            resume_record["hdf5_vtp_crosscheck"], checkpoint, qa_vtp
+        )
+        expected_mode = config["analysis"]["resume_stability_qa_contract"][
+            "mode"
+        ]
+        qa.validate_stability_qa(
+            resume_record["stability_qa"], expected_mode=expected_mode
+        )
+        verify_embedded_artifact_audits(resume_record["stability_qa"])
     pressure = config["analysis"].get("prescribed_phase_pressures")
     if pressure is not None and bool(pressure.get("enable")):
         expected_keys.add("read_pressure_database")
@@ -238,11 +344,7 @@ def config_complete(config_path: Path) -> bool:
         analysis = config["analysis"]
         nsteps = int(analysis["nsteps"])
         digits = len(str(nsteps))
-        result_base = resolve_case_path(
-            config["post_processing"].get("path", "results/")
-        )
-        result_directory = result_base / str(analysis["uuid"])
-        final_vtp = result_directory / f"particle{nsteps:0{digits}d}.vtp"
+        result_directory = expected_result_directory(config)
         sentinel_path = result_directory / COMPLETION_FILENAME
         sentinel = json.loads(sentinel_path.read_text(encoding="utf-8"))
         if sentinel.get("schema") != COMPLETION_SCHEMA:
@@ -258,16 +360,35 @@ def config_complete(config_path: Path) -> bool:
             raise ValueError("Completion sentinel nsteps is stale")
         if sentinel_config.get("validation_profile") != "registered-study-v1":
             raise ValueError("Completion sentinel was not formally validated")
-        if bool(analysis.get("stability_gate")) and not isinstance(
-            sentinel.get("stability_qa"), str
-        ):
-            raise ValueError("Completion sentinel has no stability-gate audit")
+        if bool(analysis.get("stability_gate")):
+            expected_mode = analysis["stability_qa_contract"]["mode"]
+            qa.validate_stability_qa(
+                sentinel.get("stability_qa"), expected_mode=expected_mode
+            )
+            verify_embedded_artifact_audits(sentinel["stability_qa"])
+        elif "stability_qa" in sentinel:
+            raise ValueError("Dynamic completion has an unexpected own-stage QA")
         artifacts = sentinel["artifacts"]
-        verify_artifact(artifacts["final_vtp"], final_vtp)
+        expected_artifact_keys = {"particle_vtp_grid", "pipeline_history_csv"}
+        if config["post_processing"].get("write_hdf5"):
+            expected_artifact_keys.update(
+                {"final_hdf5", "hdf5_vtp_crosscheck"}
+            )
+        pressure = analysis.get("prescribed_phase_pressures")
+        if pressure is not None and bool(pressure.get("write")):
+            expected_artifact_keys.add("written_pressure_database")
+        if not isinstance(artifacts, dict) or set(artifacts) != expected_artifact_keys:
+            raise ValueError("Completion artifact inventory is malformed")
+        verify_particle_vtp_grid(config, artifacts["particle_vtp_grid"])
+        verify_pipeline_history(config, artifacts["pipeline_history_csv"])
         if config["post_processing"].get("write_hdf5"):
             final_hdf5 = result_directory / f"particles{nsteps:0{digits}d}.h5"
             verify_artifact(artifacts["final_hdf5"], final_hdf5)
-        pressure = analysis.get("prescribed_phase_pressures")
+            verify_hdf5_vtp_crosscheck(
+                artifacts["hdf5_vtp_crosscheck"],
+                final_hdf5,
+                expected_particle_vtp_paths(config)[-1],
+            )
         if pressure is not None and bool(pressure.get("write")):
             verify_pressure_database(config, artifacts["written_pressure_database"])
         verify_runtime_dependencies(config, sentinel["runtime_dependencies"])

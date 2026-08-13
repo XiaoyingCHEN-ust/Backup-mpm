@@ -18,6 +18,37 @@
     "mc_handoff_duration_s": 4.0,
     "stability_max_velocity_m_s": 0.001,
     "stability_max_displacement_m": 0.02,
+    "stability_qa": {
+      "completion_schema": "pipeline-case-completion-v3",
+      "stability_qa_schema": "pipeline-stability-qa-v1",
+      "linear_equilibrium": {
+        "schema": "pipeline-stability-qa-v1",
+        "mode": "linear-elastic-equilibrium",
+        "limits": {
+          "maximum_velocity_m_s": 0.001,
+          "maximum_displacement_m": 0.02,
+          "porosity_min_exclusive": 0.0,
+          "porosity_max_exclusive": 1.0,
+          "quiet_side_buffer_cells": 2.0,
+          "quiet_pipe_buffer_cells": 2.0,
+          "median_drift_cell_weights": 1.0,
+          "maximum_tensile_fraction": 0.05
+        }
+      },
+      "mohr_coulomb_handoff": {
+        "schema": "pipeline-stability-qa-v1",
+        "mode": "mohr-coulomb-handoff",
+        "limits": {
+          "maximum_velocity_m_s": 0.001,
+          "maximum_displacement_m": 0.02,
+          "porosity_min_exclusive": 0.0,
+          "porosity_max_exclusive": 1.0,
+          "maximum_positive_yield_residual_pa": 1e-06
+        }
+      },
+      "normal_stress_tolerance_definition": "gamma_effective_times_background_cell_size",
+      "normal_stress_selection_basis": "initial_particle_ids_and_coordinates"
+    },
     "porosity": 0.485,
     "intrinsic_permeability_m2": 9.79e-12,
     "hydraulic_conductivity_approx_m_s": 9.603989999999999e-05,

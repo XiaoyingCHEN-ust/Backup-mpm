@@ -339,6 +339,12 @@ public:
     free_surface_ = free_surface;
   }
 
+  //! Assign the phase-kinematic boundary without changing the geometric
+  //! free-surface flag used by pressure and interface algorithms
+  void assign_phase_kinematic_boundary(bool boundary) override {
+    phase_kinematic_boundary_ = boundary;
+  }
+
   // Assign water table
   bool assign_water_table(const std::shared_ptr<FunctionBase>& function,
                           const unsigned dir, const double h0) override;
@@ -540,6 +546,11 @@ public:
   // Return free surface bool
   bool free_surface() override { return free_surface_; }
 
+  //! Return phase-kinematic boundary status
+  bool phase_kinematic_boundary() override {
+    return phase_kinematic_boundary_;
+  }
+
   // Return material ids in node
   std::set<unsigned> material_ids() const override { return material_ids_; }
 
@@ -684,6 +695,8 @@ private:
   bool contact_{false}; 
   // Free surface
   bool free_surface_{false};
+  //! Pore phases follow the skeleton velocity and acceleration at this node
+  bool phase_kinematic_boundary_{false};
   // Water table
   bool water_table_{false};
   bool convective_heat_boundary_{false};

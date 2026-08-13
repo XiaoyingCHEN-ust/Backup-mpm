@@ -592,10 +592,11 @@ tunnel_boundary_particle_ids = numpy.where(
 save_particle(particles, "particles")
 save_entries_oneline(tunnel_boundary_particle_ids, "tunnel_boundary_particle_id")
 
-# Find particle sets. The free-surface set contains two particle rows, matching
-# the relative support used by the original 0.01/0.005 discretisation. Surface
-# traction is applied only to the topmost row so its integrated force is not
-# doubled by the two-row free-surface support.
+# Find particle sets.  Set 0 is retained as a two-row near-surface diagnostic
+# band.  It must not be assigned as the phase-pressure boundary: in ``assign``
+# mode every flagged particle receives a prescribed pressure each time step,
+# so doing that would incorrectly clamp the interior second row.  Set 4 is the
+# single physical seabed surface used for both pressure and traction.
 top_particle_ids = numpy.where(
     particles[:, 1] >= 0.5 - 2.0 * particle_spacing - 1.e-15)[0]
 save_entries(top_particle_ids, "top_particle_id")
@@ -742,7 +743,8 @@ summary = {
     "empty_pipeline_cavity_particles_removed": int(
         all_particles.shape[0] - particles.shape[0]),
     "pipeline_contact_particles": int(tunnel_boundary_particle_ids.shape[0]),
-    "free_surface_particles": int(top_particle_ids.shape[0]),
+    "near_surface_band_particles": int(top_particle_ids.shape[0]),
+    "free_surface_particles": int(top_traction_particle_ids.shape[0]),
     "surface_traction_particles": int(top_traction_particle_ids.shape[0]),
     "pipeline_wall_thickness": pipeline_wall_thickness,
     "pipeline_density": pipeline_density,

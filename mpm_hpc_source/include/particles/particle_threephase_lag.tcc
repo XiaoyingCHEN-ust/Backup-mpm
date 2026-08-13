@@ -526,13 +526,19 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
   // Mixture
     set_mixture_traction_ = false;
     set_pressure_constraint_ = false;
+    mixture_traction_.setZero();
+    static_traction_active_.fill(false);
+    for (auto& context : static_traction_contexts_) context.reset();
+    dynamic_surface_traction_context_.reset();
     pore_pressure_ = 0.;
     ini_vertical_effective_stress_ = 0.;
     suction_pressure_ = 0.;
 
   // Liquid
     liquid_velocity_.setZero();
+    liquid_acceleration_.setZero();
     liquid_flux_.setZero();
+    liquid_traction_.setZero();
     liquid_pressure_gradient_.setZero();
     liquid_seepage_velocity_.setZero();
     liquid_seepage_force_.setZero();
@@ -554,7 +560,10 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
 
   // Gas
     gas_velocity_.setZero();
+    gas_acceleration_.setZero();
+    pgravity_.setZero();
     gas_flux_.setZero();
+    gas_traction_.setZero();
     gas_pressure_gradient_.setZero();
     gas_C_matrix_.setZero();
     gas_strain_.setZero();
@@ -1053,6 +1062,63 @@ bool mpm::ThreePhaseParticleLag<Tdim>::is_physical_seabed_surface() const {
          this->physical_seabed_surface_marker_;
 }
 
+// Build a frozen facet-traction context from the geometry at the beginning of
+// this stage. The context is not recomputed as volume_, size_ or xi_ evolve.
+template <unsigned Tdim>
+mpm::facet_traction::FacetTractionContext
+mpm::ThreePhaseParticleLag<Tdim>::make_facet_traction_context(
+    unsigned public_facet) const {
+  if (this->cell_ == nullptr)
+    throw std::runtime_error(
+        "Cannot build facet traction context without an assigned cell");
+  return mpm::facet_traction::make_context<Tdim>(
+      this->cell_->element_ptr(), this->cell_->nodal_coordinates(), this->xi_,
+      this->natural_size_, public_facet);
+}
+
+// Remove one static amplitude before attempting an update. A failed update
+// therefore cannot leave the previous time-step load active.
+template <unsigned Tdim>
+void mpm::ThreePhaseParticleLag<Tdim>::clear_static_traction(
+    unsigned direction) {
+  if (direction >= 3 * Tdim) return;
+  static_traction_active_.at(direction) = false;
+  const unsigned component = direction % Tdim;
+  if (direction < Tdim)
+    mixture_traction_[component] = 0.;
+  else if (direction < 2 * Tdim)
+    liquid_traction_[component] = 0.;
+  else
+    gas_traction_[component] = 0.;
+  this->update_static_traction_flag();
+}
+
+template <unsigned Tdim>
+void mpm::ThreePhaseParticleLag<Tdim>::update_static_traction_flag() {
+  this->set_mixture_traction_ = std::any_of(
+      static_traction_active_.cbegin(), static_traction_active_.cend(),
+      [](bool active) { return active; });
+}
+
+// The dynamic pressure load owns a context independent of every configured
+// static traction. Public facet 2 is +y by contract, not element face 2 by
+// assumption (the central converter performs that mapping).
+template <unsigned Tdim>
+void mpm::ThreePhaseParticleLag<Tdim>::
+    initialise_dynamic_surface_traction_context() {
+  constexpr unsigned public_positive_y_facet = 2;
+  if (!dynamic_surface_traction_context_.initialised()) {
+    dynamic_surface_traction_context_ =
+        this->make_facet_traction_context(public_positive_y_facet);
+  } else if (dynamic_surface_traction_context_.public_facet !=
+                 public_positive_y_facet ||
+             !dynamic_surface_traction_context_.valid(
+                 Tdim, static_cast<Eigen::Index>(this->nodes_.size()))) {
+    throw std::runtime_error(
+        "Dynamic surface traction context is inconsistent");
+  }
+}
+
 // pre-compute pf for wave
 template <unsigned Tdim>
 bool mpm::ThreePhaseParticleLag<Tdim>::build_wave_pf_context(){
@@ -1073,6 +1139,9 @@ bool mpm::ThreePhaseParticleLag<Tdim>::build_wave_pf_context(){
         }
         this->wave_x_ref_initialized_ = true;
       }
+
+      if (this->is_physical_seabed_surface())
+        this->initialise_dynamic_surface_traction_context();
 
       const double pgravity =
           std::abs(this->pgravity_[1]) > 1.e-12 ? -this->pgravity_[1] : 9.81;
@@ -1188,13 +1257,81 @@ void mpm::ThreePhaseParticleLag<Tdim>::map_external_force(const VectorDim& pgrav
     try {
       this->pgravity_ = pgravity;
       Eigen::Matrix<double, Tdim, 1> mixture_force, liquid_force, gas_force;
+      const Eigen::Index node_count =
+          static_cast<Eigen::Index>(this->nodes_.size());
+      const bool has_static_facet_traction = std::any_of(
+          this->static_traction_active_.cbegin(),
+          this->static_traction_active_.cend(),
+          [](bool active) { return active; });
+      if ((has_static_facet_traction ||
+           this->is_physical_seabed_surface()) &&
+          this->cell_ == nullptr)
+        throw std::runtime_error(
+            "Cannot map facet traction without an assigned current cell");
+
+      std::array<Eigen::VectorXd, 3 * Tdim> current_static_weights;
+      for (unsigned direction = 0; direction < 3 * Tdim; ++direction) {
+        if (!this->static_traction_active_.at(direction)) continue;
+        const auto& context =
+            this->static_traction_contexts_.at(direction);
+        if (!context.valid(Tdim, node_count))
+          throw std::runtime_error(
+              "Active static traction has no valid reference context");
+        current_static_weights.at(direction) =
+            mpm::facet_traction::current_shape_weights<Tdim>(
+                this->cell_->element_ptr(), this->xi_,
+                context.public_facet);
+        if (current_static_weights.at(direction).size() != node_count)
+          throw std::runtime_error(
+              "Current static facet weights do not match current cell nodes");
+      }
+      const auto static_traction_weight =
+          [this, &current_static_weights](unsigned traction_direction,
+                                           unsigned node) {
+            if (!this->static_traction_active_.at(traction_direction))
+              return 0.;
+            return current_static_weights.at(traction_direction)[
+                static_cast<Eigen::Index>(node)];
+          };
+
+      constexpr unsigned vertical_direction = 1;
+      double dynamic_surface_force = 0.;
+      Eigen::VectorXd current_dynamic_weights;
+      if (this->is_physical_seabed_surface()) {
+        if (!this->dynamic_surface_traction_context_.valid(Tdim, node_count))
+          throw std::runtime_error(
+              "Physical seabed particle has no dynamic +y traction context");
+        current_dynamic_weights =
+            mpm::facet_traction::current_shape_weights<Tdim>(
+                this->cell_->element_ptr(), this->xi_,
+                this->dynamic_surface_traction_context_.public_facet);
+        if (current_dynamic_weights.size() != node_count)
+          throw std::runtime_error(
+              "Current dynamic facet weights do not match current cell nodes");
+        const double dynamic_surface_pressure =
+            mpm::threephase_lag_force::excess_phase_pressure(
+                this->liquid_pressure_, this->ini_liquid_pressure_);
+        dynamic_surface_force =
+            dynamic_surface_pressure *
+            this->dynamic_surface_traction_context_.reference_surface_measure;
+        if (!std::isfinite(dynamic_surface_force))
+          throw std::runtime_error(
+              "Dynamic surface traction force is non-finite");
+      }
+
       for (unsigned i = 0; i < nodes_.size(); ++i) {
         
         // External force = body force + boundary traction
         // MIXTURE
         mixture_force.setZero();
-        mixture_force = pgravity * mixture_mass_ * shapefn_[i] +
-                        this->mixture_traction_ * shapefn_[i];
+        mixture_force = pgravity * mixture_mass_ * shapefn_[i];
+        if (this->set_mixture_traction_) {
+          for (unsigned direction = 0; direction < Tdim; ++direction)
+            if (this->static_traction_active_.at(direction))
+              mixture_force[direction] +=
+                  this->mixture_traction_[direction] *
+                  static_traction_weight(direction, i);
+        }
         if (this->is_physical_seabed_surface()) {
           // A pressure boundary on a saturated/unsaturated seabed must be
           // paired with the same total normal traction.  Otherwise a positive
@@ -1202,12 +1339,9 @@ void mpm::ThreePhaseParticleLag<Tdim>::map_external_force(const VectorDim& pgrav
           // effective stress at the boundary and can create artificial
           // tensile impulses.  Use the actual liquid-pressure state so this
           // remains consistent for both native and prescribed phase histories.
-          const double dynamic_surface_pressure =
-              mpm::threephase_lag_force::excess_phase_pressure(
-                  this->liquid_pressure_, this->ini_liquid_pressure_);
-          mixture_force[Tdim - 1] -=
-              dynamic_surface_pressure * this->volume_ /
-              this->size_(Tdim - 1) * shapefn_[i];
+          mixture_force[vertical_direction] -=
+              dynamic_surface_force *
+              current_dynamic_weights[static_cast<Eigen::Index>(i)];
         }
         mpm::threephase_lag_force::require_finite_force(mixture_force,
                                                         "mixture external");
@@ -1218,8 +1352,14 @@ void mpm::ThreePhaseParticleLag<Tdim>::map_external_force(const VectorDim& pgrav
         // The phase momentum equations are assembled in excess-pressure form.
         // Mixture gravity is carried by the mixture equation, so only
         // phase-specific boundary traction belongs here.
-        liquid_force.setZero(); 
-        liquid_force = liquid_traction_ * shapefn_[i];
+        liquid_force.setZero();
+        if (this->set_mixture_traction_) {
+          for (unsigned direction = 0; direction < Tdim; ++direction)
+            if (this->static_traction_active_.at(Tdim + direction))
+              liquid_force[direction] =
+                  liquid_traction_[direction] *
+                  static_traction_weight(Tdim + direction, i);
+        }
         mpm::threephase_lag_force::require_finite_force(liquid_force,
                                                         "liquid external");
         nodes_[i]->update_external_force(true, mpm::ParticlePhase::Liquid,
@@ -1227,7 +1367,13 @@ void mpm::ThreePhaseParticleLag<Tdim>::map_external_force(const VectorDim& pgrav
 
         // GAS PHASE
         gas_force.setZero();
-        gas_force = gas_traction_ * shapefn_[i];
+        if (this->set_mixture_traction_) {
+          for (unsigned direction = 0; direction < Tdim; ++direction)
+            if (this->static_traction_active_.at(2 * Tdim + direction))
+              gas_force[direction] =
+                  gas_traction_[direction] *
+                  static_traction_weight(2 * Tdim + direction, i);
+        }
         mpm::threephase_lag_force::require_finite_force(gas_force,
                                                         "gas external");
         nodes_[i]->update_external_force(true, mpm::ParticlePhase::Gas, gas_force);
@@ -2280,28 +2426,57 @@ void mpm::ThreePhaseParticleLag<Tdim>::update_particle_density(double dt){
 template <unsigned Tdim>
 bool mpm::ThreePhaseParticleLag<Tdim>::assign_particle_traction(unsigned direction,
                                                           double traction) {
+  static_cast<void>(traction);
+  this->clear_static_traction(direction);
+  if (this->material_id_ != 999)
+    console_->error(
+        "{} #{}: ThreePhaseParticleLag traction requires an explicit public "
+        "Cartesian facet\n",
+        __FILE__, __LINE__);
+  return false;
+}
+
+// Assign traction using a frozen, stage-reference facet context. Repeated
+// calls update only the load amplitude; changes to current particle geometry
+// cannot alter the reference resultant. Interpolation weights are evaluated
+// separately from the current cell and local coordinates while mapping.
+template <unsigned Tdim>
+bool mpm::ThreePhaseParticleLag<Tdim>::assign_particle_traction_on_facet(
+    unsigned facet, unsigned direction, double traction) {
   bool status = false;
+  this->clear_static_traction(direction);
   if (this->material_id_ != 999) {
     try {
-      if (direction >= Tdim * 3 ||
-          this->volume_ == std::numeric_limits<double>::max()) {
+      if (direction >= Tdim * 3 || !std::isfinite(traction))
         throw std::runtime_error(
-            "Particle mixture traction property: volume / direction is invalid");
-      }
-      // Assign mixture traction
-      if (direction < Tdim) 
-        mixture_traction_(direction) =
-            traction * this->volume_ / this->size_(direction);
-      else if (direction < Tdim * 2) 
-        liquid_traction_(direction - Tdim) =
-            -traction * this->volume_ / this->size_(direction - Tdim);
-      else 
-        gas_traction_(direction - 2 * Tdim) =
-            -traction * this->volume_ / this->size_(direction - 2 * Tdim);
+            "Particle facet traction property is invalid");
 
+      auto& context = static_traction_contexts_.at(direction);
+      if (!context.initialised())
+        context = this->make_facet_traction_context(facet);
+      else if (context.public_facet != facet ||
+               !context.valid(
+                   Tdim, static_cast<Eigen::Index>(this->nodes_.size())))
+        throw std::runtime_error(
+            "Static traction reference context changed within a stage");
+
+      const unsigned component = direction % Tdim;
+      const double reference_force =
+          traction * context.reference_surface_measure;
+      if (!std::isfinite(reference_force))
+        throw std::runtime_error("Particle facet traction force is invalid");
+      if (direction < Tdim)
+        mixture_traction_[component] = reference_force;
+      else if (direction < 2 * Tdim)
+        liquid_traction_[component] = -reference_force;
+      else
+        gas_traction_[component] = -reference_force;
+
+      static_traction_active_.at(direction) = true;
+      this->update_static_traction_flag();
       status = true;
-      this->set_mixture_traction_ = true;
     } catch (std::exception& exception) {
+      this->clear_static_traction(direction);
       console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
       status = false;
     }

@@ -185,6 +185,16 @@ public:
   // Assign traction
   virtual bool assign_particle_traction(unsigned direction, double traction) = 0;
 
+  // Assign traction on a specified particle facet. Legacy particle types keep
+  // their historical centre-based mapping; particle implementations that need
+  // facet-exact balance (including ThreePhaseParticleLag) override this API.
+  virtual bool assign_particle_traction_on_facet(unsigned facet,
+                                                  unsigned direction,
+                                                  double traction) {
+    static_cast<void>(facet);
+    return this->assign_particle_traction(direction, traction);
+  }
+
   // Assign heat source
   virtual bool assign_particle_heat_source(double heat_source, double dt) = 0;
 

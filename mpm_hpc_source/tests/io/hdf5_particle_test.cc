@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <limits>
 #include <string>
 
 #include "hdf5_particle.h"
@@ -185,6 +186,28 @@ TEST_CASE("Legacy 159-field particle tables cannot fake extended history") {
         mpm::hdf5::particle::prepare_state_variables_for_restart(
             mpm::hdf5::particle::LEGACY_NFIELDS, &restored, 1),
         Catch::Matchers::Contains("refusing a lossy restart"));
+  }
+}
+
+TEST_CASE("Restart validation rejects invalid extended constitutive history") {
+  mpm::HDF5Particle particle{};
+  particle.id = 19;
+
+  SECTION("declared history exceeds the twenty-value checkpoint capacity") {
+    particle.nstate_vars = 21;
+    REQUIRE_THROWS_WITH(
+        mpm::hdf5::particle::prepare_state_variables_for_restart(
+            mpm::hdf5::particle::NFIELDS, &particle, 1),
+        Catch::Matchers::Contains("at most twenty state variables"));
+  }
+
+  SECTION("an active state variable is non-finite") {
+    particle.nstate_vars = 8;
+    particle.svars[7] = std::numeric_limits<double>::quiet_NaN();
+    REQUIRE_THROWS_WITH(
+        mpm::hdf5::particle::prepare_state_variables_for_restart(
+            mpm::hdf5::particle::NFIELDS, &particle, 1),
+        Catch::Matchers::Contains("non-finite active constitutive"));
   }
 }
 

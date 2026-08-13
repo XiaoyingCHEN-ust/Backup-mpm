@@ -21,6 +21,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+import qa_contract as qa
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PERIOD = 1.3
@@ -31,8 +33,8 @@ VTK_INTERVAL = STEPS_PER_CYCLE // 20
 EQUILIBRIUM_STEPS = 40_000
 EQUILIBRIUM_DAMPING_FACTOR = 5.0
 MC_HANDOFF_STEPS = 40_000
-STABILITY_MAX_VELOCITY = 1.0e-3
-STABILITY_MAX_DISPLACEMENT = 2.0e-2
+STABILITY_MAX_VELOCITY = qa.MAXIMUM_VELOCITY_M_S
+STABILITY_MAX_DISPLACEMENT = qa.MAXIMUM_DISPLACEMENT_M
 CRITICAL_TIMESTEP_MODULUS = 23_800_000.0
 POROSITY = 0.485
 PERMEABILITY = 9.79e-12
@@ -45,7 +47,14 @@ SEABED_ELEVATION = 0.5
 SUBMERGED_SURFACE_TRACTION = -WATER_DENSITY * GRAVITY * (
     SEA_LEVEL - SEABED_ELEVATION
 )
-SURFACE_TRACTION_PSET_ID = 4
+# Particle set 4 is the single physical seabed-surface row.  It is used by
+# both the prescribed phase-pressure boundary and the matching total-pressure
+# traction.  Particle set 0 is a two-row near-surface band retained only for
+# diagnostics; assigning it as ``free_surface`` would incorrectly clamp an
+# interior particle row to the boundary pressure every time step.
+PHYSICAL_SURFACE_PSET_ID = 4
+FREE_SURFACE_PSET_ID = PHYSICAL_SURFACE_PSET_ID
+SURFACE_TRACTION_PSET_ID = PHYSICAL_SURFACE_PSET_ID
 PIPE_RADIUS = 0.06
 PIPE_DIAMETER = 2.0 * PIPE_RADIUS
 PIPE_COVER_RATIO = 0.25
@@ -181,7 +190,12 @@ def mesh_block(mesh_directory: str, cell_size: float, particle_spacing: float) -
                 for side in (1, 3)
                 for direction in (0, 2, 4)
             ],
-            "particles_at_free_surface": [{"pset_id": 0, "nonfree_pset_id": 3}],
+            "particles_at_free_surface": [
+                {
+                    "pset_id": FREE_SURFACE_PSET_ID,
+                    "nonfree_pset_id": 3,
+                }
+            ],
             "particle_pore_pressure_constraints": [
                 {"pset_id": 1, "pore_pressure": hydrostatic(bottom_y_1)},
                 {"pset_id": 2, "pore_pressure": hydrostatic(bottom_y_2)},
@@ -534,6 +548,9 @@ def equilibrium_config(
                 "dt": DT,
                 "nsteps": EQUILIBRIUM_STEPS,
                 "stability_gate": True,
+                "stability_qa_contract": qa.stability_contract(
+                    qa.LINEAR_EQUILIBRIUM_MODE
+                ),
                 "resume": resume_block(False, uuid),
             },
             "post_processing": post_processing(result_path, "LinearElastic2D", initial=True),
@@ -592,6 +609,12 @@ def mc_handoff_config(
                 "nsteps": MC_HANDOFF_STEPS,
                 "handoff_relaxation": True,
                 "stability_gate": True,
+                "stability_qa_contract": qa.stability_contract(
+                    qa.MC_HANDOFF_MODE
+                ),
+                "resume_stability_qa_contract": qa.stability_contract(
+                    qa.LINEAR_EQUILIBRIUM_MODE
+                ),
                 "resume": resume_block(True, equilibrium_uuid),
             },
             "post_processing": post_processing(
@@ -655,6 +678,11 @@ def dynamic_config(
         "uuid": f"PLP_{code}",
         "dt": DT,
         "nsteps": nsteps,
+        "resume_stability_qa_contract": qa.stability_contract(
+            qa.MC_HANDOFF_MODE
+            if material_type == "MohrCoulomb2D"
+            else qa.LINEAR_EQUILIBRIUM_MODE
+        ),
         "resume": resume_block(
             True,
             equilibrium_uuid,
@@ -780,6 +808,34 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"{uuid}: dt must remain {DT:g} s")
     if pipeline.get("enable") is not True:
         raise ValueError(f"{uuid}: rigid pipeline must be enabled")
+    expected_free_surface = [
+        {
+            "pset_id": FREE_SURFACE_PSET_ID,
+            "nonfree_pset_id": 3,
+        }
+    ]
+    boundary_conditions = config.get("mesh", {}).get("boundary_conditions", {})
+    if boundary_conditions.get("particles_at_free_surface") != expected_free_surface:
+        raise ValueError(
+            f"{uuid}: prescribed phase-pressure boundary must use only physical "
+            f"surface pset {FREE_SURFACE_PSET_ID}"
+        )
+    expected_surface_traction = [
+        {
+            "pset_id": SURFACE_TRACTION_PSET_ID,
+            "dir": 1,
+            "traction": SUBMERGED_SURFACE_TRACTION,
+            "facet": 2,
+        }
+    ]
+    actual_surface_traction = config.get("external_loading_conditions", {}).get(
+        "particle_surface_traction"
+    )
+    if actual_surface_traction != expected_surface_traction:
+        raise ValueError(
+            f"{uuid}: submerged total-pressure traction must use only physical "
+            f"surface pset {SURFACE_TRACTION_PSET_ID}"
+        )
     support_fraction = float(analysis.get("minimum_nodal_support_fraction", -1.0))
     if not math.isclose(
         support_fraction, MINIMUM_NODAL_SUPPORT_FRACTION, abs_tol=1.0e-12
@@ -829,6 +885,16 @@ def validate_config(config: dict[str, Any]) -> None:
             )
         if analysis.get("stability_gate") is not True:
             raise ValueError(f"{analysis['uuid']}: equilibrium stability gate is disabled")
+        if analysis.get("stability_qa_contract") != qa.stability_contract(
+            qa.LINEAR_EQUILIBRIUM_MODE
+        ):
+            raise ValueError(
+                f"{analysis['uuid']}: equilibrium stability QA contract is stale"
+            )
+        if "resume_stability_qa_contract" in analysis:
+            raise ValueError(
+                f"{analysis['uuid']}: non-resumed equilibrium has a resume QA contract"
+            )
         saturation = float(fluid["liquid_saturation"])
         if math.isclose(saturation, LOW_LAG_SATURATION, rel_tol=0.0, abs_tol=1.0e-12):
             expected_state = "LS"
@@ -880,6 +946,14 @@ def validate_config(config: dict[str, Any]) -> None:
             )
         if analysis.get("stability_gate") is not True:
             raise ValueError(f"{analysis['uuid']}: MC handoff stability gate is disabled")
+        if analysis.get("stability_qa_contract") != qa.stability_contract(
+            qa.MC_HANDOFF_MODE
+        ) or analysis.get("resume_stability_qa_contract") != qa.stability_contract(
+            qa.LINEAR_EQUILIBRIUM_MODE
+        ):
+            raise ValueError(
+                f"{analysis['uuid']}: MC handoff stability QA contracts are stale"
+            )
         if not config["post_processing"].get("write_hdf5"):
             raise ValueError(f"{analysis['uuid']}: MC handoff checkpoint is disabled")
         if analysis.get("prescribed_phase_pressures") is not None:
@@ -924,6 +998,8 @@ def validate_config(config: dict[str, Any]) -> None:
             )
         if analysis.get("stability_gate"):
             raise ValueError(f"{uuid}: dynamic phase cannot publish a static gate")
+        if "stability_qa_contract" in analysis:
+            raise ValueError(f"{uuid}: dynamic phase has an own-stage stability QA")
 
         expected_material = (
             "MohrCoulomb2D" if stage in {"HM", "RM"} else "SANISAND2D"
@@ -933,6 +1009,15 @@ def validate_config(config: dict[str, Any]) -> None:
         )
         if soil["type"] != expected_material:
             raise ValueError(f"{uuid}: {stage} material registration is wrong")
+        expected_resume_qa_mode = (
+            qa.MC_HANDOFF_MODE
+            if expected_material == "MohrCoulomb2D"
+            else qa.LINEAR_EQUILIBRIUM_MODE
+        )
+        if analysis.get("resume_stability_qa_contract") != qa.stability_contract(
+            expected_resume_qa_mode
+        ):
+            raise ValueError(f"{uuid}: resume stability QA contract is stale")
         require_registered_saturation(analysis, fluid, expected_saturation)
 
         physical_wave = stage in {"LS", "HS", "HM", "HD"}
@@ -1214,6 +1299,7 @@ def generate_tier(
             "mc_handoff_duration_s": MC_HANDOFF_STEPS * DT,
             "stability_max_velocity_m_s": STABILITY_MAX_VELOCITY,
             "stability_max_displacement_m": STABILITY_MAX_DISPLACEMENT,
+            "stability_qa": qa.manifest_constants(),
             "porosity": POROSITY,
             "intrinsic_permeability_m2": PERMEABILITY,
             "hydraulic_conductivity_approx_m_s": (

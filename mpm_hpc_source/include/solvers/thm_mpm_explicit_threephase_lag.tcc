@@ -564,6 +564,12 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
   }
   if (prescribed_phase_pressures_) this->bind_prescribed_pressure_samples();
 
+  // Freeze every configured static facet-traction context at the exact
+  // stage-start geometry. In resumed stages this is deliberately after the
+  // checkpoint has restored and relocated the particles, and before the first
+  // strain/stress/volume update can change their state.
+  mesh_->initialise_particle_traction_contexts(current_time_);
+
   solver_begin = std::chrono::steady_clock::now();
 
   this->compute_critical_timestep_size(dt_);
@@ -658,6 +664,15 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
     // Apply particle velocity constraints
     mesh_->apply_moving_rigid_boundary(current_time_, dt_);
 
+    // Rebuild the free-surface flags after initialise() clears the nodal
+    // state, and before compute_velocity() applies the three-phase surface
+    // kinematic condition. Cell volume was mapped once above; reuse it here
+    // so density detection does not double the nodal volume.
+    if (!mesh_->compute_free_surface(free_surface_particle_,
+                                     volume_tolerance_, false))
+      throw std::runtime_error(
+          "Free-surface detection failed before nodal velocity update");
+
     // Compute nodal velocity at the begining of time step
     mesh_->iterate_over_nodes_predicate(
         std::bind(&mpm::NodeBase<Tdim>::compute_velocity, 
@@ -672,13 +687,6 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
         std::bind(&mpm::NodeBase<Tdim>::compute_temperature,
                   std::placeholders::_1, soil_skeleton),
         std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));  
-
-    // Compute free surface cells, nodes, and particles
-    // Cell volume was mapped above, before the support-threshold velocity
-    // calculation. Reuse that same mapping so the acceleration stage applies
-    // an identical density threshold rather than seeing twice the volume.
-    mesh_->compute_free_surface(free_surface_particle_, volume_tolerance_,
-                                false);
 
     // // Assign heat capacity and heat to nodes
     // mesh_->iterate_over_particles(

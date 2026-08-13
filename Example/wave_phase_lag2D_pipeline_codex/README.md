@@ -64,10 +64,54 @@ MPM_THREADS=8 bash run_case_local.sh configs/screen/01_EQ_LS.json
 
 `run_case_local.sh` validates runtime dependencies, removes only that case's
 old completion sentinel, executes the solver, and publishes a new sentinel only
-after the final VTP/HDF5 and any unchanged equilibrium stability gate pass.
-Run shortened smoke configurations before the registered 40,000-step
-equilibria or 104,000-step screen. Results without a matching completion
-sentinel are diagnostic only and are rejected by manuscript analysis.
+after the complete configured particle-VTP grid, unique pipeline-history CSV,
+same-step HDF5/VTP cross-check and any unchanged equilibrium stability gate pass.
+Run the four required shortened stages before the registered 40,000-step
+equilibria or 104,000-step screen:
+
+```bash
+MPM_THREADS=4 bash run_local_smoke.sh new-lowercase-label
+```
+
+The default fail-fast DAG contains only `EQ_LS`, `EQ_HS`, `SANI_LS` and
+`SANI_HS`.  `MC_EQ` is a separate, explicit diagnostic:
+
+```bash
+MPM_THREADS=4 bash run_local_smoke.sh --mc-diagnostic new-diagnostic-label
+```
+
+The diagnostic uses the same unchanged `max|v| <= 1e-3 m/s` gate and exits
+nonzero if it fails.  It never launches an MC dynamic smoke case.  Neither the
+required smoke nor the optional MC diagnostic is manuscript evidence; formal
+analysis rejects their validation profile even when every completion audit
+passes.  The v2 smoke manifest labels every case `required` or `diagnostic`
+and hash-binds the canonical payload, complete config file and manifest; the
+wrapper revalidates those hashes before launching any stage.
+
+The post-facet-correction MC_EQ diagnostic reached
+`max|v|=1.8469e-3 m/s`, so it remains a failed diagnostic rather than evidence
+or a reason to relax the gate.  After separating the assigned top-boundary
+phase kinematics from geometric cavity free surfaces, the current binary
+passed all four required stages under the fresh local label
+`finalfs3-20260813`.  EQ_LS/HS remained far below the unchanged velocity gate,
+the audited quiet top rows stayed in compression, and SANI_LS/HS retained all
+7,376 particles inside the mesh.  These ignored results certify the local
+smoke only; a new machine must use a new label.  The optional local MC result
+does not certify the registered MC branch: formal HM/RM work still depends on
+a separately gated registered `MC_EQ` checkpoint.
+
+After a fresh four-stage smoke passes, the guarded local formal controller runs
+only the seven registered phase-study cases (no MC branch), with at most two
+four-thread solvers and exact completion checks after every case:
+
+```bash
+MPM_THREADS=4 PHASE_SCREEN_MAX_TOTAL_THREADS=8 \
+  bash run_local_phase_screen.sh
+```
+
+It follows `EQ_LS/EQ_HS -> LS/HS -> HD -> phase transform -> RL/RE`. A
+non-empty result directory without a valid completion is a hard stop for manual
+audit; the controller never deletes or overwrites partial formal output.
 
 ## Server workflow
 
@@ -77,8 +121,8 @@ generation, validation, compilation and simulation work is launched inside an
 HPC4 allocation.
 
 ```bash
-# Submit the complete eight-cycle screen dependency chain and return immediately.
-python submit_study_sbatch.py screen --prepare --build --analyze \
+# Submit the registered phase-only screen dependency chain and return immediately.
+python submit_study_sbatch.py screen --stage phase --prepare --build --analyze \
   --cpus 16 --gres gpu:1 --nodelist gpu30
 ```
 
@@ -95,9 +139,10 @@ The low-lag case uses `Sw=0.993`, avoiding the singular near-saturated endpoint
 while retaining the previously demonstrated low-lag regime.  `mesh.py` also generates a
 hydrostatic liquid-pressure profile for every particle plus separate LS/HS
 effective self-weight stress fields.  The submerged bed surface carries the
-matching downward `4.905 kPa` water-column traction; it is assigned only to the
-top particle row, while the two-row set remains reserved for free-surface
-detection. Wave-pressure increments receive the same total normal traction on
+matching downward `4.905 kPa` water-column traction. Both the prescribed phase
+pressure and the matching total-pressure traction are assigned only to the
+single physical top particle row; the two-row near-surface set is diagnostic
+only. Wave-pressure increments receive the same total normal traction on
 that physical top row; this is a seabed boundary load, not direct wave drag on
 the pipe. The phase momentum equations consistently use pressure increments
 relative to the equilibrium checkpoint for both liquid and gas, so the
@@ -120,14 +165,18 @@ comparison result.  HM/RM restore that MC checkpoint and only then return to
 The submitter uses `sbatch --parsable` and records the dependency graph and job
 IDs under `submissions/`.  Every job is forced onto
 `--partition=granularmech --account=comgranmech`; the defaults also request
-`gpu30`, 16 CPU and `gres:gpu:1`.  It submits both primary equilibria, MC_EQ,
-physical cases, the fixed-pipe driver, phase transform, replays and analysis
-with `afterok` dependencies, then returns so the terminal may be disconnected
-or reused for Code Tunnel.  HM depends on MC_EQ; RM depends jointly on MC_EQ
-and HD.  Completed final VTP/HDF5 outputs are skipped unless `--force` is
+`gpu30`, 16 CPU and `gres:gpu:1`. With `--stage phase`, it submits the two
+primary equilibria, LS/HS, the fixed-pipe driver, phase transform, RL/RE and
+phase analysis with `afterok` dependencies, then returns so the terminal may
+be disconnected or reused for Code Tunnel. The separate `--stage full` mode
+also includes MC_EQ/HM/RM, but must not be used unless MC_EQ first passes the
+unchanged registered gate. Completed outputs are skipped only when the complete particle-VTP
+grid, pipeline-history CSV, HDF5/VTP cross-check and dependencies remain
+hash-valid, unless `--force` is
 specified.  A file is not considered complete merely because it exists:
 `run_case.sh` publishes `pipeline_completion.json` atomically only after the
-solver exits successfully and the final VTP, required HDF5, configuration hash
+solver exits successfully and the complete VTP grid, unique history CSV,
+required HDF5/VTP cross-check, configuration hash
 and (for HD) complete pressure-database frames have been audited.  Resubmission
 rechecks those sizes and SHA-256 hashes.  Dynamic-case sentinels also fingerprint
 the exact equilibrium HDF5/QA VTP and any replay pressure database (including
@@ -159,7 +208,7 @@ To resubmit only the reduction after jobs finish:
 sbatch --partition=granularmech --account=comgranmech \
   --nodes=1 --ntasks=1 --cpus-per-task=16 --gres=gpu:1 \
   --nodelist=gpu30 --time=02:00:00 --job-name=plp_screen_analyze \
-  run_task.sbatch bash analyze_results.sh screen full
+  run_task.sbatch bash analyze_results.sh screen phase
 ```
 
 Please return `analysis/screen/`, `material_preflight_3kPa.csv`, the newest

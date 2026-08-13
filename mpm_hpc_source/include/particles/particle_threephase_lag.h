@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "facet_traction_context.h"
 #include "logger.h"
 #include "particle.h"
 
@@ -125,6 +126,10 @@ public:
 
   // Assign traction to the particle
   bool assign_particle_traction(unsigned direction, double traction) override;
+
+  // Assign traction using interpolation projected onto the requested facet
+  bool assign_particle_traction_on_facet(unsigned facet, unsigned direction,
+                                          double traction) override;
 
   // Assign particle liquid phase velocity constraints
   bool assign_particle_liquid_velocity_constraint(unsigned dir,
@@ -281,6 +286,19 @@ protected:
 
 protected:
 
+  // Build a frozen reference context from the current stage-start geometry.
+  mpm::facet_traction::FacetTractionContext make_facet_traction_context(
+      unsigned public_facet) const;
+
+  // Build the dynamic excess-pressure context on the physical +y surface.
+  void initialise_dynamic_surface_traction_context();
+
+  // Clear one static traction amplitude without retaining a stale load.
+  void clear_static_traction(unsigned direction);
+
+  // Recompute the aggregate static-traction flag.
+  void update_static_traction_flag();
+
   // Inherit properties from ParticleBase class
   using ParticleBase<Tdim>::id_;
   using ParticleBase<Tdim>::coordinates_;
@@ -428,7 +446,7 @@ protected:
   // Wave prosities
   bool wave_pressure_;
   double domain_length_x_;
-  double Nx_;
+  double Nx_{0.};
   double sea_level_;
   double depth_left_;
   double depth_right_;
@@ -456,6 +474,11 @@ protected:
   bool set_mixture_traction_;
   bool set_pressure_constraint_;
   Eigen::Matrix<double, Tdim, 1> mixture_traction_;
+  std::array<bool, 3 * Tdim> static_traction_active_{};
+  std::array<mpm::facet_traction::FacetTractionContext, 3 * Tdim>
+      static_traction_contexts_;
+  mpm::facet_traction::FacetTractionContext
+      dynamic_surface_traction_context_;
   std::map<unsigned, double> liquid_velocity_constraints_;
   double pore_pressure_constraint_{std::numeric_limits<unsigned>::max()};
 

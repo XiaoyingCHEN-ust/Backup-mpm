@@ -36,6 +36,7 @@ using Json = nlohmann::json;
 #include "io.h"
 #include "io_mesh.h"
 #include "loads_bcs/friction_constraint.h"
+#include "loads_bcs/facet_traction_context.h"
 #include "loads_bcs/traction.h"
 #include "loads_bcs/contact.h"
 #include "loads_bcs/heat_source.h"
@@ -284,6 +285,10 @@ class Mesh {
   bool create_particles_tractions(
       const std::shared_ptr<FunctionBase>& mfunction, int set_id,
       unsigned facet, unsigned dir, double traction);
+
+  //! Initialise particle facet-traction contexts without mapping nodal forces
+  //! \param[in] current_time Current time
+  void initialise_particle_traction_contexts(double current_time);
 
   //! Apply traction to particles
   //! \param[in] current_time Current time

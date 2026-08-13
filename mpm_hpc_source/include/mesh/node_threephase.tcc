@@ -205,28 +205,28 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
             mass_solver.solve(F_matrix.transpose()).transpose();
       }
 
-      // Apply friction constraints
+      // Preserve the free-surface kinematic condition through the force
+      // update. Particle PIC updates interpolate velocity, while FLIP updates
+      // interpolate acceleration, so both quantities must be phase consistent
+      // before boundary-condition corrections are applied.
+      if (this->phase_kinematic_boundary_ && Tnphases == 3) {
+        this->velocity_.col(pore_fluid) =
+            this->velocity_.col(soil_skeleton);
+        this->velocity_.col(pore_gas) =
+            this->velocity_.col(soil_skeleton);
+        this->acceleration_.col(pore_fluid) =
+            this->acceleration_.col(soil_skeleton);
+        this->acceleration_.col(pore_gas) =
+            this->acceleration_.col(soil_skeleton);
+      }
+
+      // Friction modifies acceleration, so apply it before integrating the
+      // corrected nodal velocity. Because all free-surface phases now have
+      // identical inputs, the shared friction law preserves their equality.
       this->apply_friction_constraints(dt);
 
       // Velocity += acceleration * dt
       this->velocity_ += this->acceleration_ * dt;
-
-      // Apply velocity constraints, which also sets acceleration to 0,
-      // when velocity is set.
-      this->apply_velocity_constraints();
-
-      if (this->contact_) {
-        this->velocity_ = rigid_velocity_;
-        this->acceleration_ = rigid_acceleration_;
-      }
-
-      if (this->contact_) {
-        // set zero total force for rigid particle influence node
-        // get reaction force
-        reaction_force_.setZero();
-        reaction_force_ = -(this->external_force_.col(mixture) +
-                            this->internal_force_.col(mixture));
-      }
 
       if (!this->acceleration_.allFinite()) {
         std::ostringstream message;
@@ -255,6 +255,27 @@ bool mpm::Node<Tdim, Tdof, Tnphases>::compute_acc_vel_threephase_explicit(
         if ((std::abs(acceleration_.col(pore_gas)(i))) < tolerance)
           acceleration_.col(pore_gas)(i) = 0.;
       }
+
+      // Rigid contact is authoritative over the unconstrained free-surface
+      // update and retains the existing mixture-force reaction definition.
+      if (this->contact_) {
+        this->velocity_ = rigid_velocity_;
+        this->acceleration_ = rigid_acceleration_;
+        reaction_force_.setZero();
+        reaction_force_ = -(this->external_force_.col(mixture) +
+                            this->internal_force_.col(mixture));
+      }
+
+      // Prescribed velocities are the final authority when a free-surface
+      // node is also constrained or belongs to a rigid contact. Applying the
+      // constraint also zeros the corresponding acceleration for FLIP.
+      this->apply_velocity_constraints();
+
+      if (!this->acceleration_.allFinite())
+        throw std::runtime_error(
+            "Non-finite three-phase nodal acceleration after constraints at "
+            "node " +
+            std::to_string(id_));
     }
 
   // // Debug
