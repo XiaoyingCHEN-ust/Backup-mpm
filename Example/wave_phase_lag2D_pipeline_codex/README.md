@@ -296,6 +296,21 @@ source-PDF correction audit are in `MANUSCRIPT_SECTION_7_5_DRAFT.md` and
 6. post-release soil `max|u|/h` and `fraction(|u|>=h)` as method-choice
    evidence, reported separately from the deformation/strain claim.
 
+For an explicit two-dimensional liquid-phase pressure and phase-lag diagnostic
+of the completed physical HS screen, run:
+
+```bash
+python3 plot_liquid_pressure_phase_lag.py
+```
+
+This subtracts the audited HS_EQ `PIC_liquid_pressures` checkpoint by particle
+ID, draws four common-scale quarter-cycle fields, fits the fundamental over the
+registered 1.3--3.9 s pre-release window, and writes same-column-surface phase
+differences plus a time--depth section under
+`analysis/screen/liquid_pressure_phase_lag/`. The same-column reference isolates
+subsurface lag; a comparison to the central surface also contains the
+horizontal travelling-wave phase.
+
 The evidence synthesis fixes its thresholds before reading the field result:
 RL/RE fitted pressure means and amplitudes must agree within 2%, removal must
 reduce the mean crown/shoulder/invert absolute phase lag by at least 5 degrees,

@@ -21,6 +21,7 @@ __pycache__/
 !/Example/wave_phase_lag2D_pipeline_codex/qa_contract.py
 !/Example/wave_phase_lag2D_pipeline_codex/hdf5_checkpoint_crosscheck.py
 !/Example/wave_phase_lag2D_pipeline_codex/run_material_point_comparison.py
+!/Example/wave_phase_lag2D_pipeline_codex/plot_liquid_pressure_phase_lag.py
 !/Example/wave_phase_lag2D_pipeline_codex/run_case_local.sh
 !/Example/wave_phase_lag2D_pipeline_codex/prepare_local_smoke.py
 !/Example/wave_phase_lag2D_pipeline_codex/run_local_smoke.sh
