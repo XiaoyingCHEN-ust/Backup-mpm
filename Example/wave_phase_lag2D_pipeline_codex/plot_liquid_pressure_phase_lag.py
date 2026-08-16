@@ -22,17 +22,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle
 
-from analyze_study import build_probes, read_vtp
+from analyze_study import build_probes, expected_particle_steps, read_vtp
 from plot_manuscript_figures import _masked_triangulation
 
 
-SCHEMA = "pipeline-liquid-pressure-phase-lag-audit-v1"
+SCHEMA = "pipeline-liquid-pressure-phase-lag-audit-v2"
 CASE = "HS"
 WAVE_PERIOD_S = 1.3
 FIT_START_S = 1.3
 FIT_END_S = 3.9
 SNAPSHOT_TIMES_S = (2.6, 2.925, 3.25, 3.575)
 MINIMUM_LOCAL_AMPLITUDE_RATIO = 0.05
+MINIMUM_HARMONIC_R_SQUARED = 0.80
 FARFIELD_X_M = 1.06
 
 
@@ -68,7 +69,12 @@ def align_liquid_pressure(
     points, arrays = read_vtp(path)
     if "ids" not in arrays or "PIC_liquid_pressures" not in arrays:
         raise KeyError(f"{path} lacks ids or PIC_liquid_pressures")
-    ids = np.rint(np.asarray(arrays["ids"], dtype=np.float64)).astype(np.int64)
+    raw_ids = np.asarray(arrays["ids"], dtype=np.float64).reshape(-1)
+    ids = np.rint(raw_ids).astype(np.int64)
+    if not np.all(np.isfinite(raw_ids)) or not np.array_equal(
+        raw_ids, ids.astype(np.float64)
+    ):
+        raise ValueError(f"{path} contains non-finite or non-integral IDs")
     order = np.argsort(ids)
     if not np.array_equal(ids[order], expected_ids):
         raise ValueError(f"Particle IDs in {path} do not match the checkpoint")
@@ -93,6 +99,21 @@ def harmonic_fields(
     return mean, amplitude, phase
 
 
+def harmonic_r_squared(
+    times: np.ndarray, values: np.ndarray, period: float
+) -> np.ndarray:
+    """Return per-particle coherence with the fitted fundamental harmonic."""
+
+    omega = 2.0 * math.pi / period
+    design = np.column_stack(
+        (np.ones_like(times), np.cos(omega * times), np.sin(omega * times))
+    )
+    fitted = design @ (np.linalg.pinv(design) @ values)
+    residual = np.sum(np.square(values - fitted), axis=0)
+    total = np.sum(np.square(values - np.mean(values, axis=0)), axis=0)
+    return 1.0 - residual / np.maximum(total, np.finfo(float).eps)
+
+
 def wrap_degrees(values: np.ndarray) -> np.ndarray:
     return np.degrees((values + math.pi) % (2.0 * math.pi) - math.pi)
 
@@ -108,9 +129,11 @@ def same_column_surface_values(
     return output
 
 
-def pipeline_pose(history: list[dict[str, float]], time_s: float) -> np.ndarray:
+def pipeline_pose(
+    history: list[dict[str, float]], time_s: float, initial_center: np.ndarray
+) -> np.ndarray:
     row = min(history, key=lambda item: abs(item["time"] - time_s))
-    return np.asarray([0.7 + row["displacement_x"], 0.41 + row["displacement_y"]])
+    return initial_center + np.asarray([row["displacement_x"], row["displacement_y"]])
 
 
 def read_pipeline_history(path: Path) -> list[dict[str, float]]:
@@ -167,6 +190,7 @@ def plot_fields(
     initial_coordinates: np.ndarray,
     amplitude_ratio: np.ndarray,
     phase_difference_deg: np.ndarray,
+    case_label: str,
 ) -> None:
     figure = plt.figure(figsize=(16.0, 8.0), constrained_layout=True)
     grid = figure.add_gridspec(2, 4, height_ratios=(1.0, 1.12))
@@ -251,7 +275,11 @@ def plot_fields(
             zorder=5,
         )
         phase_axis.annotate(
-            f"{probe.name} {value:+.1f}°",
+            (
+                f"{probe.name} {value:+.1f}°"
+                if math.isfinite(value)
+                else f"{probe.name} masked (amplitude/$R^2$ gate)"
+            ),
             (probe.actual_x, probe.actual_y),
             xytext=annotation_offsets[probe.name],
             textcoords="offset points",
@@ -262,8 +290,9 @@ def plot_fields(
             zorder=6,
         )
     figure.suptitle(
-        "HS two-dimensional PIC liquid-pressure response\n"
-        "common snapshot scale; harmonic fit 1.3–3.9 s; phase masked where local amplitude <5% of surface",
+        f"{case_label} two-dimensional PIC liquid-pressure response\n"
+        "common snapshot scale; harmonic fit 1.3–3.9 s; phase masked where "
+        "amplitude <5% of surface or harmonic $R^2<0.8$",
         fontsize=13,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -279,6 +308,8 @@ def plot_time_depth(
     initial_coordinates: np.ndarray,
     amplitude: np.ndarray,
     phase: np.ndarray,
+    harmonic_r2: np.ndarray,
+    case_label: str,
 ) -> dict[str, Any]:
     x_values = np.unique(initial_coordinates[:, 0])
     chosen_x = float(x_values[np.argmin(np.abs(x_values - FARFIELD_X_M))])
@@ -292,7 +323,10 @@ def plot_time_depth(
     surface = indices[np.argmin(depth)]
     phase_difference = wrap_degrees(phase[indices] - phase[surface])
     amplitude_ratio = amplitude[indices] / max(amplitude[surface], np.finfo(float).eps)
-    phase_difference[amplitude_ratio < MINIMUM_LOCAL_AMPLITUDE_RATIO] = np.nan
+    phase_difference[
+        (amplitude_ratio < MINIMUM_LOCAL_AMPLITUDE_RATIO)
+        | (harmonic_r2[indices] < MINIMUM_HARMONIC_R_SQUARED)
+    ] = np.nan
 
     figure, axes = plt.subplots(1, 2, figsize=(11.5, 5.4), constrained_layout=True)
     artist = axes[0].pcolormesh(
@@ -329,7 +363,8 @@ def plot_time_depth(
     amplitude_axis.set_xlabel("Amplitude / surface amplitude", color="#A35F00")
     amplitude_axis.tick_params(axis="x", colors="#A35F00")
     figure.suptitle(
-        "HS liquid-pressure time–depth propagation (registered pre-release window)",
+        f"{case_label} liquid-pressure time–depth propagation "
+        "(harmonic-fit window)",
         fontsize=13,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -352,27 +387,48 @@ def main() -> int:
         type=Path,
         default=Path("analysis/screen/liquid_pressure_phase_lag"),
     )
+    parser.add_argument(
+        "--config", type=Path, default=Path("configs/screen/02_HS.json")
+    )
+    parser.add_argument(
+        "--result-dir",
+        type=Path,
+        default=Path("results/screen/PLP_SCREEN_HS_SANI"),
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=Path("results/screen/PLP_SCREEN_HS_EQ/particle40000.vtp"),
+    )
+    parser.add_argument("--particles", type=Path, default=Path("particles.txt"))
+    parser.add_argument("--case-label", default=CASE)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent
-    config_path = root / "configs/screen/02_HS.json"
+    resolve = lambda path: path if path.is_absolute() else root / path
+    config_path = resolve(args.config)
     config = read_json(config_path)
-    result = root / "results/screen/PLP_SCREEN_HS_SANI"
-    checkpoint = root / "results/screen/PLP_SCREEN_HS_EQ/particle40000.vtp"
-    particle_file = root / "particles.txt"
+    result = resolve(args.result_dir)
+    checkpoint = resolve(args.checkpoint)
+    particle_file = resolve(args.particles)
     history_paths = sorted(result.glob("pipeline-history*.csv"))
     if len(history_paths) != 1:
         raise ValueError(
             f"Expected exactly one HS pipeline history, found {len(history_paths)}"
         )
     history_path = history_paths[0]
-    output = (root / args.output_dir).resolve() if not args.output_dir.is_absolute() else args.output_dir
+    output = resolve(args.output_dir).resolve()
 
     initial_coordinates = read_initial_coordinates(particle_file)
     _, checkpoint_arrays = read_vtp(checkpoint)
-    checkpoint_ids = np.rint(
-        np.asarray(checkpoint_arrays["ids"], dtype=np.float64)
-    ).astype(np.int64)
+    raw_checkpoint_ids = np.asarray(
+        checkpoint_arrays["ids"], dtype=np.float64
+    ).reshape(-1)
+    checkpoint_ids = np.rint(raw_checkpoint_ids).astype(np.int64)
+    if not np.all(np.isfinite(raw_checkpoint_ids)) or not np.array_equal(
+        raw_checkpoint_ids, checkpoint_ids.astype(np.float64)
+    ):
+        raise ValueError("Checkpoint particle IDs are non-finite or non-integral")
     checkpoint_order = np.argsort(checkpoint_ids)
     expected_ids = checkpoint_ids[checkpoint_order]
     if not np.array_equal(expected_ids, np.arange(initial_coordinates.shape[0])):
@@ -380,10 +436,18 @@ def main() -> int:
     checkpoint_pressure = np.asarray(
         checkpoint_arrays["PIC_liquid_pressures"], dtype=np.float64
     )[checkpoint_order]
+    if checkpoint_pressure.size != initial_coordinates.shape[0] or not np.all(
+        np.isfinite(checkpoint_pressure)
+    ):
+        raise ValueError("Checkpoint liquid pressure is invalid")
 
     files = sorted(result.glob("particle*.vtp"), key=particle_step)
-    if len(files) != 160:
-        raise ValueError(f"Expected 160 HS frames, found {len(files)}")
+    expected_steps = expected_particle_steps(config)
+    actual_steps = [particle_step(path) for path in files]
+    if actual_steps != expected_steps:
+        raise ValueError(
+            f"Expected {args.case_label} steps {expected_steps}, got {actual_steps}"
+        )
     dt = float(config["analysis"]["dt"])
     times = np.asarray([particle_step(path) * dt for path in files])
     pressure_rows: list[np.ndarray] = []
@@ -397,13 +461,22 @@ def main() -> int:
     pressure_excess = np.asarray(pressure_rows)
     fit = (times >= FIT_START_S - 1.0e-12) & (times <= FIT_END_S + 1.0e-12)
     _, amplitude, phase = harmonic_fields(times[fit], pressure_excess[fit], WAVE_PERIOD_S)
+    harmonic_r2 = harmonic_r_squared(
+        times[fit], pressure_excess[fit], WAVE_PERIOD_S
+    )
     surface_amplitude = same_column_surface_values(initial_coordinates, amplitude)
     surface_phase = same_column_surface_values(initial_coordinates, phase)
     amplitude_ratio = amplitude / np.maximum(surface_amplitude, np.finfo(float).eps)
     phase_difference = wrap_degrees(phase - surface_phase)
-    phase_difference[amplitude_ratio < MINIMUM_LOCAL_AMPLITUDE_RATIO] = np.nan
+    phase_difference[
+        (amplitude_ratio < MINIMUM_LOCAL_AMPLITUDE_RATIO)
+        | (harmonic_r2 < MINIMUM_HARMONIC_R_SQUARED)
+    ] = np.nan
 
     history = read_pipeline_history(history_path)
+    initial_center = np.asarray(
+        config["analysis"]["rigid_pipeline"]["center"], dtype=np.float64
+    )
     snapshots: list[dict[str, Any]] = []
     for time_s in SNAPSHOT_TIMES_S:
         index = int(np.argmin(np.abs(times - time_s)))
@@ -417,26 +490,31 @@ def main() -> int:
                 "phase_fraction": ((times[index] - SNAPSHOT_TIMES_S[0]) / WAVE_PERIOD_S) % 1.0,
                 "points": points_by_step[step],
                 "pressure_excess_pa": pressure_excess[index],
-                "pipeline_center": pipeline_pose(history, float(times[index])),
+                "pipeline_center": pipeline_pose(
+                    history, float(times[index]), initial_center
+                ),
                 "path": str(files[index].resolve()),
             }
         )
 
     plot_fields(
-        output / "HS_liquid_pressure_2d_phase_lag",
+        output / f"{args.case_label}_liquid_pressure_2d_phase_lag",
         config,
         snapshots,
         initial_coordinates,
         amplitude_ratio,
         phase_difference,
+        args.case_label,
     )
     time_depth = plot_time_depth(
-        output / "HS_liquid_pressure_time_depth",
+        output / f"{args.case_label}_liquid_pressure_time_depth",
         times,
         pressure_excess,
         initial_coordinates,
         amplitude,
         phase,
+        harmonic_r2,
+        args.case_label,
     )
 
     probes = build_probes(config, initial_coordinates)
@@ -444,30 +522,35 @@ def main() -> int:
     probe_audit: dict[str, Any] = {}
     for probe in probes:
         difference = float(wrap_degrees(np.asarray([phase[probe.index] - phase[surface_index]]))[0])
+        same_column_difference = float(phase_difference[probe.index])
         probe_audit[probe.name] = {
             "particle_id": probe.index,
             "x_m": probe.actual_x,
             "y_m": probe.actual_y,
             "fundamental_amplitude_pa": float(amplitude[probe.index]),
+            "harmonic_r_squared": float(harmonic_r2[probe.index]),
             "phase_difference_from_registered_surface_deg": difference,
-            "phase_difference_from_same_column_surface_deg": float(
-                phase_difference[probe.index]
+            "phase_difference_from_same_column_surface_deg": (
+                same_column_difference
+                if math.isfinite(same_column_difference)
+                else None
             ),
         }
 
     audit = {
         "schema": SCHEMA,
-        "case": CASE,
+        "case": args.case_label,
         "field": "PIC_liquid_pressures",
         "excess_definition": (
-            "current PIC_liquid_pressures minus audited HS_EQ checkpoint value "
-            "for the same particle ID"
+            "current PIC_liquid_pressures minus the supplied equilibrium "
+            "checkpoint value for the same particle ID"
         ),
         "particle_count": int(initial_coordinates.shape[0]),
         "frame_count": len(files),
         "wave_period_s": WAVE_PERIOD_S,
         "fit_window_s": [FIT_START_S, FIT_END_S],
         "minimum_local_amplitude_ratio_for_phase": MINIMUM_LOCAL_AMPLITUDE_RATIO,
+        "minimum_harmonic_r_squared_for_phase": MINIMUM_HARMONIC_R_SQUARED,
         "checkpoint": {
             "path": str(checkpoint.resolve()),
             "sha256": sha256(checkpoint),
@@ -486,22 +569,23 @@ def main() -> int:
         "probe_results": probe_audit,
         "time_depth": time_depth,
         "phase_present": bool(
-            max(
-                abs(item["phase_difference_from_same_column_surface_deg"])
+            any(
+                item["phase_difference_from_same_column_surface_deg"] is not None
+                and abs(item["phase_difference_from_same_column_surface_deg"]) >= 5.0
                 for item in probe_audit.values()
             )
-            >= 5.0
         ),
         "interpretation": (
-            "Phase differences are directly resolved in the HS liquid-pressure "
+            f"Phase differences are directly resolved in the {args.case_label} "
+            "liquid-pressure "
             "fundamental. The same-column surface difference isolates vertical/"
             "subsurface lag; the registered central-surface difference also contains "
             "the horizontal travelling-wave phase. Sign follows the harmonic delay "
             "convention; use absolute magnitude when describing the presence of lag."
         ),
     }
-    (output / "HS_liquid_pressure_phase_lag.audit.json").write_text(
-        json.dumps(audit, indent=2) + "\n", encoding="utf-8"
+    (output / f"{args.case_label}_liquid_pressure_phase_lag.audit.json").write_text(
+        json.dumps(audit, indent=2, allow_nan=False) + "\n", encoding="utf-8"
     )
     print(json.dumps(audit["probe_results"], indent=2))
     print(f"Wrote liquid-pressure phase-lag figures to {output}")

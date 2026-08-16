@@ -311,6 +311,73 @@ differences plus a time--depth section under
 subsurface lag; a comparison to the central surface also contains the
 horizontal travelling-wave phase.
 
+### Exploratory low-permeability, no-smoothing replay
+
+The registered screen/production configurations remain immutable.  A separate
+exploratory namespace can test a more strongly diffusion-limited pressure
+response using `Sw=0.94`, `intrinsic_permeability=1e-13 m^2`, and both pressure-
+smoothing switches disabled.  Here `1e-13` is the solver's intrinsic-
+permeability input in square metres; it is not hydraulic conductivity in m/s.
+The equilibrium remains LinearElastic2D, pure PIC, fixed-pipe, no-wave and
+`5 s^-1` damping, with the unchanged `max|v|<=1e-3 m/s` gate.  The dynamic
+driver and replays use SANISAND, APIC, zero damping and a fixed pipe.
+
+```bash
+python3 prepare_phase_lag_exploration.py \
+  --label k1e-13_sw094_nosmooth \
+  --permeability 1e-13 --saturation 0.94 \
+  --no-pressure-smoothing --paired-replay
+
+../../mpm_hpc_source/build-pipeline/mpm -p 3 -f ./ \
+  -i configs/phase_lag_exploratory/k1e-13_sw094_nosmooth/01_EQ.json
+../../mpm_hpc_source/build-pipeline/mpm -p 3 -f ./ \
+  -i configs/phase_lag_exploratory/k1e-13_sw094_nosmooth/03_HD.json
+
+python3 phase_controls.py \
+  --source-dir pressure_databases/phase_lag_exploratory/k1e-13_sw094_nosmooth/lagged \
+  --source-prefix pressure \
+  --output-dir pressure_databases/phase_lag_exploratory/k1e-13_sw094_nosmooth/phase_erased \
+  --output-prefix phase_erased --period 1.3 \
+  --fit-start 2.6 --fit-end 3.9 --ramp-time 1.3
+
+../../mpm_hpc_source/build-pipeline/mpm -p 3 -f ./ \
+  -i configs/phase_lag_exploratory/k1e-13_sw094_nosmooth/04_RL.json
+../../mpm_hpc_source/build-pipeline/mpm -p 3 -f ./ \
+  -i configs/phase_lag_exploratory/k1e-13_sw094_nosmooth/05_RE.json
+python3 analyze_phase_lag_replay_exploration.py \
+  --label k1e-13_sw094_nosmooth
+```
+
+`03_HD` writes the fully coupled pressure history; `04_RL` and `05_RE` read
+the original and locally phase-erased versions of that exact history.  The
+transform retains each particle's mean, amplitude, residual/higher harmonics
+and along-wave progressive phase.  Consequently no-smoothing spatial texture
+is common to both replays and cannot by itself be counted as a phase-lag
+effect.  The analysis requires the exact 60-frame grid, finite/unique particle
+IDs, no particles outside the mesh, valid porosity and the primary `IF`,
+`R_sigma` and same-particle joint criteria.  These outputs are explicitly
+exploratory and do not replace registered manuscript evidence.
+
+The completed `k=1e-13 m^2`, `Sw=0.94`, no-smoothing run resolves a credible
+local pressure lag at the pipe crown: `+50.20 deg`, amplitude `37.48 Pa`
+(`0.132` of the same-column surface amplitude), and harmonic `R^2=0.9836`.
+The shoulder and far-field same-column lags are `-10.20 deg` and `+7.23 deg`;
+the invert estimate is rejected by the predeclared harmonic-quality gate
+(`R^2=0.5526`).  Removing phase while retaining fitted mean and amplitude gives
+a maximum framewise particle `q95` pressure difference of `29.37 Pa` at
+`t=3.705 s`.  Both 39000-step replays retain all 7376 particles in the mesh;
+the lagged run has `max|v|=1.370e-4 m/s` and porosity
+`0.484404--0.485223`.
+
+This stronger local lag does **not** make liquefaction easier in the short,
+fixed-pipe exploratory replay.  Relative to phase-erased, lagged `IF>=1`
+area-time is `0.35%` smaller; the sparse `R_sigma<=0.05` area-time is `8.11%`
+smaller, and the same-particle/same-time joint criterion is zero in both cases.
+The result therefore supports the existence of a local hydraulic phase lag,
+but not the manuscript's proposed lag-to-liquefaction causal claim.  The large
+raw no-smoothing snapshot roughness (`q95=137 Pa` between adjacent saved
+snapshots) is reported separately and is not interpreted as phase lag.
+
 The evidence synthesis fixes its thresholds before reading the field result:
 RL/RE fitted pressure means and amplitudes must agree within 2%, removal must
 reduce the mean crown/shoulder/invert absolute phase lag by at least 5 degrees,
