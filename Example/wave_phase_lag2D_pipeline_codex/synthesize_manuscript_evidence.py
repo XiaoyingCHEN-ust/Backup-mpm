@@ -42,6 +42,7 @@ TRANSFORM_INVARIANT_ABSOLUTE_TOLERANCE_PA = 1.0e-6
 
 IF_PREFIX = "support_ROI_upward_seepage_IF_ge_1"
 STRESS_PREFIX = "support_ROI_stress_loss_Rsigma_le_0p05"
+JOINT_PREFIX = "support_ROI_joint_IF_ge_1_and_Rsigma_le_0p05"
 
 
 def finite_float(value: Any, label: str) -> float:
@@ -262,20 +263,37 @@ def phase_control_qa(
             "amplitude_relative_difference": amplitude_difference,
             "mean_difference_normalized_by_surface_amplitude": mean_difference,
         }
-    passed = bool(
+    forcing_database_invariants_passed = bool(
         point_hash_match
         and transform_mean_change <= TRANSFORM_INVARIANT_ABSOLUTE_TOLERANCE_PA
         and transform_amplitude_change
         <= TRANSFORM_INVARIANT_ABSOLUTE_TOLERANCE_PA
-        and maximum_amplitude_relative_difference
+    )
+    smoothed_output_response_similarity_passed = bool(
+        maximum_amplitude_relative_difference
         <= PRESSURE_RESPONSE_RELATIVE_TOLERANCE
         and maximum_mean_normalized_difference
         <= PRESSURE_RESPONSE_RELATIVE_TOLERANCE
+    )
+    passed = bool(
+        forcing_database_invariants_passed
+        and smoothed_output_response_similarity_passed
     )
     return {
         "passed": passed,
         "classification": metadata.get("classification"),
         "point_hash_match": point_hash_match,
+        "forcing_database_invariants_passed": (
+            forcing_database_invariants_passed
+        ),
+        "smoothed_output_response_similarity_passed": (
+            smoothed_output_response_similarity_passed
+        ),
+        "response_field_definition": (
+            "checkpoint-relative saturation-weighted mixture pressure from "
+            "the PIC-smoothed VTP field; this is a response diagnostic, not "
+            "the raw prescribed liquid/gas database value"
+        ),
         "transform_max_abs_mean_change_pa": transform_mean_change,
         "transform_max_abs_fundamental_amplitude_change_pa": (
             transform_amplitude_change
@@ -325,6 +343,8 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
     erased_if_area = threshold_metric(erased, IF_PREFIX, if_area_metric)
     lagged_stress_area = threshold_metric(lagged, STRESS_PREFIX, stress_area_metric)
     erased_stress_area = threshold_metric(erased, STRESS_PREFIX, stress_area_metric)
+    lagged_joint_area = threshold_metric(lagged, JOINT_PREFIX, stress_area_metric)
+    erased_joint_area = threshold_metric(erased, JOINT_PREFIX, stress_area_metric)
     lagged_max_if = particle_metric(lagged, "max_upward_seepage_IF")
     erased_max_if = particle_metric(erased, "max_upward_seepage_IF")
     lagged_min_rsigma = particle_metric(
@@ -360,6 +380,18 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
     else:
         stress_status = "not_materially_resolved"
 
+    joint_direction = direction(
+        lagged_joint_area,
+        erased_joint_area,
+        absolute_resolution=absolute_resolution,
+    )
+    if joint_direction == "left_higher":
+        joint_status = "supported"
+    elif joint_direction == "right_higher":
+        joint_status = "opposite"
+    else:
+        joint_status = "not_materially_resolved"
+
     return {
         "hydraulic_trigger": {
             "status": hydraulic_status,
@@ -380,6 +412,18 @@ def phase_effect(lagged: dict[str, Any], erased: dict[str, Any]) -> dict[str, An
             "lagged_min_Rsigma": lagged_min_rsigma,
             "phase_erased_min_Rsigma": erased_min_rsigma,
             "absolute_resolution": resolution,
+        },
+        "same_particle_joint_occurrence": {
+            "status": joint_status,
+            "metric": f"{JOINT_PREFIX}_{stress_area_metric}",
+            "lagged": lagged_joint_area,
+            "phase_erased": erased_joint_area,
+            "direction": joint_direction,
+            "absolute_resolution": resolution,
+            "criterion": (
+                "same particle at the same saved time satisfies IF>=1 and "
+                "R_sigma<=0.05"
+            ),
         },
         "engineering_response": response_comparison(lagged, erased),
     }
@@ -713,6 +757,8 @@ def synthesize(
                         and phase["hydraulic_trigger"]["status"] == "supported"
                         and phase["realised_skeleton_stress_loss"]["status"]
                         == "supported"
+                        and phase["same_particle_joint_occurrence"]["status"]
+                        == "supported"
                     ),
                     "sanisand_mechanistic_advantage_supported": (
                         include_constitutive
@@ -745,6 +791,7 @@ def markdown_report(evidence: dict[str, Any]) -> str:
     phase = evidence["phase_only_RL_RE"]
     hydraulic = phase["hydraulic_trigger"]
     stress = phase["realised_skeleton_stress_loss"]
+    joint = phase["same_particle_joint_occurrence"]
     constitutive = evidence["constitutive_RL_RM"]
     constitutive_available = constitutive.get("status") != "unavailable"
     lines.extend(
@@ -752,6 +799,10 @@ def markdown_report(evidence: dict[str, Any]) -> str:
             "## Claim gates",
             "",
             f"- Phase-control pressure QA passed: `{phase['pressure_control_QA']['passed']}`.",
+            f"  - Pointwise prescribed-database mean/amplitude invariants passed: "
+            f"`{phase['pressure_control_QA']['forcing_database_invariants_passed']}`.",
+            f"  - PIC-smoothed mixture-pressure response similarity passed: "
+            f"`{phase['pressure_control_QA']['smoothed_output_response_similarity_passed']}`.",
             f"- Fundamental phase lag was materially reduced: "
             f"`{phase['phase_lag_contrast']['passed']}` (mean reduction "
             f"`{phase['phase_lag_contrast']['mean_abs_phase_lag_reduction_deg']:.4g} deg`).",
@@ -765,6 +816,10 @@ def markdown_report(evidence: dict[str, Any]) -> str:
             f"(RL/RE support-zone Rsigma area-time = `{stress['lagged']:.6g}` / "
             f"`{stress['phase_erased']:.6g} m2 s`; absolute resolution = "
             f"`{stress['absolute_resolution']['required_absolute_difference_m2_s']}`).",
+            f"- Lagged pressure increased the same-particle joint occurrence: "
+            f"`{joint['status'] == 'supported'}` "
+            f"(RL/RE joint IF+Rsigma area-time = `{joint['lagged']:.6g}` / "
+            f"`{joint['phase_erased']:.6g} m2 s`; status `{joint['status']}`).",
             (
                 f"- SANISAND mechanistic advantage was expressed in the response: "
                 f"`{gate['sanisand_mechanistic_advantage_supported']}` "
@@ -799,8 +854,12 @@ def markdown_report(evidence: dict[str, Any]) -> str:
         )
     else:
         lines.append(
-            "A stronger hydraulic trigger was not shown to produce materially larger "
-            "realised skeleton-stress loss; restrict the conclusion to hydraulic potential."
+            "The lagged replay may accumulate more skeleton-stress-loss area-time "
+            "when that separate metric is considered, but it did not establish the "
+            "registered trigger-to-loss chain. The same-particle joint occurrence "
+            f"was `{joint['status']}` (RL/RE `{joint['lagged']:.6g}` / "
+            f"`{joint['phase_erased']:.6g} m2 s`). Do not describe this as easier "
+            "liquefaction caused by phase lag."
         )
     lines.append("")
     if not constitutive_available:

@@ -14,7 +14,11 @@ sys.path.insert(0, str(CASE_DIR))
 import synthesize_manuscript_evidence as synthesis  # noqa: E402
 
 
-def threshold_particles(if_area: float, stress_area: float) -> dict[str, float]:
+def threshold_particles(
+    if_area: float, stress_area: float, joint_area: float | None = None
+) -> dict[str, float]:
+    if joint_area is None:
+        joint_area = min(if_area, stress_area)
     return {
         "max_upward_seepage_IF": 1.5,
         "minimum_vertical_stress_remaining_ratio": 0.01,
@@ -28,6 +32,10 @@ def threshold_particles(if_area: float, stress_area: float) -> dict[str, float]:
             "support_ROI_stress_loss_Rsigma_le_0p05_"
             "time_integrated_area_m2_s"
         ): stress_area,
+        (
+            "support_ROI_joint_IF_ge_1_and_Rsigma_le_0p05_"
+            "time_integrated_area_m2_s"
+        ): joint_area,
     }
 
 
@@ -80,6 +88,13 @@ class ManuscriptEvidenceTest(unittest.TestCase):
         cases["RM"]["pipeline"][
             "maximum_abs_vertical_displacement_over_D"
         ] = 0.2
+        if reverse_phase_effect:
+            joint_key = (
+                "support_ROI_joint_IF_ge_1_and_Rsigma_le_0p05_"
+                "time_integrated_area_m2_s"
+            )
+            cases["RL"]["particles"][joint_key] = 0.1
+            cases["RE"]["particles"][joint_key] = 0.2
         for code, data in cases.items():
             prefix = "04" if code in ("RL", "RM", "RE") else "02"
             (analysis / f"{prefix}_{code}_summary.json").write_text(
@@ -153,6 +168,12 @@ class ManuscriptEvidenceTest(unittest.TestCase):
         self.assertAlmostEqual(
             resolution["required_absolute_difference_m2_s"], 0.001
         )
+        self.assertEqual(
+            evidence["phase_only_RL_RE"]["same_particle_joint_occurrence"][
+                "status"
+            ],
+            "supported",
+        )
         self.assertFalse(
             evidence["constitutive_RL_RM"]["fabric_state_outputs_available"]
         )
@@ -173,6 +194,12 @@ class ManuscriptEvidenceTest(unittest.TestCase):
         )
         self.assertEqual(
             evidence["phase_only_RL_RE"]["hydraulic_trigger"]["status"],
+            "opposite",
+        )
+        self.assertEqual(
+            evidence["phase_only_RL_RE"]["same_particle_joint_occurrence"][
+                "status"
+            ],
             "opposite",
         )
 

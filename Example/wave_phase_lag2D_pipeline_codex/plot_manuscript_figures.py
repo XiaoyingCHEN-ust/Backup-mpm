@@ -91,7 +91,7 @@ def series(rows: list[dict[str, float]], key: str) -> tuple[list[float], list[fl
 
 def style_axis(axis: plt.Axes, label: str) -> None:
     axis.text(
-        -0.12,
+        0.0,
         1.04,
         label,
         transform=axis.transAxes,
@@ -650,7 +650,13 @@ def _draw_field(
         vmax=limits[1],
         rasterized=True,
     )
-    if threshold is not None and limits[0] <= threshold <= limits[1]:
+    finite_values = np.asarray(values)[finite]
+    if (
+        threshold is not None
+        and finite_values.size
+        and float(np.min(finite_values)) < threshold
+        and float(np.max(finite_values)) > threshold
+    ):
         axis.tricontour(
             triangulation,
             plot_values,
@@ -734,8 +740,15 @@ def _plot_field_triptych(
     difference = difference_sign * _aligned_difference(
         left_arrays["ids"], left_values, right_arrays["ids"], right_values
     )
-    difference_limit = float(np.percentile(np.abs(difference[np.isfinite(difference)]), 99.0))
-    difference_limit = max(difference_limit, 1.0e-12)
+    finite_difference = difference[np.isfinite(difference)]
+    difference_limit = float(np.percentile(np.abs(finite_difference), 99.0))
+    if field == "joint_liquefaction_indicator":
+        difference_limit = max(difference_limit, 1.0)
+    else:
+        difference_limit = max(difference_limit, 1.0e-12)
+    difference_title = difference_label
+    if field == "vertical_stress_remaining_ratio":
+        difference_title += f" (positive = more loss in {left_code})"
     spatial_limits = (
         float(min(np.min(left_points[:, 0]), np.min(right_points[:, 0]))),
         float(max(np.max(left_points[:, 0]), np.max(right_points[:, 0]))),
@@ -765,13 +778,25 @@ def _plot_field_triptych(
         left_points,
         difference,
         left_config,
-        title=f"Lagrangian ID-matched: {difference_label}\n(left current coordinates)",
+        title=f"Lagrangian ID-matched: {difference_title}\n(left current coordinates)",
         cmap="RdBu_r",
         limits=(-difference_limit, difference_limit),
         pipeline_pose=left_pose,
         spatial_limits=spatial_limits,
         draw_pipeline=False,
     )
+    if finite_difference.size and np.allclose(finite_difference, 0.0):
+        axes[2].text(
+            0.5,
+            0.08,
+            "No ID-matched difference at this registered frame",
+            transform=axes[2].transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=7.5,
+            color="#333333",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85},
+        )
     plt.colorbar(
         difference_artist,
         ax=axes[2],
@@ -790,6 +815,9 @@ def _plot_field_triptych(
             "in the difference panel"
         ),
         "difference_limits": [-difference_limit, difference_limit],
+        "difference_is_identically_zero": bool(
+            finite_difference.size and np.allclose(finite_difference, 0.0)
+        ),
         "shared_spatial_limits_m": list(spatial_limits),
         "pipeline_pose_sources": {
             left_code: {
@@ -849,33 +877,33 @@ def plot_2d_field_comparisons(directory: Path, output: Path) -> dict[str, Any]:
     rows = (
         (
             "wave_excess_mixture_pressure_kpa",
-            "Wave-induced excess mixture pressure (kPa)",
+            "Excess mixture pressure (kPa)",
             "viridis",
-            "{left} - {right} (kPa)",
+            "$\\Delta p$ = {left} - {right} (kPa)",
             1.0,
             None,
         ),
         (
             "upward_seepage_IF",
-            "Upward excess seepage index, IF",
+            "Upward seepage index, IF",
             "magma",
-            "{left} - {right} IF",
+            "$\\Delta IF$ = {left} - {right}",
             1.0,
             1.0,
         ),
         (
             "vertical_stress_remaining_ratio",
-            "Eligible vertical stress remaining ratio, $R_\\sigma$",
+            "Stress remaining ratio, $R_\\sigma$",
             "viridis",
-            "{right} - {left} $R_\\sigma$ (positive = more loss in {left})",
+            "$\\Delta R_\\sigma$ = {right} - {left}",
             -1.0,
             0.05,
         ),
         (
             "joint_liquefaction_indicator",
-            "Same-particle joint indicator, IF$\\geq$1 and $R_\\sigma\\leq$0.05",
+            "Joint indicator, IF$\\geq$1 and $R_\\sigma\\leq$0.05",
             "cividis",
-            "{left} - {right} joint indicator",
+            "$\\Delta$joint = {left} - {right}",
             1.0,
             0.5,
         ),
@@ -907,7 +935,7 @@ def plot_2d_field_comparisons(directory: Path, output: Path) -> dict[str, Any]:
     for key, left_code, right_code, registered_name, selection, filename in definitions:
         left = _field_frame(directory, left_code, selection["cases"][left_code])
         right = _field_frame(directory, right_code, selection["cases"][right_code])
-        figure, axes = plt.subplots(4, 3, figsize=(13.2, 9.2), constrained_layout=True)
+        figure, axes = plt.subplots(4, 3, figsize=(15.2, 10.2), constrained_layout=True)
         figure.suptitle(
             f"{left_code} vs {right_code}: {registered_name}, "
             f"target t={selection['target_time_s']:.4g} s",

@@ -4,14 +4,25 @@ For an exact Linux workstation continuation, including the verified baseline,
 mandatory smoke DAG, registered run order and local analysis commands, read
 [`LINUX_5080_HANDOFF.md`](LINUX_5080_HANDOFF.md) first.
 
-This directory contains the final case-study workflow for the manuscript.  The
-case is a shallow-buried, empty PE100 SDR17 pipeline that becomes a sensitive
-indicator of support loss when the surrounding seabed liquefies.  The proposed
-contribution is:
+This directory contains the audited case-study workflow for the manuscript.
+The case is a shallow-buried, empty PE100 SDR17 pipeline used as an indicator
+of support loss. The registered screen tests, rather than assumes, the proposed
+phase-lag mechanism:
 
 > Phase-resolved three-phase MPM linking hydraulic phase lag to post-liquefaction
 > pipeline migration, with a phase-erased numerical counterfactual and a cyclic
 > constitutive-model ablation.
+
+The completed seven-case phase-only screen gives a null/opposite result for the
+first part of that proposition. The raw phase-erased database preserved point
+means and fundamental amplitudes and reduced the mean probe lag by 45.37
+degrees, but the PIC-smoothed response-amplitude gate failed. RE, not RL, had
+the larger `IF>=1` area--time and same-particle joint
+`IF>=1`/`Rsigma<=0.05` occurrence, while pipe motion was materially
+indistinguishable. The paper must not claim from this screen that phase lag made
+liquefaction easier. SANISAND's additional cyclic mechanisms are demonstrated
+by the material-point diagnostic; field-scale superiority is not claimed
+because MC_EQ failed the unchanged stability gate.
 
 The code does **not** assume that SANISAND must predict more displacement than
 Mohr-Coulomb.  The comparison tests whether cyclic memory, state dependence,
@@ -265,8 +276,9 @@ python submit_study_sbatch.py production --label fine --prepare --analyze \
 history and an aggregate CSV.  For a full analysis, `analyze_results.sh` also
 runs `synthesize_manuscript_evidence.py` and `plot_manuscript_figures.py`.  The
 former writes `manuscript_evidence.json/.md` with pre-registered claim gates;
-the latter writes PNG/PDF curve composites (when Matplotlib is available) plus
-a JSON manifest selecting RL and RE field frames at one common physical time.
+the latter writes PNG/PDF curve composites and common-scale two-dimensional
+fields (when Matplotlib is available), plus JSON manifests selecting common
+registered RL/RE times.
 The Section 7.5 draft and the
 source-PDF correction audit are in `MANUSCRIPT_SECTION_7_5_DRAFT.md` and
 `MANUSCRIPT_PDF_REVISION_NOTES.md`.  The manuscript comparison should use only:
@@ -312,20 +324,20 @@ seepage-force index, and is retained only for QA.
 
 ## Recommended result presentation
 
-Use three composite figures to make the causal chain visible without another
-large parameter sweep:
+Use the completed figures to test the proposed chain without implying that the
+chain passed:
 
-1. **Trigger chain:** phase/amplitude histories, `IF` and `Rsigma` fields at the
-   same critical phase, followed by pipeline contact and `uy/D`.  This shows
-   phase lag -> excess gradient force -> realised effective-stress loss ->
-   support loss.
+1. **Trigger-chain audit:** phase/amplitude histories, `IF`, `Rsigma` and the
+   same-particle joint indicator at common registered times, followed by
+   pipeline contact and `uy/D`. In the completed screen the separate metrics
+   do not establish a lag-driven causal chain.
 2. **Physical and phase controls:** LS/HS and RL/RE curves of support-region
    criterion area, area-time, contact count and per-cycle uplift.  RL/RE must
    include the fitted mean/amplitude QA beside the response comparison.
-3. **Constitutive and large-deformation response:** RL/RM matched-pressure
-   `q-p'` paths, plastic-history variables, pipeline motion and soil `|u|/h`,
-   plus particle snapshots immediately before stress loss, at breakout and
-   after migration.
+3. **Constitutive mechanism and handoff audit:** identical material-point
+   cyclic paths for SANISAND and Mohr--Coulomb, together with the failed MC_EQ
+   field handoff. Do not present an RL/RM field response because no admissible
+   RM checkpoint exists.
 
 Do not use a single final-displacement bar as the SANISAND argument.  Show its
 cyclic path, accumulation and contact evolution; if the large-deformation gate

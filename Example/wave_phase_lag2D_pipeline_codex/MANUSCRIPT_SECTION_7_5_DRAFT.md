@@ -1,218 +1,189 @@
 # Draft manuscript section 7.5
 
-## 7.5 From hydraulic phase lag to pipeline-support loss: phase and constitutive ablations
+## 7.5 Phase-lag ablation and pipeline-support response
 
-Sections 7.1--7.4 showed that pore-pressure attenuation and phase lag are
-coupled outcomes of storage and seepage, and that a delayed signal may generate
-stronger local pressure gradients even when its transmitted amplitude is
-smaller.  The engineering consequence is examined here using a shallow empty
-pipeline rather than another permeability--saturation sweep.  The pipe provides
-direct observables of support loss--normalised displacement, rotation and
-soil-contact loss--while retaining the hydraulic mechanism established above.
-The pipe diameter is 0.12 m and the cover-to-diameter ratio is 0.25, placing the
-invert 0.15 m below the seabed within the intermediate-permeability zone where
-the preceding analysis predicts that delayed pressure can still penetrate to
-engineering depth.
+Sections 7.1--7.4 showed that pressure attenuation and phase lag are coupled
+outcomes of storage and seepage. Here, a shallow empty pipeline is used to test
+whether the lag itself increases hydraulic triggering and realised loss of
+skeleton stress. The pipe diameter is 0.12 m and the cover-to-diameter ratio is
+0.25. The invert is therefore 0.15 m below the seabed, within the zone in which
+the preceding simulations showed measurable wave-pressure penetration.
 
-The comparison matrix separates three questions.  LS (`Sw=0.993`) and HS
-(`Sw=0.94`) are fully coupled SANISAND simulations and show the physical effect
-of changing saturation; phase, amplitude, storage and drainage therefore vary
-together.  RL and RE are one-way replays driven by the same fixed-pipe pressure
-database.  RE rotates only each material point's fitted fundamental pressure
-component to the phase of its local seabed-surface point while preserving the
-point mean, fundamental amplitude, residual and higher-harmonic content.  The
-RL--RE comparison is consequently the phase-only diagnostic, but RE is a
-numerical counterfactual rather than a second fully coupled solution.  Finally,
-RL (SANISAND) and RM (Mohr--Coulomb) receive the identical lagged pressure
-history and form the principal constitutive ablation, subject to a first-frame
-`p'--q` initial-state audit because RM includes the MC_EQ handoff.  HS--HM is retained only
-as fully coupled context because their pore pressures may diverge with their
-solid responses.
+The comparison matrix separates a physical saturation contrast from a
+phase-only numerical ablation. LS (`Sw=0.993`) and HS (`Sw=0.94`) are fully
+coupled SANISAND calculations, so phase, amplitude, storage and drainage change
+together. RL and RE are one-way replays derived from the same fixed-pipeline
+pressure database. At each material point, RE replaces the fitted fundamental
+phase by that of the corresponding seabed-surface point while retaining the
+point mean, fundamental amplitude, residual and higher-harmonic content. RE is
+therefore a numerical counterfactual, not a second fully coupled prediction.
 
-All cases begin from a fixed-pipe, zero-wave equilibrium.  The two saturation
-states are first equilibrated for 4 s with `LinearElastic2D`, pure PIC and a
-Cundall damping coefficient of 5 s^-1.  The elastic tangent is the same local
-reference tangent used for the Mohr--Coulomb ablation (`E=9.10081 MPa`,
-`nu=-0.0079625`), while a separate 23.8 MPa modulus is used only for the
-explicit time-step bound.  A checkpoint is accepted only if all particles
-remain in the domain, all fields are finite, `max|v| <= 10^-3 m/s`, maximum
-displacement is below one background cell and porosity is valid.  SANISAND
-restores this checkpoint directly.  The zero-cohesion Mohr--Coulomb cases pass
-through an attempted 4 s fixed-pipe, pure-PIC, damped MC relaxation and the
-same unchanged stability gate before dynamic loading.  In the screen study the
-zero-cohesion material yielded immediately over a large part of the restored
-pipe-adjacent elastic stress field and MC_EQ ejected particles at 3.4576 s;
-it therefore failed rather than being accepted as a dynamic checkpoint.  This
-failed MC_EQ stage is a numerical handoff diagnostic, not a comparison result,
-and HM/RM results are not reported.
+All accepted dynamic cases start from a fixed-pipeline, zero-wave equilibrium.
+The LS and HS beds were equilibrated for 4 s using `LinearElastic2D`, pure PIC,
+`dt=10^-4 s` and Cundall damping of 5 s^-1. A checkpoint was accepted only when
+all 7,376 particles remained inside the grid, all audited fields were finite,
+`max|v| <= 10^-3 m/s`, maximum displacement was below one background cell,
+porosity was in `(0,1)`, and the near-surface normal-stress audit passed.
+SANISAND then restored the accepted checkpoint directly. The stability limit
+was not relaxed for any case.
 
-### 7.5.1 A phase-only test of the hydraulic trigger
+The planned zero-cohesion Mohr--Coulomb field comparison could not be admitted.
+After restoring the HS elastic checkpoint, the current MC_EQ diagnostic reached
+`max|v|=1.847 x 10^-3 m/s` at 0.5 s and therefore failed the unchanged
+`10^-3 m/s` gate. The failure was concentrated around the shallow pipe and
+surface, where the elastic equilibrium stress field was not compatible with the
+zero-cohesion, zero-tension Mohr--Coulomb surface. HM and RM are consequently
+not reported as field comparisons.
 
-Figure 7 first verifies the control.  Over the pre-release fitting window, the
-RL and RE pressure means differ by no more than
-`{{RL_RE_MAX_NORMALISED_MEAN_DIFFERENCE}}`, and their fitted fundamental
-amplitudes differ by no more than `{{RL_RE_MAX_RELATIVE_AMPLITUDE_DIFFERENCE}}`.
-The pressure-database audit gives zero change in the fitted point means and a
-maximum amplitude change of `{{TRANSFORM_MAX_AMPLITUDE_CHANGE_PA}} Pa`, whereas
-the mean crown--shoulder--invert phase lag decreases by
-`{{RL_RE_MEAN_PHASE_LAG_REDUCTION_DEG}} degrees`.  These checks are prerequisites
-for interpreting RL--RE as a timing ablation rather than an amplitude ablation.
+### 7.5.1 Phase-control audit and hydraulic trigger
 
-The hydraulic trigger is evaluated using the hydrostatic-corrected upward
-seepage-force index
+The prescribed-database transformation passed its pointwise invariants: the
+maximum fitted-mean change was 0 Pa and the maximum fundamental-amplitude change
+was `5.68 x 10^-14 Pa`. Across the crown, shoulder and invert probes, the mean
+absolute phase-lag reduction was 45.37 degrees (120.91, 7.14 and 8.05 degrees,
+respectively), exceeding the registered 5-degree minimum.
+
+The input invariant does not, however, imply equal solver-output amplitudes.
+The checkpoint-relative, saturation-weighted mixture pressure written to VTP is
+the PIC-smoothed response field. Its largest RL--RE fundamental-amplitude
+difference was 54.75% at the crown, and the largest mean difference normalised
+by surface amplitude was 5.953%. Both exceed the pre-registered 2% response
+similarity tolerance. Thus the raw forcing transformation is correct, but the
+overall pressure-response control fails. RL--RE remains useful as a numerical
+counterfactual, but it cannot be interpreted as a clean, response-level
+phase-only experiment.
+
+The hydraulic trigger is the hydrostatic-corrected upward seepage-force index
 
 `IF = max[0, (f_seep,l + rho_l g) dot (-g/|g|) / gamma_sub]`,
 
-where `IF >= 1` denotes that the wave-induced upward seepage force reaches the
-submerged skeleton weight.  The support-zone area--time above this threshold is
-`{{RL_SUPPORT_IF_AREA_TIME_M2S}} m2 s` in the lagged replay and
-`{{RE_SUPPORT_IF_AREA_TIME_M2S}} m2 s` in the phase-erased replay; the
-corresponding maximum indices are `{{RL_MAX_IF}}` and `{{RE_MAX_IF}}`.
+where `IF >= 1` means that the upward wave-induced seepage force reaches the
+submerged skeleton weight. The support-zone `IF >= 1` area--time was
+`3.0942 x 10^-3 m2 s` for RL and `4.08583 x 10^-3 m2 s` for RE. The phase-erased
+case was therefore 32.05% larger. The maximum indices were 2.072 and 3.243,
+respectively. These values are opposite to the hypothesis that retaining the
+subsurface phase lag increases the hydraulic trigger in this case.
 
-Use exactly one of the following result-dependent interpretations after the
-evidence audit:
+### 7.5.2 Realised skeleton-stress loss and joint occurrence
 
-- If `phase_lag_hydraulic_trigger_supported=true`: Although the fundamental
-  pressure amplitude is matched, retaining the measured subsurface phase lag
-  increases the duration and/or spatial extent of `IF >= 1`.  The destabilising
-  effect therefore arises from the phase-dependent pressure gradient, not from
-  a larger pressure amplitude.
-- If the gate is false: The phase-only comparison does not demonstrate a
-  stronger hydraulic trigger for the lagged signal in this case.  The result
-  must be reported as unresolved or opposite rather than inferred from the
-  saturation comparison.
-
-### 7.5.2 From hydraulic triggering to realised skeleton-stress loss
-
-Hydraulic triggering is not, by itself, evidence that the soil skeleton has
-liquefied.  Realised stress loss is therefore evaluated independently from
+Hydraulic triggering alone is not labelled liquefaction. Realised loss is
+evaluated independently using
 
 `R_sigma = sigma'_v(t) / sigma'_v(0)`,
 
-using only points with `|sigma'_v(0)| >= 100 Pa`; `R_sigma <= 0.05` denotes at
-least 95% loss of the initial vertical effective stress.  The support-zone
-area--time satisfying this condition is
-`{{RL_SUPPORT_RSIGMA_AREA_TIME_M2S}} m2 s` for RL and
-`{{RE_SUPPORT_RSIGMA_AREA_TIME_M2S}} m2 s` for RE, with minimum ratios
-`{{RL_MIN_RSIGMA}}` and `{{RE_MIN_RSIGMA}}`.  The conventional pore-pressure
-ratio `ru` is retained only in probe histories and is not used to define the
-trigger, affected area or duration.
+only where `|sigma'_v(0)| >= 100 Pa`; `R_sigma <= 0.05` denotes at least 95%
+loss of the initial vertical effective stress. The support-zone area--time below
+this threshold was `1.73474 x 10^-2 m2 s` for RL and
+`1.47971 x 10^-2 m2 s` for RE. Considered alone, this metric was 17.23% larger
+for RL, and the minimum ratios were -5.288 and -3.559. The conventional `ru`
+ratio is retained only as a probe diagnostic and is not used to define the
+trigger or realised stress loss.
 
-- If `phase_lag_realised_liquefaction_supported=true`: The increased
-  phase-controlled hydraulic trigger is accompanied by more extensive realised
-  skeleton-stress loss.  This closes the causal chain from subsurface phase lag,
-  through the excess pressure gradient, to liquefaction rather than pressure
-  timing alone.
-- If the gate is false: Retaining the lag increased, at most, the hydraulic
-  potential; it did not produce a materially larger `R_sigma <= 0.05` response.
-  The manuscript must stop at that narrower conclusion.
+The separate IF and stress-loss integrals do not establish a causal chain.
+Requiring the same particle at the same saved time to satisfy both `IF >= 1`
+and `R_sigma <= 0.05` gives joint area--times of only
+`5.19624 x 10^-5 m2 s` for RL and `2.07851 x 10^-4 m2 s` for RE. Joint
+occurrence was active in 4 saved RL frames and 14 saved RE frames and was four
+times larger in the phase-erased case. Moreover, only 2 of 51 RL support-zone
+stress-loss particles and 2 of 43 RE particles experienced `IF >= 1` during
+the preceding 1.3-s wave cycle. The lagged case therefore accumulated somewhat
+more stress-loss area when that metric was integrated separately, but it did
+not establish the registered hydraulic-trigger-to-stress-loss chain.
 
-The engineering response completes this chain.  For RL and RE, report the
-per-cycle pipeline uplift `uy/D`, rotation, contact number, breakout time and
-post-release no-contact fraction beside the `IF` and `R_sigma` histories.  A
-single final-displacement bar is insufficient because an equal endpoint can
-hide different trigger timing, cyclic accumulation and contact loss.  Report
-whether either case reaches the pre-registered large-deformation gate
-`max|uy|/D >= 0.5` or breakout with documented contact-network loss.  Soil
-`max|u|/h` and the fraction of material points with `|u| >= h` should be shown
-separately for the full bed and the initial pipeline-support cohort.  These
-quantities document material crossing of the background grid; they are not
-strain measures and do not establish that a finite-element treatment is
-impossible.
+Pipeline response was correspondingly indistinguishable at engineering scale.
+The maximum `|uy|/D` was 0.002914 for RL and 0.002912 for RE, the maximum
+absolute rotations were `2.487 x 10^-4` and `2.455 x 10^-4 rad`, and both
+post-release no-contact fractions were 0.001996. Neither case approached the
+registered large-deformation threshold `max|uy|/D >= 0.5`. Equal small pipeline
+responses do not prove that the local fields are identical, but they provide no
+engineering-scale support for easier liquefaction caused by the retained lag.
 
-### 7.5.3 Why cyclic state evolution matters
+The defensible result of this screen is therefore a null/opposite finding: the
+prescribed phase lag was removed successfully at the database level, but the
+PIC-smoothed pressure-response similarity gate failed; RE showed the larger IF
+and same-particle joint occurrence; and RL and RE produced nearly identical
+pipeline motion. The statement that phase lag makes liquefaction easier is not
+supported by this registered case. The larger separate RL stress-loss integral
+is reported as stress-path redistribution, not as proof of phase-lag-induced
+liquefaction.
 
-The RL--RM comparison uses the identical lagged liquid/gas pressure database,
-so the principal difference is the skeleton constitutive description.
-Mohr--Coulomb uses `c=0`, `psi=0` and `phi=31.1474 degrees`, matching the
-SANISAND critical-state slope `Mc=1.25`.  Its constant elastic tangent is
-locally matched to the implemented SANISAND tangent at `p'=3 kPa` and
-`n=0.485`; this removes a first-order stiffness bias but does not make the
-models equivalent because SANISAND remains pressure and state dependent.
-Because an admissible RM would have to pass through MC_EQ while RL restores the
-elastic checkpoint directly, the crown, shoulder and invert first-frame `p'`
-and `q` values would also have to agree within the pre-registered 5% tolerance.
-Here MC_EQ failed the preceding unchanged equilibrium gate, so no RM dynamic
-case or clean field-scale constitutive isolation is available.
+### 7.5.3 What the SANISAND comparison does and does not show
 
-The SANISAND histories should still show representative crown, shoulder and
-invert `q-p'` paths, accumulated equivalent plastic strain `eps_p_q`,
-void-ratio/state evolution and cyclic stress paths.  Those resolved state and
-fabric mechanisms are an advantage over perfect-plastic Mohr--Coulomb in model
-capability.  However, because MC_EQ did not produce an admissible starting
-state, this screen cannot establish a matched-pressure field-response advantage
-or greater predictive accuracy relative to Mohr--Coulomb.
+Because MC_EQ did not provide an admissible field checkpoint, this study cannot
+claim a matched-pressure field-response advantage or greater predictive
+accuracy for SANISAND over Mohr--Coulomb. A material-point diagnostic was used
+only to compare the mechanisms resolved under an identical strain history. The
+registered path applied six constant-volume simple-shear cycles
+(`gamma=+/-4 x 10^-4`, 2,400 increments and 12 reversals) from `p'=3 kPa` and
+`n=0.485`. The Mohr--Coulomb elastic tangent was matched to the SANISAND tangent
+at the initial state.
 
-The permitted conclusion is consequently limited to a *mechanistic modelling
-capability*: SANISAND resolves pressure-dependent stiffness, contraction,
-fabric/state memory and cyclic mobility, and its state variables can be checked
-against the evolving `q-p'` paths.  A field-response superiority claim is not
-made because the pre-registered matched-pressure MC chain never reached an
-admissible initial state.  Greater predictive accuracy would additionally
-require independent cyclic laboratory or field response data for the same soil
-state, which are not available in this case study.
+Under that common path, SANISAND reduced `p'` from 3,000 Pa to a minimum of
+249.62 Pa, accumulated `eps_p_q=0.004193`, and evolved its backstress to
+`max|alpha|=0.4698`. Mohr--Coulomb retained `p'=3,000 Pa` to numerical precision
+and accumulated a plastic-strain measure of 0.000342. A dense supplemental
+SANISAND path first contracted (`p'` minimum 2,951.54 Pa) and then dilated to
+4,563.24 Pa while the fabric variable reached `max|Z|=0.7111`. These paths
+demonstrate pressure-dependent stiffness, contraction--dilation transition,
+backstress/fabric memory and cyclic mobility in the implemented SANISAND model.
+They demonstrate modelling capability, not independent predictive superiority;
+that stronger claim would require a stable matched field chain and laboratory
+or field validation for the same soil state.
 
 ### 7.5.4 Implications and limitations
 
-The pipeline calculation isolates seabed-mediated support loss.  The pipe is
-loaded by self-weight, submerged buoyancy and soil contact, but direct
-oscillatory wave pressure and drag on an exposed pipe are not included.
-Post-breakout motion must therefore be interpreted as an idealised consequence
-of support loss rather than complete wave--pipe fluid--structure interaction.
-Similarly, RE deliberately breaks full two-way conservation and must always be
-labelled a one-way numerical counterfactual.
+The pipeline calculations isolate seabed-mediated support loss. The pipe is
+loaded by self-weight, submerged buoyancy and soil contact, while direct wave
+pressure and drag on an exposed pipe are not included. RE deliberately breaks
+two-way coupling and must always be described as a one-way numerical
+counterfactual. All reported threshold areas are based on two-dimensional
+unit-thickness material-point areas; they are not three-dimensional volumes.
 
-Subject to the result gates above, the case study advances the hydraulic result
-of Sections 7.1--7.4 in two steps.  First, matching amplitude while removing the
-subsurface phase delay tests whether phase lag itself increases the critical
-upward gradient and realised effective-stress loss.  Second, the attempted
-matched-pressure constitutive chain exposes whether the simpler material can
-provide an admissible initial state before any response comparison is
-interpreted.  Here it could not.  The successful phase-only design can
-therefore support a more specific hydraulic conclusion than either a
-saturation sweep or a final-displacement comparison alone, while the SANISAND
-histories document how the accepted cyclic model converts that trigger into
-stress loss, state accumulation and pipeline migration.
+This negative result is informative for the broader phase-lag argument. Phase
+delay can alter the spatial gradient and stress path, but its sign and severity
+cannot be inferred from lag magnitude alone. Pressure penetration, smoothing,
+boundary conditions and the relative phase of neighbouring material points
+jointly control the upward gradient. A confirmatory study would therefore need
+a redesigned control that preserves the response amplitude after PIC smoothing,
+followed by the same IF, `R_sigma`, joint-occurrence and pipeline-response gates.
+No such additional production calculation is included here.
 
 ## Figure/caption text to use
 
-### Figure 7 -- case and hydraulic bridge
+### Figure 7 -- physical saturation context and hydraulic bridge
 
-Geometry and registered comparisons for the shallow pipeline case, followed by
-surface/crown/invert mixture-pressure histories and fitted amplitude/phase.
-LS--HS is a fully coupled saturation contrast.  RL--RE is a one-way numerical
-counterfactual in which the fitted fundamental phase lag is removed while each
-point's mean, fundamental amplitude and residual/higher-harmonic signal are
-retained.  MC_EQ is a fixed-pipe numerical handoff and is not a comparison
-result.
+LS and HS two-dimensional fields at the common registered `t_IF` frame, followed
+by surface/crown/shoulder/invert pressure histories and fitted amplitude--phase
+metrics. LS--HS is a fully coupled saturation contrast in which storage,
+amplitude, phase and drainage vary together; it is not a phase-only comparison.
+The pipe outline uses its instantaneous position and the orange region marks the
+pre-registered support cohort.
 
-### Figure 8 -- phase-controlled trigger-to-response chain
+### Figure 8 -- two-dimensional phase-ablation fields
 
-RL and RE at the same registered wave phase: hydrostatic-corrected upward
-seepage-force index `IF`, vertical effective-stress remaining ratio `R_sigma`,
-soil displacement/contact state and pipeline `uy/D`.  The primary thresholds
-are `IF >= 1` and `R_sigma <= 0.05`; `ru` is diagnostic only.  RE is a one-way
-numerical counterfactual, not a fully coupled physical prediction.
+RL, RE and their Lagrangian ID-matched difference at three common registered
+times (`t_IF`, `t_joint` and `t_Rsigma`). Rows show checkpoint-relative excess
+mixture pressure, hydrostatic-corrected upward seepage index `IF`, eligible
+vertical-stress remaining ratio `R_sigma`, and the same-particle joint indicator
+`IF >= 1 and R_sigma <= 0.05`. Coordinates and colour limits are shared within
+each comparison, and each pipe outline uses the corresponding instantaneous
+pose. RE is a one-way numerical counterfactual. The panels show the opposite or
+mixed response and must not be captioned as evidence that lag makes
+liquefaction easier.
 
-### Figure 9 -- SANISAND cyclic state and handoff audit
+### Figure 9 -- SANISAND material-point mechanism and MC handoff audit
 
-Representative RL crown/shoulder/invert `q-p'` paths and `eps_p_q`/void-ratio
-histories, accompanied by the spatial MC admissibility audit of the restored
-elastic stress field and the documented MC_EQ failure.  Soil `max|u|/h` and
-`fraction(|u| >= h)` document background-grid crossing and are not interpreted
-as strain.  The figure demonstrates SANISAND's resolved cyclic mechanisms and
-why a matched MC response claim was withheld; it does not infer predictive
-superiority from the failed handoff.
+Identical cyclic simple-shear paths for SANISAND and Mohr--Coulomb, including
+`p'`, shear stress, accumulated plastic measure and SANISAND state variables,
+together with the documented MC_EQ field-handoff failure. The figure shows the
+additional cyclic state mechanisms resolved by SANISAND and explains why a
+matched field-response claim was withheld; it is not a field validation or a
+claim of universal predictive superiority.
 
-## Placeholder source map
+## Reproducible evidence sources
 
-All placeholders above must be populated from `analysis/<group>/manuscript_evidence.json`
-or the corresponding case summary; do not fill them from visual estimates.
-
-| Placeholder family | JSON section |
-|---|---|
-| RL--RE pressure QA and lag reduction | `phase_only_RL_RE.pressure_control_QA`, `phase_lag_contrast` |
-| `IF` area--time and maxima | `phase_only_RL_RE.hydraulic_trigger` |
-| `R_sigma` area--time and minima | `phase_only_RL_RE.realised_skeleton_stress_loss` |
-| SANISAND/MC path and response | `constitutive_RL_RM` |
-| permitted conclusion | `claim_gate` and generated `manuscript_evidence.md` |
+All values in this section come from
+`analysis/screen/manuscript_evidence.json`, the audited RL/RE case summaries and
+`analysis/material_point/cyclic_constitutive_comparison.audit.json`. The final
+claim wording is also generated in `analysis/screen/manuscript_evidence.md`.
+Values must not be replaced by visual estimates from the figures.

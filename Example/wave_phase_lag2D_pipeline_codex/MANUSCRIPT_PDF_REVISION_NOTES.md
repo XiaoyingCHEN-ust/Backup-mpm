@@ -110,3 +110,31 @@ the visible line numbering in that PDF.
   mobility, demonstrated only if those mechanisms produce a resolved path and
   observable response consequence.  Do not claim universal or independently
   validated predictive superiority.
+
+## Completed Section 7.5 result (screen analysis, 2026-08-16)
+
+The registered seven-case screen and its independent artifact audit are
+complete. Replace the Section 7.5 placeholder with
+`MANUSCRIPT_SECTION_7_5_DRAFT.md` and use the generated common-scale 2-D figures
+under `analysis/screen/figures/`.
+
+The result does not support the originally desired statement that phase lag
+makes liquefaction easier. The database transformation preserved fitted means
+(maximum change 0 Pa) and amplitudes (maximum change
+`5.68 x 10^-14 Pa`) and reduced the mean crown/shoulder/invert lag by 45.37
+degrees. Nevertheless, the PIC-smoothed response-amplitude difference reached
+54.75%, so the registered response-level control failed. The phase-erased RE
+case had the larger support-zone `IF>=1` area--time
+(`4.08583 x 10^-3` versus `3.09420 x 10^-3 m2 s`) and four times the
+same-particle joint `IF>=1`/`Rsigma<=0.05` area--time. RL had a 17.23% larger
+separate stress-loss integral, but preceding-cycle particle overlap was weak and
+pipeline motion was materially indistinguishable. Report this as a
+null/opposite result and stress-path redistribution, not as easier
+phase-lag-induced liquefaction.
+
+The SANISAND material-point comparison supports only a model-capability claim:
+under the identical cyclic shear history it resolved pressure loss,
+contraction--dilation, backstress/fabric evolution and cyclic mobility that the
+perfect-plastic Mohr--Coulomb baseline did not. The zero-cohesion MC_EQ field
+handoff failed the unchanged `max|v|<=10^-3 m/s` gate, so the paper must not
+claim matched field-scale or predictive superiority.

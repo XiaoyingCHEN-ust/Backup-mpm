@@ -1,10 +1,10 @@
 # Linux/RTX 5080 continuation handoff
 
 This file is the authoritative continuation note for branch
-`codex/pipeline-phase-lag-study`. It deliberately distinguishes verified code
-from simulation evidence that has not yet been generated.
+`codex/pipeline-phase-lag-study`. It distinguishes verified code, completed
+screen evidence and diagnostics that are not admissible manuscript evidence.
 
-## State at handoff (updated 2026-08-13)
+## State at handoff (updated 2026-08-16)
 
 - Linux build completed with CMake in `mpm_hpc_source/build-pipeline`.
 - C++: all 18 registered CTests passed after adding executable thread-limit,
@@ -25,8 +25,23 @@ from simulation evidence that has not yet been generated.
   outputs are smoke evidence only, not manuscript evidence. A different
   machine should still rerun the four stages with its own fresh label before
   starting a registered calculation.
-- No post-fix registered `screen` result is complete. Do not analyse older or
-  partial result directories.
+- The post-fix registered phase-only screen is complete: `EQ_LS`, `EQ_HS`,
+  `LS`, `HS`, `HD`, `RL` and `RE` all have valid completion-v3 sentinels and
+  exact expected output grids. The equilibria each contain the registered
+  step-40,000 checkpoint; each dynamic case contains 160 frames through step
+  104,000. The independent pre-analysis audit passed 7/7 cases and the phase
+  provenance audit.
+- The completed analysis is under `analysis/screen/`. The prescribed database
+  retained its point means and fundamental amplitudes, and the mean probe lag
+  was reduced by 45.37 degrees. However, the PIC-smoothed pressure-response
+  similarity gate failed, RE exceeded RL in both `IF>=1` area--time and the
+  same-particle joint `IF>=1`/`Rsigma<=0.05` area--time, and the pipeline
+  responses were materially indistinguishable. The registered screen therefore
+  does **not** support claiming that phase lag made liquefaction easier.
+- The material-point comparison demonstrates SANISAND's pressure-dependent,
+  contraction--dilation, backstress/fabric and cyclic-mobility mechanisms. It
+  is not field validation or evidence of predictive superiority because MC_EQ
+  did not provide an admissible field checkpoint.
 - The local planning PDF `Manuscript-Discussion-0811.pdf` is intentionally not
   committed. The scientific requirements needed to continue are recorded
   below.
@@ -176,7 +191,7 @@ Review, at minimum:
 
 - `analysis/screen/manuscript_evidence.json`
 - `analysis/screen/manuscript_evidence.md`
-- `analysis/screen/figures/figure_manifest.json`
+- `analysis/screen/figures/two_dimensional_field_manifest.json`
 - all PNG/PDF files under `analysis/screen/figures/`
 - `pressure_databases/screen/phase_erased/phase_erased_metadata.json`
 
@@ -187,9 +202,13 @@ particle-area by one saved-frame resolution, and a realised same-particle/time
 `q-p'`, plastic accumulation and contact evolution; internal Alpha/Z fabric is
 not exported and must not be described as directly observed.
 
-Only proceed to the registered production tier after the complete screen and
-all evidence gates have been reviewed. Populate the remaining manuscript
-placeholders from audited JSON/CSV outputs, not from partial VTP files.
+The complete screen and evidence gates have now been reviewed. Do not promote
+this configuration to the production tier in an attempt to obtain the desired
+positive claim: the screen gives a null/opposite result and the response-level
+pressure control failed. A future production study first needs a newly
+registered control that preserves response amplitude after PIC smoothing. Use
+audited JSON/CSV outputs, not visual estimates from VTP plots, for all
+manuscript values.
 
 ## Known implementation limitation
 
