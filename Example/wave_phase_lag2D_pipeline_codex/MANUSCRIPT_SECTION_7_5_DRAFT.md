@@ -15,7 +15,7 @@ The fixed exploratory permeability screen uses four intrinsic permeabilities,
 `1e-13`, `3e-13`, `1e-12` and `3e-12 m2`, all at `Sw=0.94`. The four values,
 qualification criteria and effect gates were fixed before completion of the
 four-point matrix. Both solver pressure-smoothing switches are false. Gaussian smoothing
-with `sigma=0.75 pixels` is permitted only when rasterising a figure; no
+with `sigma=1.25 pixels` is permitted only when rasterising a figure; no
 smoothing enters a derivative, threshold, integral, extremum, frame selection
 or gate decision.
 
@@ -174,7 +174,7 @@ The corresponding signed impulses are `33.289` and `32.909 N s/m`
 branch is `+7.969%`. At the common two-dimensional comparison time
 `t=3.835 s`, the same-column surface excess pressure is `-168 Pa`; the raw
 lagged-minus-erased local upward activity is positive near the shallow-pipe
-support region. The Gaussian `sigma=0.75 pixel` filter affects raster display
+support region. The Gaussian `sigma=1.25 pixel` filter affects raster display
 only, not these numbers.
 
 The relevant phase structure at `3e-12 m2` is not represented by the crown

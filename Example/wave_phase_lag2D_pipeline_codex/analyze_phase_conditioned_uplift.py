@@ -57,7 +57,7 @@ MINIMUM_RELEVANT_R_SQUARED = 0.8
 COMMON_FIELD_TIME_S = 3.835
 EXPECTED_FRAME_COUNT = 60
 EXPECTED_FRAME_DT_S = 0.065
-DISPLAY_SIGMA_DEFAULT = 0.75
+DISPLAY_SIGMA_DEFAULT = 1.25
 
 
 class ConditionedUpliftError(RuntimeError):
@@ -926,7 +926,9 @@ def _summary_rows(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def report_artifact(cases: list[dict[str, Any]], generated_at: str) -> dict[str, Any]:
+def report_artifact(
+    cases: list[dict[str, Any]], generated_at: str, display_sigma: float
+) -> dict[str, Any]:
     """Return the canonical bounded data-analytics technical-report payload."""
 
     summary_rows = _summary_rows(cases)
@@ -1239,7 +1241,8 @@ def report_artifact(cases: list[dict[str, Any]], generated_at: str) -> dict[str,
                     "type": "markdown",
                     "body": (
                         "## Raw derivatives and repeatability make the comparison auditable\n\n"
-                        "Liquid-pressure gradients are reconstructed directly from ID-aligned raw pressure-database values at the saved material-point coordinates. Both solver smoothing switches are false. Gaussian sigma=0.75 pixels is used only in the companion two-dimensional raster; it never changes a derivative, integral, frame, threshold, or gate. The two recovery branches contain the same five physical-phase samples and provide an internal repeatability check."
+                        "Liquid-pressure gradients are reconstructed directly from ID-aligned raw pressure-database values at the saved material-point coordinates. Both solver smoothing switches are false. Gaussian sigma="
+                        f"{display_sigma:g} pixels is used only in the companion two-dimensional raster; it never changes a derivative, integral, frame, threshold, or gate. The two recovery branches contain the same five physical-phase samples and provide an internal repeatability check."
                     ),
                 },
                 {
@@ -1382,7 +1385,7 @@ def run(root: Path, labels: Iterable[str], output: Path, display_sigma: float) -
     generated_at = datetime.now(timezone.utc).isoformat()
     atomic_write_json(
         output / "phase_conditioned_uplift_report_artifact.json",
-        report_artifact(cases, generated_at),
+        report_artifact(cases, generated_at, display_sigma),
     )
     return audit_path
 

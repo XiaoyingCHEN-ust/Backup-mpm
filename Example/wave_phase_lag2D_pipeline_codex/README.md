@@ -52,7 +52,7 @@ with:
 python3 analyze_phase_conditioned_uplift.py
 ```
 
-Numeric derivatives and metrics remain unsmoothed; `sigma=0.75 pixels` is used
+Numeric derivatives and metrics remain unsmoothed; `sigma=1.25 pixels` is used
 only for the displayed two-dimensional raster. The resulting HTML technical
 report and PNG/PDF figures are written under
 `analysis/phase_conditioned_uplift/`.

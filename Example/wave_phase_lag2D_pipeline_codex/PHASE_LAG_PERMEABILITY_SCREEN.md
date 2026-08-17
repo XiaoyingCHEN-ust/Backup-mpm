@@ -30,7 +30,7 @@ looking at the outcome.
 - The phase-erased control rotates only the fitted fundamental to the local
   registered top-surface phase. It retains each point's mean, amplitude,
   residual/higher harmonics and progressive along-wave phase.
-- Any raster smoothing is display-only (`sigma=0.75 pixels` by default). Raw
+- Any raster smoothing is display-only (`sigma=1.25 pixels` by default). Raw
   particle pressures are differentiated and integrated before plotting.
 
 ## Locked qualification and effect rules
@@ -86,7 +86,7 @@ python3 plot_liquid_pressure_phase_lag.py \
   --checkpoint results/phase_lag_exploratory/LABEL/PLP_EXP_UUID_TOKEN_EQ/particle5000.vtp \
   --particles particles.txt --case-label CASE_LABEL --require-unsmoothed
 python3 analyze_phase_lag_driver_screen.py \
-  --label LABEL --display-smoothing-sigma 0.75
+  --label LABEL --display-smoothing-sigma 1.25
 ```
 
 `CASE_LABEL` is an identity field, not a free-form caption: it must equal
