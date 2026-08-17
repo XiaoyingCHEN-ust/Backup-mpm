@@ -43,8 +43,9 @@ the visible line numbering in that PDF.
    is a seepage-force index and should be called hydraulic liquefaction
    *potential* or trigger.  `IF >= 1` is the critical force balance.  The red
    `IF >= 0.5` contour may be retained only as a geometry visualisation contour;
-   it must not be called the critical/liquefied zone.  Actual liquefaction in
-   Section 7.5 is evaluated independently from `R_sigma <= 0.05`.
+   it must not be called the critical/liquefied zone.  Section 7.5 reports
+   `R_sigma <= 0.05` separately as a near-total vertical skeleton-stress-loss
+   indicator, not as proof of all liquefaction mechanisms.
 
 7. **High-permeability typo (p. 14, line 204).** Change `5 x 10^-14 m2` to
    `5 x 10^-10 m2`.  The plotted high-permeability row in Fig. 6 is
@@ -97,10 +98,10 @@ the visible line numbering in that PDF.
 ## Wording hierarchy for the completed paper
 
 - `IF >= 1`: critical upward hydraulic trigger.
-- `R_sigma <= 0.05`: realised near-total vertical skeleton-stress loss.
+- `R_sigma <= 0.05`: near-total vertical skeleton-stress-loss indicator.
 - `ru`: probe-level diagnostic only.
 - `IF >= 0.5`: optional visual contour for comparing geometry; not the critical
-  threshold and not actual liquefaction.
+  threshold and not realised near-total skeleton-stress loss.
 - RL--RE: phase-only one-way numerical counterfactual.
 - RL--RM: matched-pressure constitutive ablation.
 - RL--RM must also pass the first-dynamic-frame `p'--q` initial-state audit;
@@ -111,54 +112,44 @@ the visible line numbering in that PDF.
   observable response consequence.  Do not claim universal or independently
   validated predictive superiority.
 
-## Completed Section 7.5 result (screen analysis, 2026-08-16)
+## Section 7.5 current-runner permeability screen
 
-The registered seven-case screen and its independent artifact audit are
-complete. Replace the Section 7.5 placeholder with
-`MANUSCRIPT_SECTION_7_5_DRAFT.md` and use the generated common-scale 2-D figures
-under `analysis/screen/figures/`.
+The earlier registered seven-case RL--RE replay and the legacy `1e-13 m2`
+exploration are retained only as historical sensitivity analyses, not as the
+primary Section 7.5 result. In the registered replay, RL showed larger
+unsmoothed local positive-part pressure-gradient activity and larger
+trigger/stress-loss co-location, but the solver-response amplitude control
+failed, a derivative reconstructed from the VTK-smoothed field reversed the
+`IF` ordering, and released-pipeline motion was materially indistinguishable.
+These quantities must therefore not be described as a larger net lifting load
+or as causal evidence of additional liquefaction.
 
-The result supports a scoped local statement, not the broad statement that
-phase lag always produces larger engineering motion. The database
-transformation preserved fitted means
-(maximum change 0 Pa) and amplitudes (maximum change
-`5.68 x 10^-14 Pa`) and reduced the mean crown/shoulder/invert lag by 45.37
-degrees. The PIC-smoothed response-amplitude difference reached 54.75%, so the
-registered response-level control failed and the VTK-smoothed seepage-force
-field must not be used as the primary gradient metric. A direct
-nearest-neighbour derivative of the raw prescribed-pressure database instead
-gives RL a 5.97% larger positive-force impulse, a 1.53% larger raw `IF>=1`
-area--time and a 49.07% larger same-particle raw `IF>=1`/`Rsigma<=0.05`
-area--time. RL also had a 17.23% larger separate stress-loss integral, while
-pipeline motion remained materially indistinguishable. Report this as stronger
-local hydraulic triggering and stress-loss coincidence without claiming a
-large pipe-motion consequence or universal causality.
+The primary engineering assessment is the fixed four-point current-runner
+matrix at `Sw=0.94`, with intrinsic permeabilities `1e-13`, `3e-13`, `1e-12`
+and `3e-12 m2`. Solver pressure smoothing is disabled, and all derivatives,
+thresholds and integrals use raw pressure-database values. The engineering gate
+is based on the signed and net-upward pipeline-zone resultants over both
+complete post-ramp cycles; local positive-part activity is reported separately
+and cannot rescue a failed net gate.
 
-A continuous engineering bridge is now available in
-`figure8_pipeline_gradient_force_bridge.{png,pdf,csv,audit.json}`. At the
-registered `t_IF=7.865 s`, the retained-lag RL case produced a raw support-zone
-positive upward pressure-gradient force of 287.75 N/m, versus 265.00 N/m for RE
-(+8.59%); its maximum raw `IF` was 22.02% larger and its instantaneous raw
-`IF>=1` area was 12.91% larger. RL also had an 8.56% larger full-record peak
-force and a 5.97% larger positive-force impulse. Use this to support the scoped
-statement that phase lag can concentrate a larger local lifting force and
-increase local trigger/stress-loss coincidence, while retaining the null result
-for pipeline motion. All metrics use raw database pressures and current
-particle volumes. Gaussian smoothing is permitted only for the displayed
-two-dimensional raster and must be identified as display-only in the caption.
-The opposite VTK-smoothed `IF` ordering must be reported explicitly as a
-derivative/smoothing sensitivity.
+All four current-runner points are complete and fail the fixed-state pressure-
+only screen. In increasing permeability order, their combined net-uplift
+changes are `-0.0239%`, `-0.0131%`, `-0.1399%` and `-0.9038%`. Their local
+positive-part changes are small and positive (`+0.0239%`, `+0.0415%`,
+`+0.0674%` and `+0.9127%`), but these values indicate redistribution of local
+upward hotspots rather than a larger net pipeline-zone lifting action. The
+fresh `1e-13 m2` point has a qualified crown phase difference of `+49.90 deg`
+and amplitude ratio `0.132`, demonstrating that a clear lag need not increase
+the net upward resultant.
 
-The completed exploratory `k=1.0 x 10^-13 m2`, `Sw=0.94` run should be used as
-a parameter-selection caution, not promoted to the main engineering result. It
-used no solver pressure smoothing and resolved a 50.20-degree crown lag, but
-the fixed-pipeline lagged/phase-erased positive upward resultants at 3.705 s
-were 847.93/849.24 N/m and their impulses were 3086.22/3085.90 N s/m. The low
-permeability retained a clearly resolved delay while attenuating useful
-penetration, so it did not increase the integrated pipeline-zone uplift action.
-If a follow-up is run, pre-register a `Sw=0.94` permeability series around
-`10^-13--10^-12 m2`, keep solver smoothing off, and use smoothing only in the
-rendered raster.
+Across the fixed four-point matrix, resolvable subsurface phase structure did
+not produce a qualifying increase in the two-cycle pipeline-zone net-uplift
+driver. The fixed-state comparison cannot by itself establish additional
+skeleton-stress loss, realised liquefaction or pipeline uplift. Since no point
+passes the pressure-only gate, follow-on independently integrated and released-
+pipeline calculations are not promoted as evidence for this matrix. The
+SANISAND--Mohr--Coulomb evidence remains limited to material-point capability
+because the zero-cohesion MC field handoff failed the unchanged stability gate.
 
 The SANISAND material-point comparison supports only a model-capability claim:
 under the identical cyclic shear history it resolved pressure loss,

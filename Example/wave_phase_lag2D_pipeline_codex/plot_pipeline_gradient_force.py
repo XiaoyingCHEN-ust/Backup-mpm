@@ -49,7 +49,7 @@ from phase_controls import (  # noqa: E402
 )
 
 
-SCHEMA = "pipeline-gradient-force-bridge-v2"
+SCHEMA = "pipeline-gradient-force-bridge-v3"
 CASES = {
     "RL": "configs/screen/04_RL.json",
     "RE": "configs/screen/04_RE.json",
@@ -72,6 +72,28 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def relative_difference(
+    numerator: float,
+    denominator: float,
+    *,
+    subtract_one: bool = True,
+) -> float | None:
+    """Return a finite relative comparison, or N/A for a nonpositive base."""
+
+    numerator = float(numerator)
+    denominator = float(denominator)
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
+        raise ValueError("Relative-difference inputs must be finite")
+    if denominator <= 0.0:
+        return None
+    result = numerator / denominator
+    if subtract_one:
+        result -= 1.0
+    if not math.isfinite(result):
+        raise ValueError("Relative-difference result must be finite")
+    return result
 
 
 def upward_excess_force_density(
@@ -148,6 +170,8 @@ def raw_finite_difference_gradient(
     gradient = np.empty_like(reference)
     for index, key_array in enumerate(keys):
         key = tuple(key_array)
+        direction_vectors: list[np.ndarray] = []
+        pressure_differences: list[float] = []
         for axis in range(2):
             minus_key = list(key)
             plus_key = list(key)
@@ -156,21 +180,38 @@ def raw_finite_difference_gradient(
             minus = index_by_key.get(tuple(minus_key))
             plus = index_by_key.get(tuple(plus_key))
             if minus is not None and plus is not None:
-                numerator = values[plus] - values[minus]
-                denominator = current[plus, axis] - current[minus, axis]
+                start, end = minus, plus
             elif plus is not None:
-                numerator = values[plus] - values[index]
-                denominator = current[plus, axis] - current[index, axis]
+                start, end = index, plus
             elif minus is not None:
-                numerator = values[index] - values[minus]
-                denominator = current[index, axis] - current[minus, axis]
+                start, end = minus, index
             else:
                 raise ValueError(
                     f"Particle {index} has no nearest neighbour in axis {axis}"
                 )
-            if not math.isfinite(float(denominator)) or abs(denominator) <= 1.0e-12:
-                raise ValueError("Finite-difference coordinate spacing is invalid")
-            gradient[index, axis] = numerator / denominator
+            direction = current[end] - current[start]
+            pressure_difference = float(values[end] - values[start])
+            if (
+                not np.all(np.isfinite(direction))
+                or float(np.linalg.norm(direction)) <= 1.0e-12
+                or not math.isfinite(pressure_difference)
+            ):
+                raise ValueError("Finite-difference direction is invalid")
+            direction_vectors.append(direction)
+            pressure_differences.append(pressure_difference)
+
+        # Each lattice direction supplies the directional equation
+        #   delta(p) = grad(p) dot delta(x_current).
+        # Solving the complete 2x2 system retains the cross-components created
+        # by shear, rotation or other material-point lattice deformation.  A
+        # component-wise division would silently assume an axis-aligned grid.
+        system = np.vstack(direction_vectors)
+        condition_number = float(np.linalg.cond(system))
+        if not math.isfinite(condition_number) or condition_number > 1.0e8:
+            raise ValueError("Finite-difference direction system is singular")
+        gradient[index] = np.linalg.solve(
+            system, np.asarray(pressure_differences, dtype=np.float64)
+        )
     return gradient
 
 
@@ -750,36 +791,33 @@ def main() -> int:
             for code, case in cases.items()
         },
         "lagged_minus_phase_erased": {
-            "target_positive_force_fraction": (
-                target_metrics["RL"]["positive_force_n_per_m"]
-                / target_metrics["RE"]["positive_force_n_per_m"]
-                - 1.0
+            "target_positive_force_fraction": relative_difference(
+                target_metrics["RL"]["positive_force_n_per_m"],
+                target_metrics["RE"]["positive_force_n_per_m"],
             ),
-            "target_maximum_IF_fraction": (
-                target_metrics["RL"]["maximum_upward_if"]
-                / target_metrics["RE"]["maximum_upward_if"]
-                - 1.0
+            "target_maximum_IF_fraction": relative_difference(
+                target_metrics["RL"]["maximum_upward_if"],
+                target_metrics["RE"]["maximum_upward_if"],
             ),
-            "target_critical_area_ratio": (
-                target_metrics["RL"]["critical_area_m2"]
-                / target_metrics["RE"]["critical_area_m2"]
+            "target_critical_area_ratio": relative_difference(
+                target_metrics["RL"]["critical_area_m2"],
+                target_metrics["RE"]["critical_area_m2"],
+                subtract_one=False,
             ),
-            "positive_force_impulse_fraction": (
-                positive_impulse["RL"] / positive_impulse["RE"] - 1.0
+            "positive_force_impulse_fraction": relative_difference(
+                positive_impulse["RL"], positive_impulse["RE"]
             ),
-            "raw_critical_area_time_fraction": (
-                critical_area_time["RL"] / critical_area_time["RE"] - 1.0
+            "raw_critical_area_time_fraction": relative_difference(
+                critical_area_time["RL"], critical_area_time["RE"]
             ),
-            "raw_joint_area_time_fraction": (
-                joint_area_time["RL"] / joint_area_time["RE"] - 1.0
-                if joint_area_time["RE"] > 0.0
-                else None
+            "raw_joint_area_time_fraction": relative_difference(
+                joint_area_time["RL"], joint_area_time["RE"]
             ),
-            "peak_positive_force_fraction": (
-                peak_positive_force["RL"] / peak_positive_force["RE"] - 1.0
+            "peak_positive_force_fraction": relative_difference(
+                peak_positive_force["RL"], peak_positive_force["RE"]
             ),
-            "maximum_abs_pipeline_uplift_over_D_fraction": (
-                pipeline_max["RL"] / pipeline_max["RE"] - 1.0
+            "maximum_abs_pipeline_uplift_over_D_fraction": relative_difference(
+                pipeline_max["RL"], pipeline_max["RE"]
             ),
         },
         "interpretation": (
@@ -793,8 +831,14 @@ def main() -> int:
         "csv_sha256": sha256(csv_path),
     }
     audit_path = output / "figure8_pipeline_gradient_force_bridge.audit.json"
-    audit_path.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(audit["lagged_minus_phase_erased"], indent=2))
+    audit_path.write_text(
+        json.dumps(audit, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            audit["lagged_minus_phase_erased"], indent=2, allow_nan=False
+        )
+    )
     print(f"Wrote pipeline gradient-force bridge to {output}")
     return 0
 

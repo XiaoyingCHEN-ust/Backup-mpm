@@ -18,8 +18,10 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import shutil
 import struct
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterator
@@ -31,6 +33,7 @@ MAGIC_V1 = b"MPM_PRESSURE_V1\0"
 MAGIC_V2 = b"MPM_PRESSURE_V2\0"
 HEADER = struct.Struct("<16sIIQQQd")
 FRAME_STEP = struct.Struct("<Q")
+PHASE_ALIGNMENT_RESIDUAL_TOLERANCE_DEG = 1.0e-10
 
 
 @dataclass(frozen=True)
@@ -73,6 +76,179 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _temporary_file(path: Path) -> tuple[int, Path]:
+    """Create an exclusive temporary file beside its eventual target."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    return descriptor, Path(name)
+
+
+def _remove_temporary(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _stage_json(path: Path, value: dict[str, object]) -> Path:
+    descriptor, temporary = _temporary_file(path)
+    try:
+        mode = path.stat().st_mode & 0o7777 if path.exists() else 0o644
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(value, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        _remove_temporary(temporary)
+        raise
+    return temporary
+
+
+def _stage_file_copy(source: Path, target: Path) -> Path:
+    """Copy and fsync a file into a same-directory publication candidate."""
+
+    descriptor, temporary = _temporary_file(target)
+    try:
+        os.fchmod(descriptor, source.stat().st_mode & 0o7777)
+        with source.open("rb") as input_stream, os.fdopen(
+            descriptor, "wb"
+        ) as output_stream:
+            shutil.copyfileobj(input_stream, output_stream)
+            output_stream.flush()
+            os.fsync(output_stream.fileno())
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        _remove_temporary(temporary)
+        raise
+    return temporary
+
+
+def atomic_write_json(path: Path, value: dict[str, object]) -> None:
+    """Atomically replace a finite JSON document."""
+
+    temporary = _stage_json(path, value)
+    try:
+        os.replace(temporary, path)
+    finally:
+        _remove_temporary(temporary)
+
+
+def _paths_alias(first: Path, second: Path) -> bool:
+    """Return whether two path spellings identify the same filesystem object."""
+
+    if first.resolve() == second.resolve():
+        return True
+    try:
+        return os.path.samefile(first, second)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+def _validate_distinct_output_targets(
+    source_paths: tuple[Path, ...], output_paths: tuple[Path, ...]
+) -> None:
+    for output_path in output_paths:
+        for source_path in source_paths:
+            if _paths_alias(output_path, source_path):
+                raise ValueError(
+                    "Refusing to overwrite the source pressure database or "
+                    "any source alias"
+                )
+    for index, output_path in enumerate(output_paths):
+        for other in output_paths[index + 1 :]:
+            if _paths_alias(output_path, other):
+                raise ValueError("Pressure-database output targets alias each other")
+
+
+def _publish_transform_files(
+    *,
+    staged_points: Path,
+    staged_values: Path,
+    output_points: Path,
+    output_values: Path,
+    metadata_path: Path,
+    metadata: dict[str, object],
+) -> None:
+    """Publish values, points, then metadata while preserving an old trio.
+
+    Both data candidates must already be complete and fsynced.  Metadata is
+    serialized and fsynced before any target changes, but is replaced last so
+    readers never see new metadata naming only partly published data files.
+    """
+
+    metadata_temporary: Path | None = None
+    backups: dict[Path, Path | None] = {}
+    attempted: list[Path] = []
+    try:
+        pairs = (
+            (staged_values, output_values),
+            (staged_points, output_points),
+        )
+        for staged, target in pairs:
+            if staged.parent.resolve() != target.parent.resolve():
+                raise ValueError("Data publication candidate is not beside its target")
+        for target in (output_values, output_points, metadata_path):
+            if target.is_symlink():
+                raise ValueError("Refusing to replace a symbolic-link output target")
+            if target.exists() and not target.is_file():
+                raise ValueError("Pressure-database output target is not a file")
+
+        metadata_temporary = _stage_json(metadata_path, metadata)
+        replacements = (
+            (staged_values, output_values),
+            (staged_points, output_points),
+            (metadata_temporary, metadata_path),
+        )
+        for _, target in replacements:
+            backups[target] = (
+                _stage_file_copy(target, target) if target.exists() else None
+            )
+
+        try:
+            for staged, target in replacements:
+                attempted.append(target)
+                os.replace(staged, target)
+        except BaseException as publish_error:
+            rollback_errors: list[BaseException] = []
+            for target in reversed(attempted):
+                backup = backups[target]
+                try:
+                    if backup is None:
+                        if target.exists() or target.is_symlink():
+                            target.unlink()
+                    else:
+                        os.replace(backup, target)
+                        backups[target] = None
+                except BaseException as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                raise RuntimeError(
+                    "Pressure-database publication failed and rollback was "
+                    f"incomplete: {rollback_errors[0]}"
+                ) from publish_error
+            raise
+    finally:
+        _remove_temporary(staged_values)
+        _remove_temporary(staged_points)
+        _remove_temporary(metadata_temporary)
+        for backup in backups.values():
+            _remove_temporary(backup)
 
 
 def particle_ids_sha256(particle_ids: np.ndarray) -> str:
@@ -195,9 +371,14 @@ def fit_harmonic(
     fit_end: float,
 ) -> np.ndarray:
     """Return [mean, cosine coefficient, sine coefficient] for both phases."""
-    if period <= 0.0:
+    if not math.isfinite(period) or period <= 0.0:
         raise ValueError("Wave period must be positive")
-    if fit_start < 0.0 or fit_end <= fit_start:
+    if (
+        not math.isfinite(fit_start)
+        or not math.isfinite(fit_end)
+        or fit_start < 0.0
+        or fit_end <= fit_start
+    ):
         raise ValueError("The harmonic fit window is invalid")
     omega = 2.0 * math.pi / period
     gram = np.zeros((3, 3), dtype=np.float64)
@@ -221,6 +402,8 @@ def fit_harmonic(
     if np.linalg.cond(gram) > 1.0e10:
         raise ValueError("Harmonic fit is ill-conditioned; enlarge the fit window")
     coefficients = np.linalg.solve(gram, rhs.reshape(3, -1)).reshape(rhs.shape)
+    if not np.all(np.isfinite(coefficients)):
+        raise ValueError("Harmonic fit produced NaN or Inf")
     return coefficients
 
 
@@ -354,9 +537,17 @@ def rotated_coefficients(
     coefficients: np.ndarray,
     surface_indices: np.ndarray,
     minimum_reference_amplitude: float,
-) -> tuple[np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, dict[str, object]]:
+    if not np.all(np.isfinite(coefficients)):
+        raise ValueError("Harmonic coefficients contain NaN or Inf")
+    if (
+        not math.isfinite(minimum_reference_amplitude)
+        or minimum_reference_amplitude <= 0.0
+    ):
+        raise ValueError("Minimum reference amplitude must be finite and positive")
     rotated = coefficients.copy()
     original_amplitude = np.hypot(coefficients[1], coefficients[2])
+    phase_alignment: dict[str, dict[str, float | int]] = {}
     for phase in range(2):
         surface_cos = coefficients[1, surface_indices, phase]
         surface_sin = coefficients[2, surface_indices, phase]
@@ -372,6 +563,33 @@ def rotated_coefficients(
             * surface_sin[valid]
             / surface_amplitude[valid]
         )
+        source_phase = np.arctan2(coefficients[2, :, phase], coefficients[1, :, phase])
+        surface_phase = np.arctan2(surface_sin, surface_cos)
+        rotated_phase = np.arctan2(rotated[2, :, phase], rotated[1, :, phase])
+        source_difference = (
+            source_phase - surface_phase + math.pi
+        ) % (2.0 * math.pi) - math.pi
+        residual_difference = (
+            rotated_phase - surface_phase + math.pi
+        ) % (2.0 * math.pi) - math.pi
+        phase_defined = valid & (original_amplitude[:, phase] > minimum_reference_amplitude)
+        changed = phase_defined & (np.abs(source_difference) > 1.0e-10)
+        label = "liquid" if phase == 0 else "gas"
+        phase_alignment[label] = {
+            "surface_reference_eligible_particle_count": int(np.count_nonzero(valid)),
+            "phase_defined_particle_count": int(np.count_nonzero(phase_defined)),
+            "changed_particle_count": int(np.count_nonzero(changed)),
+            "max_abs_source_to_surface_phase_difference_deg": (
+                float(np.max(np.abs(np.degrees(source_difference[phase_defined]))))
+                if np.any(phase_defined)
+                else 0.0
+            ),
+            "max_abs_residual_to_surface_phase_difference_deg": (
+                float(np.max(np.abs(np.degrees(residual_difference[phase_defined]))))
+                if np.any(phase_defined)
+                else 0.0
+            ),
+        }
     new_amplitude = np.hypot(rotated[1], rotated[2])
     qa = {
         "max_abs_mean_change_pa": float(
@@ -380,14 +598,131 @@ def rotated_coefficients(
         "max_abs_fundamental_amplitude_change_pa": float(
             np.max(np.abs(new_amplitude - original_amplitude))
         ),
+        "phase_alignment": phase_alignment,
     }
     return rotated, qa
+
+
+def _validated_phase_alignment_record(
+    alignment: dict[str, object], phase_name: str
+) -> dict[str, float | int]:
+    """Validate one liquid/gas phase-alignment QA record."""
+
+    label = phase_name.capitalize()
+    value = alignment.get(phase_name)
+    if not isinstance(value, dict):
+        raise ValueError(f"Phase metadata is missing {phase_name} phase-alignment QA")
+
+    count_names = (
+        "surface_reference_eligible_particle_count",
+        "phase_defined_particle_count",
+        "changed_particle_count",
+    )
+    counts: dict[str, int] = {}
+    for name in count_names:
+        count = value.get(name)
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise ValueError(f"{label} phase-alignment QA is missing integer {name}")
+        counts[name] = count
+    eligible = counts["surface_reference_eligible_particle_count"]
+    defined = counts["phase_defined_particle_count"]
+    changed = counts["changed_particle_count"]
+    if eligible <= 0 or defined <= 0 or defined > eligible:
+        raise ValueError(f"{label} phase-alignment QA has no valid defined phase")
+    if changed <= 0 or changed > defined:
+        raise ValueError(f"{label} phase-alignment QA records no changed particles")
+
+    numeric_names = (
+        "max_abs_source_to_surface_phase_difference_deg",
+        "max_abs_residual_to_surface_phase_difference_deg",
+    )
+    numbers: dict[str, float] = {}
+    for name in numeric_names:
+        number_value = value.get(name)
+        if isinstance(number_value, bool):
+            raise ValueError(f"{label} phase-alignment QA is missing finite {name}")
+        try:
+            number = float(number_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"{label} phase-alignment QA is missing finite {name}"
+            ) from error
+        if not math.isfinite(number) or number < 0.0:
+            raise ValueError(f"{label} phase-alignment QA has invalid {name}")
+        numbers[name] = number
+    if numbers["max_abs_source_to_surface_phase_difference_deg"] <= 0.0:
+        raise ValueError(f"{label} source-to-surface phase difference is not positive")
+    residual = numbers["max_abs_residual_to_surface_phase_difference_deg"]
+    if residual > PHASE_ALIGNMENT_RESIDUAL_TOLERANCE_DEG:
+        raise ValueError(
+            f"{label} phase-alignment residual exceeds "
+            f"{PHASE_ALIGNMENT_RESIDUAL_TOLERANCE_DEG:.1e} deg: {residual:.6g}"
+        )
+    return {**counts, **numbers}
+
+
+def validate_phase_alignment_qa(
+    metadata: dict[str, object],
+) -> dict[str, float | int]:
+    """Fail closed unless both stored pressures were nontrivially phase-aligned.
+
+    The residual is recorded in degrees.  Floating-point roundoff at or below
+    ``PHASE_ALIGNMENT_RESIDUAL_TOLERANCE_DEG`` is accepted; a larger residual
+    means the phase-erasure transform did not align the retained fundamental
+    with its registered surface reference.
+    """
+
+    qa = metadata.get("qa")
+    if not isinstance(qa, dict):
+        raise ValueError("Phase metadata is missing qa")
+    alignment = qa.get("phase_alignment")
+    if not isinstance(alignment, dict):
+        raise ValueError("Phase metadata is missing qa.phase_alignment")
+    liquid = _validated_phase_alignment_record(alignment, "liquid")
+    _validated_phase_alignment_record(alignment, "gas")
+    return liquid
 
 
 def ramp_factor(time: float, ramp_time: float) -> float:
     if ramp_time <= 0.0:
         return 1.0
     return min(1.0, max(0.0, time / ramp_time))
+
+
+def validate_transform_parameters(
+    *,
+    period: float,
+    fit_start: float,
+    fit_end: float,
+    ramp_time: float,
+    surface_band: float,
+    minimum_reference_amplitude: float,
+) -> None:
+    """Reject non-finite or physically invalid transform controls up front."""
+
+    values = {
+        "period": period,
+        "fit_start": fit_start,
+        "fit_end": fit_end,
+        "ramp_time": ramp_time,
+        "surface_band": surface_band,
+        "minimum_reference_amplitude": minimum_reference_amplitude,
+    }
+    if any(
+        isinstance(value, bool) or not math.isfinite(value)
+        for value in values.values()
+    ):
+        raise ValueError("Phase-transform parameters must be finite numbers")
+    if period <= 0.0:
+        raise ValueError("Wave period must be positive")
+    if fit_start < 0.0 or fit_end <= fit_start:
+        raise ValueError("The harmonic fit window is invalid")
+    if ramp_time < 0.0:
+        raise ValueError("Ramp time must be non-negative")
+    if surface_band <= 0.0:
+        raise ValueError("Surface band must be positive")
+    if minimum_reference_amplitude <= 0.0:
+        raise ValueError("Minimum reference amplitude must be positive")
 
 
 def transform_database(
@@ -404,10 +739,21 @@ def transform_database(
     minimum_reference_amplitude: float,
     surface_reference_ids: Path | None = None,
 ) -> Path:
+    validate_transform_parameters(
+        period=period,
+        fit_start=fit_start,
+        fit_end=fit_end,
+        ramp_time=ramp_time,
+        surface_band=surface_band,
+        minimum_reference_amplitude=minimum_reference_amplitude,
+    )
     source_points, source_values = database_paths(source_directory, source_prefix)
     output_points, output_values = database_paths(output_directory, output_prefix)
-    if source_values.resolve() == output_values.resolve():
-        raise ValueError("Refusing to overwrite the source pressure database")
+    metadata_path = output_directory / f"{output_prefix}_metadata.json"
+    _validate_distinct_output_targets(
+        (source_points, source_values),
+        (output_points, output_values, metadata_path),
+    )
     output_directory.mkdir(parents=True, exist_ok=True)
 
     with source_values.open("rb") as stream:
@@ -426,81 +772,123 @@ def transform_database(
     rotated, qa = rotated_coefficients(
         coefficients, surface_indices, minimum_reference_amplitude
     )
+    validate_phase_alignment_qa({"qa": qa})
 
     omega = 2.0 * math.pi / period
     max_pressure_delta = 0.0
-    with source_values.open("rb") as source, output_values.open("wb") as output:
-        read_header(source)
-        write_header(output, header)
-        for step, liquid, gas in iter_frames(source, header):
-            time = header.physical_time(step)
-            harmonic_basis = np.asarray(
-                [math.cos(omega * time), math.sin(omega * time)]
-            )
-            original_fundamental = np.einsum(
-                "cnp,c->np", coefficients[1:], harmonic_basis
-            )
-            rotated_fundamental = np.einsum(
-                "cnp,c->np", rotated[1:], harmonic_basis
-            )
-            correction = ramp_factor(time, ramp_time) * (
-                rotated_fundamental - original_fundamental
-            )
-            transformed = np.column_stack((liquid, gas)) + correction
-            max_pressure_delta = max(
-                max_pressure_delta, float(np.max(np.abs(correction)))
-            )
-            output.write(FRAME_STEP.pack(step))
-            output.write(np.asarray(transformed[:, 0], dtype="<f8").tobytes())
-            output.write(np.asarray(transformed[:, 1], dtype="<f8").tobytes())
+    staged_values: Path | None = None
+    staged_points: Path | None = None
+    try:
+        descriptor, staged_values = _temporary_file(output_values)
+        try:
+            os.fchmod(descriptor, source_values.stat().st_mode & 0o7777)
+            with source_values.open("rb") as source, os.fdopen(
+                descriptor, "wb"
+            ) as output:
+                read_header(source)
+                write_header(output, header)
+                for step, liquid, gas in iter_frames(source, header):
+                    time = header.physical_time(step)
+                    harmonic_basis = np.asarray(
+                        [math.cos(omega * time), math.sin(omega * time)]
+                    )
+                    original_fundamental = np.einsum(
+                        "cnp,c->np", coefficients[1:], harmonic_basis
+                    )
+                    rotated_fundamental = np.einsum(
+                        "cnp,c->np", rotated[1:], harmonic_basis
+                    )
+                    correction = ramp_factor(time, ramp_time) * (
+                        rotated_fundamental - original_fundamental
+                    )
+                    transformed = np.column_stack((liquid, gas)) + correction
+                    if not np.all(np.isfinite(correction)) or not np.all(
+                        np.isfinite(transformed)
+                    ):
+                        raise ValueError("Phase-erased transform produced NaN or Inf")
+                    max_pressure_delta = max(
+                        max_pressure_delta, float(np.max(np.abs(correction)))
+                    )
+                    output.write(FRAME_STEP.pack(step))
+                    output.write(
+                        np.asarray(transformed[:, 0], dtype="<f8").tobytes()
+                    )
+                    output.write(
+                        np.asarray(transformed[:, 1], dtype="<f8").tobytes()
+                    )
+                output.flush()
+                os.fsync(output.fileno())
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            raise
 
-    shutil.copyfile(source_points, output_points)
-    validate_database(output_values, header)
+        if not math.isfinite(max_pressure_delta) or max_pressure_delta <= 0.0:
+            raise ValueError("Phase-erased transform made no finite pressure change")
 
-    metadata = {
-        "schema": "phase-erased-pressure-control-v1",
-        "classification": "one-way numerical counterfactual; not fully coupled",
-        "source": {
-            "points": str(source_points),
-            "values": str(source_values),
-            "points_sha256": sha256(source_points),
-            "values_sha256": sha256(source_values),
-        },
-        "output": {
-            "points": str(output_points),
-            "values": str(output_values),
-            "points_sha256": sha256(output_points),
-            "values_sha256": sha256(output_values),
-        },
-        "header": {
-            "format_version": header.format_version,
-            "dimension": header.dimension,
-            "particle_count": header.particle_count,
-            "step_interval": header.step_interval,
-            "max_step": header.max_step,
-            "source_dt_s": header.source_dt,
-            "sample_dt_s": header.sample_dt,
-        },
-        "transform": {
-            "period_s": period,
-            "fit_start_s": fit_start,
-            "fit_end_s": fit_end,
-            "ramp_time_s": ramp_time,
-            "surface_band_m": surface_band,
-            "minimum_reference_amplitude_pa": minimum_reference_amplitude,
-            "surface_reference": surface_reference,
-            "description": (
-                "rotate each point's fundamental liquid/gas pressure component "
-                "to its local surface phase; retain mean, amplitude, residuals, "
-                "higher harmonics, and along-wave progressive phase"
-            ),
-        },
-        "qa": {**qa, "max_instantaneous_pressure_change_pa": max_pressure_delta},
-    }
-    metadata_path = output_directory / f"{output_prefix}_metadata.json"
-    metadata_path.write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+        staged_points = _stage_file_copy(source_points, output_points)
+        validate_database(staged_values, header)
+
+        metadata = {
+            "schema": "phase-erased-pressure-control-v1",
+            "classification": "one-way numerical counterfactual; not fully coupled",
+            "producer": {
+                "path": str(Path(__file__).resolve()),
+                "sha256": sha256(Path(__file__).resolve()),
+            },
+            "source": {
+                "points": str(source_points),
+                "values": str(source_values),
+                "points_sha256": sha256(source_points),
+                "values_sha256": sha256(source_values),
+            },
+            "output": {
+                "points": str(output_points),
+                "values": str(output_values),
+                "points_sha256": sha256(staged_points),
+                "values_sha256": sha256(staged_values),
+            },
+            "header": {
+                "format_version": header.format_version,
+                "dimension": header.dimension,
+                "particle_count": header.particle_count,
+                "step_interval": header.step_interval,
+                "max_step": header.max_step,
+                "source_dt_s": header.source_dt,
+                "sample_dt_s": header.sample_dt,
+            },
+            "transform": {
+                "period_s": period,
+                "fit_start_s": fit_start,
+                "fit_end_s": fit_end,
+                "ramp_time_s": ramp_time,
+                "surface_band_m": surface_band,
+                "minimum_reference_amplitude_pa": minimum_reference_amplitude,
+                "surface_reference": surface_reference,
+                "description": (
+                    "rotate each point's fundamental liquid/gas pressure component "
+                    "to its local surface phase; retain mean, amplitude, residuals, "
+                    "higher harmonics, and along-wave progressive phase"
+                ),
+            },
+            "qa": {
+                **qa,
+                "max_instantaneous_pressure_change_pa": max_pressure_delta,
+            },
+        }
+        _publish_transform_files(
+            staged_points=staged_points,
+            staged_values=staged_values,
+            output_points=output_points,
+            output_values=output_values,
+            metadata_path=metadata_path,
+            metadata=metadata,
+        )
+    finally:
+        _remove_temporary(staged_values)
+        _remove_temporary(staged_points)
     return metadata_path
 
 

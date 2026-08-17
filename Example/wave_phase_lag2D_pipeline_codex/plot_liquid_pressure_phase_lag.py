@@ -14,9 +14,11 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,7 +28,10 @@ from analyze_study import build_probes, expected_particle_steps, read_vtp
 from plot_manuscript_figures import _masked_triangulation
 
 
-SCHEMA = "pipeline-liquid-pressure-phase-lag-audit-v2"
+SCHEMA = "pipeline-liquid-pressure-phase-lag-audit-v3"
+ARTIFACT_SCHEMA = "pipeline-liquid-pressure-phase-lag-artifacts-v2"
+INPUT_SCHEMA = "pipeline-liquid-pressure-phase-lag-inputs-v1"
+EXPECTED_PHASE_FRAMES = 60
 CASE = "HS"
 WAVE_PERIOD_S = 1.3
 FIT_START_S = 1.3
@@ -35,6 +40,100 @@ SNAPSHOT_TIMES_S = (2.6, 2.925, 3.25, 3.575)
 MINIMUM_LOCAL_AMPLITUDE_RATIO = 0.05
 MINIMUM_HARMONIC_R_SQUARED = 0.80
 FARFIELD_X_M = 1.06
+PLOT_SCRIPT_PATH = Path(__file__).resolve()
+ANALYZER_PATH = PLOT_SCRIPT_PATH.with_name("analyze_study.py")
+
+
+class PhaseAuditError(RuntimeError):
+    """Raised when phase-field artifact provenance is incomplete or stale."""
+
+
+@dataclass(frozen=True)
+class PlotParameters:
+    intrinsic_permeability_m2: float
+    liquid_saturation: float
+    gas_saturation: float
+    pressure_smoothing: bool
+    pressure_smoothing_in_loop: bool
+    pipeline_fixed: bool
+
+    def as_dict(self) -> dict[str, float | bool]:
+        return {
+            "intrinsic_permeability_m2": self.intrinsic_permeability_m2,
+            "liquid_saturation": self.liquid_saturation,
+            "gas_saturation": self.gas_saturation,
+            "pressure_smoothing": self.pressure_smoothing,
+            "pressure_smoothing_in_loop": self.pressure_smoothing_in_loop,
+            "pipeline_fixed": self.pipeline_fixed,
+        }
+
+
+def plot_parameters(
+    config: dict[str, Any], *, require_unsmoothed: bool = False
+) -> PlotParameters:
+    materials = config.get("materials")
+    if not isinstance(materials, list) or len(materials) != 2:
+        raise ValueError("Phase-lag config must define exactly two materials")
+    soil, fluid = materials
+    try:
+        permeability = float(soil["intrinsic_permeability"])
+        liquid_saturation = float(fluid["liquid_saturation"])
+        gas_saturation = float(fluid["gas_saturation"])
+        analysis = config["analysis"]
+        pressure_smoothing = analysis["pressure_smoothing"]
+        pressure_smoothing_in_loop = analysis["pressure_smoothing_in_loop"]
+        pipeline_fixed = analysis["rigid_pipeline"]["fixed"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Phase-lag config has incomplete hydraulic parameters") from error
+    if not math.isfinite(permeability) or permeability <= 0.0:
+        raise ValueError("Intrinsic permeability must be finite and positive")
+    if not math.isfinite(liquid_saturation) or not 0.0 < liquid_saturation < 1.0:
+        raise ValueError("Liquid saturation must lie strictly inside (0,1)")
+    if not math.isfinite(gas_saturation) or not math.isclose(
+        liquid_saturation + gas_saturation,
+        1.0,
+        rel_tol=0.0,
+        abs_tol=1.0e-12,
+    ):
+        raise ValueError("Liquid and gas saturations must sum to one")
+    for name, value in (
+        ("pressure_smoothing", pressure_smoothing),
+        ("pressure_smoothing_in_loop", pressure_smoothing_in_loop),
+        ("rigid_pipeline.fixed", pipeline_fixed),
+    ):
+        if type(value) is not bool:
+            raise ValueError(f"{name} must be an explicit JSON boolean")
+    if require_unsmoothed and (
+        pressure_smoothing is not False
+        or pressure_smoothing_in_loop is not False
+    ):
+        raise ValueError(
+            "Exploratory phase-lag plotting requires both pressure-smoothing "
+            "switches to be false"
+        )
+    if require_unsmoothed and pipeline_fixed is not True:
+        raise ValueError(
+            "Exploratory phase-lag plotting requires an explicitly fixed pipeline"
+        )
+    return PlotParameters(
+        intrinsic_permeability_m2=permeability,
+        liquid_saturation=liquid_saturation,
+        gas_saturation=gas_saturation,
+        pressure_smoothing=pressure_smoothing,
+        pressure_smoothing_in_loop=pressure_smoothing_in_loop,
+        pipeline_fixed=pipeline_fixed,
+    )
+
+
+def parameter_subtitle(parameters: PlotParameters) -> str:
+    return (
+        rf"$k={parameters.intrinsic_permeability_m2:.3e}\ \mathrm{{m}}^2$, "
+        rf"$S_w={parameters.liquid_saturation:.3f}$, "
+        rf"$S_g={parameters.gas_saturation:.3f}$; "
+        f"smoothing(output={str(parameters.pressure_smoothing).lower()}, "
+        f"in-loop={str(parameters.pressure_smoothing_in_loop).lower()}); "
+        f"pipeline fixed={str(parameters.pipeline_fixed).lower()}"
+    )
 
 
 def sha256(path: Path) -> str:
@@ -43,6 +142,337 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def artifact_record(path: Path) -> dict[str, str | int]:
+    """Describe one non-empty regular file using canonical provenance."""
+
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise PhaseAuditError(f"Required artifact is missing: {resolved}")
+    size = resolved.stat().st_size
+    if size <= 0:
+        raise PhaseAuditError(f"Required artifact is empty: {resolved}")
+    return {
+        "path": str(resolved),
+        "size_bytes": size,
+        "sha256": sha256(resolved),
+    }
+
+
+def _validated_artifact_record(
+    value: Any, *, name: str, expected_path: Path | None = None
+) -> Path:
+    if not isinstance(value, dict) or set(value) != {
+        "path",
+        "size_bytes",
+        "sha256",
+    }:
+        raise PhaseAuditError(
+            f"{name} must contain exactly path, size_bytes, and sha256"
+        )
+    raw_path = value["path"]
+    if not isinstance(raw_path, str) or not raw_path:
+        raise PhaseAuditError(f"{name} path must be a non-empty string")
+    path = Path(raw_path)
+    if not path.is_absolute() or raw_path != str(path.resolve()):
+        raise PhaseAuditError(f"{name} path is not canonical and absolute")
+    if expected_path is not None and path != expected_path.resolve():
+        raise PhaseAuditError(
+            f"{name} path mismatch: expected {expected_path.resolve()}, got {path}"
+        )
+    if not path.is_file():
+        raise PhaseAuditError(f"{name} is missing: {path}")
+    recorded_size = value["size_bytes"]
+    if type(recorded_size) is not int or recorded_size <= 0:
+        raise PhaseAuditError(f"{name} size_bytes must be a positive integer")
+    observed_size = path.stat().st_size
+    if observed_size != recorded_size:
+        raise PhaseAuditError(
+            f"{name} size mismatch: recorded {recorded_size}, observed {observed_size}"
+        )
+    recorded_digest = value["sha256"]
+    if not isinstance(recorded_digest, str) or re.fullmatch(
+        r"[0-9a-f]{64}", recorded_digest
+    ) is None:
+        raise PhaseAuditError(f"{name} sha256 must be 64 lowercase hex characters")
+    observed_digest = sha256(path)
+    if observed_digest != recorded_digest:
+        raise PhaseAuditError(f"{name} sha256 mismatch: {path}")
+    if path.stat().st_size != observed_size:
+        raise PhaseAuditError(f"{name} changed while it was being validated: {path}")
+    return path
+
+
+def checkpoint_config_path(
+    analysis_config_path: Path, config: dict[str, Any]
+) -> Path:
+    """Resolve the unique config that produced the supplied resume checkpoint."""
+
+    try:
+        resume = config["analysis"]["resume"]
+        checkpoint_uuid = str(resume["uuid"])
+        checkpoint_step = int(resume["step"])
+        enabled = resume["resume"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise PhaseAuditError(
+            "Analysis config does not identify its equilibrium checkpoint"
+        ) from error
+    if enabled is not True or not checkpoint_uuid or checkpoint_step <= 0:
+        raise PhaseAuditError(
+            "Analysis config must explicitly resume a positive-step checkpoint"
+        )
+
+    matches: list[Path] = []
+    for candidate in sorted(analysis_config_path.resolve().parent.glob("*.json")):
+        if candidate.resolve() == analysis_config_path.resolve():
+            continue
+        try:
+            payload = read_json(candidate)
+            analysis = payload["analysis"]
+            uuid = str(analysis["uuid"])
+            nsteps = int(analysis["nsteps"])
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            continue
+        if uuid == checkpoint_uuid and nsteps == checkpoint_step:
+            matches.append(candidate.resolve())
+    if len(matches) != 1:
+        raise PhaseAuditError(
+            "Expected exactly one config for checkpoint "
+            f"{checkpoint_uuid}@{checkpoint_step}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def _expected_input_path(
+    expected: Mapping[str, Any] | None, name: str
+) -> Path | None:
+    if expected is None or name not in expected:
+        return None
+    value = expected[name]
+    if not isinstance(value, Path):
+        raise PhaseAuditError(f"Expected input path {name} must be a Path")
+    return value.resolve()
+
+
+def _validated_phase_inputs(
+    audit: dict[str, Any],
+    inputs: Any,
+    *,
+    expected_input_paths: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate every byte-bearing input used to construct a phase field."""
+
+    required = {
+        "schema",
+        "analysis_config",
+        "checkpoint_config",
+        "checkpoint",
+        "particles",
+        "pipeline_history",
+        "result_directory",
+        "result_particle_vtp",
+    }
+    if not isinstance(inputs, dict) or set(inputs) != required:
+        raise PhaseAuditError(
+            "phase inputs must contain exactly schema, both configs, checkpoint, "
+            "particles, pipeline history, result directory, and result VTPs"
+        )
+    if inputs["schema"] != INPUT_SCHEMA:
+        raise PhaseAuditError(f"Expected phase input schema {INPUT_SCHEMA}")
+
+    records = {
+        name: _validated_artifact_record(
+            inputs[name],
+            name=f"inputs.{name}",
+            expected_path=_expected_input_path(expected_input_paths, name),
+        )
+        for name in (
+            "analysis_config",
+            "checkpoint_config",
+            "checkpoint",
+            "particles",
+            "pipeline_history",
+        )
+    }
+    if records["analysis_config"] == records["checkpoint_config"]:
+        raise PhaseAuditError("Analysis and checkpoint configs must be distinct")
+
+    raw_result_directory = inputs["result_directory"]
+    if not isinstance(raw_result_directory, str) or not raw_result_directory:
+        raise PhaseAuditError("inputs.result_directory must be an absolute path")
+    result_directory = Path(raw_result_directory)
+    if (
+        not result_directory.is_absolute()
+        or raw_result_directory != str(result_directory.resolve())
+        or not result_directory.is_dir()
+    ):
+        raise PhaseAuditError(
+            "inputs.result_directory must be a canonical existing directory"
+        )
+    expected_result_directory = _expected_input_path(
+        expected_input_paths, "result_directory"
+    )
+    if (
+        expected_result_directory is not None
+        and result_directory != expected_result_directory
+    ):
+        raise PhaseAuditError("inputs.result_directory path mismatch")
+
+    raw_frames = inputs["result_particle_vtp"]
+    if not isinstance(raw_frames, list) or len(raw_frames) != EXPECTED_PHASE_FRAMES:
+        raise PhaseAuditError(
+            f"inputs.result_particle_vtp must contain exactly {EXPECTED_PHASE_FRAMES} records"
+        )
+    expected_frames: tuple[Path, ...] | None = None
+    if expected_input_paths is not None and "result_particle_vtp" in expected_input_paths:
+        raw_expected = expected_input_paths["result_particle_vtp"]
+        if not isinstance(raw_expected, (list, tuple)):
+            raise PhaseAuditError("Expected result_particle_vtp paths must be a sequence")
+        expected_frames = tuple(Path(path).resolve() for path in raw_expected)
+        if len(expected_frames) != EXPECTED_PHASE_FRAMES:
+            raise PhaseAuditError(
+                f"Expected result_particle_vtp must contain {EXPECTED_PHASE_FRAMES} paths"
+            )
+    frames = tuple(
+        _validated_artifact_record(
+            value,
+            name=f"inputs.result_particle_vtp[{index}]",
+            expected_path=(None if expected_frames is None else expected_frames[index]),
+        )
+        for index, value in enumerate(raw_frames)
+    )
+    if len(set(frames)) != EXPECTED_PHASE_FRAMES:
+        raise PhaseAuditError("Result particle VTP paths must be unique")
+    if any(path.parent != result_directory for path in frames):
+        raise PhaseAuditError("Every result particle VTP must be in result_directory")
+    try:
+        ordered_frames = tuple(
+            sorted(result_directory.glob("particle*.vtp"), key=particle_step)
+        )
+    except ValueError as error:
+        raise PhaseAuditError("Result directory contains an invalid particle VTP name") from error
+    if ordered_frames != frames:
+        raise PhaseAuditError(
+            "Recorded result particle VTPs are not the exact ordered directory set"
+        )
+    if int(audit.get("frame_count", -1)) != EXPECTED_PHASE_FRAMES:
+        raise PhaseAuditError(
+            f"Phase audit frame_count must equal {EXPECTED_PHASE_FRAMES}"
+        )
+    if len({*records.values(), *frames}) != len(records) + len(frames):
+        raise PhaseAuditError("Phase input artifact paths must be unique")
+    return {
+        **records,
+        "result_directory": result_directory,
+        "result_particle_vtp": frames,
+    }
+
+
+def validate_phase_audit_artifacts(
+    audit: dict[str, Any],
+    *,
+    expected_figure_paths: Iterable[Path],
+    analyzer_path: Path = ANALYZER_PATH,
+    plot_script_path: Path = PLOT_SCRIPT_PATH,
+    expected_input_paths: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Fail closed unless phase-v3 binds every input and exact four plot files."""
+
+    if not isinstance(audit, dict):
+        raise PhaseAuditError("Phase audit must be a JSON object")
+    if audit.get("schema") != SCHEMA:
+        raise PhaseAuditError(f"Expected phase audit schema {SCHEMA}")
+    expected_figures = tuple(path.resolve() for path in expected_figure_paths)
+    if (
+        len(expected_figures) != 4
+        or len(set(expected_figures)) != 4
+        or sorted(path.suffix.lower() for path in expected_figures)
+        != [".pdf", ".pdf", ".png", ".png"]
+    ):
+        raise PhaseAuditError(
+            "Expected exactly four unique figure paths (two PNG and two PDF)"
+        )
+    artifacts = audit.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != {
+        "schema",
+        "analyzer",
+        "plot_script",
+        "figures",
+        "inputs",
+    }:
+        raise PhaseAuditError(
+            "artifacts must contain exactly schema, analyzer, plot_script, figures, and inputs"
+        )
+    if artifacts["schema"] != ARTIFACT_SCHEMA:
+        raise PhaseAuditError(f"Expected artifact schema {ARTIFACT_SCHEMA}")
+    analyzer = _validated_artifact_record(
+        artifacts["analyzer"], name="analyzer", expected_path=analyzer_path
+    )
+    plot_script = _validated_artifact_record(
+        artifacts["plot_script"],
+        name="plot_script",
+        expected_path=plot_script_path,
+    )
+    figures = artifacts["figures"]
+    if not isinstance(figures, list) or len(figures) != 4:
+        raise PhaseAuditError("figures must contain exactly four artifact records")
+    observed_figures = [
+        _validated_artifact_record(value, name=f"figures[{index}]")
+        for index, value in enumerate(figures)
+    ]
+    if len(set(observed_figures)) != len(observed_figures):
+        raise PhaseAuditError("Figure artifact paths must be unique")
+    if set(observed_figures) != set(expected_figures):
+        raise PhaseAuditError("Figure artifact paths do not match the expected set")
+    if len({analyzer, plot_script, *observed_figures}) != 6:
+        raise PhaseAuditError("All analyzer, plot-script, and figure paths must be unique")
+    inputs = _validated_phase_inputs(
+        audit,
+        artifacts["inputs"],
+        expected_input_paths=expected_input_paths,
+    )
+    if audit.get("config") != artifacts["inputs"]["analysis_config"]:
+        raise PhaseAuditError(
+            "Top-level config record must exactly alias inputs.analysis_config"
+        )
+    if audit.get("checkpoint") != artifacts["inputs"]["checkpoint"]:
+        raise PhaseAuditError(
+            "Top-level checkpoint record must exactly alias inputs.checkpoint"
+        )
+    if set((analyzer, plot_script, *observed_figures)) & {
+        *(
+            path
+            for name, path in inputs.items()
+            if name != "result_particle_vtp"
+        ),
+        *inputs["result_particle_vtp"],
+    }:
+        raise PhaseAuditError("Phase input and output artifact paths must be disjoint")
+    return inputs
+
+
+def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
+    """Atomically replace a JSON audit without exposing a partial document."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(value, stream, indent=2, allow_nan=False)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def figure_output_paths(output: Path) -> tuple[Path, Path]:
+    """Return the exact PNG/PDF paths written for one figure base path."""
+
+    return output.with_suffix(".png"), output.with_suffix(".pdf")
 
 
 def particle_step(path: Path) -> int:
@@ -191,6 +621,7 @@ def plot_fields(
     amplitude_ratio: np.ndarray,
     phase_difference_deg: np.ndarray,
     case_label: str,
+    parameters: PlotParameters,
 ) -> None:
     figure = plt.figure(figsize=(16.0, 8.0), constrained_layout=True)
     grid = figure.add_gridspec(2, 4, height_ratios=(1.0, 1.12))
@@ -291,13 +722,15 @@ def plot_fields(
         )
     figure.suptitle(
         f"{case_label} two-dimensional PIC liquid-pressure response\n"
+        f"{parameter_subtitle(parameters)}\n"
         "common snapshot scale; harmonic fit 1.3–3.9 s; phase masked where "
         "amplitude <5% of surface or harmonic $R^2<0.8$",
         fontsize=13,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output.with_suffix(".png"), dpi=300, bbox_inches="tight")
-    figure.savefig(output.with_suffix(".pdf"), bbox_inches="tight")
+    png_path, pdf_path = figure_output_paths(output)
+    figure.savefig(png_path, dpi=300, bbox_inches="tight")
+    figure.savefig(pdf_path, bbox_inches="tight")
     plt.close(figure)
 
 
@@ -310,6 +743,7 @@ def plot_time_depth(
     phase: np.ndarray,
     harmonic_r2: np.ndarray,
     case_label: str,
+    parameters: PlotParameters,
 ) -> dict[str, Any]:
     x_values = np.unique(initial_coordinates[:, 0])
     chosen_x = float(x_values[np.argmin(np.abs(x_values - FARFIELD_X_M))])
@@ -364,12 +798,14 @@ def plot_time_depth(
     amplitude_axis.tick_params(axis="x", colors="#A35F00")
     figure.suptitle(
         f"{case_label} liquid-pressure time–depth propagation "
-        "(harmonic-fit window)",
+        "(harmonic-fit window)\n"
+        f"{parameter_subtitle(parameters)}",
         fontsize=13,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output.with_suffix(".png"), dpi=300, bbox_inches="tight")
-    figure.savefig(output.with_suffix(".pdf"), bbox_inches="tight")
+    png_path, pdf_path = figure_output_paths(output)
+    figure.savefig(png_path, dpi=300, bbox_inches="tight")
+    figure.savefig(pdf_path, bbox_inches="tight")
     plt.close(figure)
     return {
         "requested_x_m": FARFIELD_X_M,
@@ -402,12 +838,24 @@ def main() -> int:
     )
     parser.add_argument("--particles", type=Path, default=Path("particles.txt"))
     parser.add_argument("--case-label", default=CASE)
+    parser.add_argument(
+        "--require-unsmoothed",
+        action="store_true",
+        help=(
+            "Require both pressure-smoothing switches to be explicit false and "
+            "the rigid pipeline to be explicitly fixed (exploratory runs)."
+        ),
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent
     resolve = lambda path: path if path.is_absolute() else root / path
     config_path = resolve(args.config)
     config = read_json(config_path)
+    checkpoint_config = checkpoint_config_path(config_path, config)
+    parameters = plot_parameters(
+        config, require_unsmoothed=args.require_unsmoothed
+    )
     result = resolve(args.result_dir)
     checkpoint = resolve(args.checkpoint)
     particle_file = resolve(args.particles)
@@ -505,6 +953,7 @@ def main() -> int:
         amplitude_ratio,
         phase_difference,
         args.case_label,
+        parameters,
     )
     time_depth = plot_time_depth(
         output / f"{args.case_label}_liquid_pressure_time_depth",
@@ -515,7 +964,33 @@ def main() -> int:
         phase,
         harmonic_r2,
         args.case_label,
+        parameters,
     )
+    figure_paths = tuple(
+        path.resolve()
+        for base in (
+            output / f"{args.case_label}_liquid_pressure_2d_phase_lag",
+            output / f"{args.case_label}_liquid_pressure_time_depth",
+        )
+        for path in figure_output_paths(base)
+    )
+    phase_inputs = {
+        "schema": INPUT_SCHEMA,
+        "analysis_config": artifact_record(config_path),
+        "checkpoint_config": artifact_record(checkpoint_config),
+        "checkpoint": artifact_record(checkpoint),
+        "particles": artifact_record(particle_file),
+        "pipeline_history": artifact_record(history_path),
+        "result_directory": str(result.resolve()),
+        "result_particle_vtp": [artifact_record(path) for path in files],
+    }
+    artifacts = {
+        "schema": ARTIFACT_SCHEMA,
+        "analyzer": artifact_record(ANALYZER_PATH),
+        "plot_script": artifact_record(PLOT_SCRIPT_PATH),
+        "figures": [artifact_record(path) for path in figure_paths],
+        "inputs": phase_inputs,
+    }
 
     probes = build_probes(config, initial_coordinates)
     surface_index = next(probe.index for probe in probes if probe.name == "surface")
@@ -540,6 +1015,10 @@ def main() -> int:
     audit = {
         "schema": SCHEMA,
         "case": args.case_label,
+        "parameters": parameters.as_dict(),
+        "parameter_subtitle": parameter_subtitle(parameters),
+        "require_unsmoothed": args.require_unsmoothed,
+        "artifacts": artifacts,
         "field": "PIC_liquid_pressures",
         "excess_definition": (
             "current PIC_liquid_pressures minus the supplied equilibrium "
@@ -551,11 +1030,8 @@ def main() -> int:
         "fit_window_s": [FIT_START_S, FIT_END_S],
         "minimum_local_amplitude_ratio_for_phase": MINIMUM_LOCAL_AMPLITUDE_RATIO,
         "minimum_harmonic_r_squared_for_phase": MINIMUM_HARMONIC_R_SQUARED,
-        "checkpoint": {
-            "path": str(checkpoint.resolve()),
-            "sha256": sha256(checkpoint),
-        },
-        "config": {"path": str(config_path.resolve()), "sha256": sha256(config_path)},
+        "checkpoint": phase_inputs["checkpoint"],
+        "config": phase_inputs["analysis_config"],
         "snapshots": [
             {
                 "time_s": item["time_s"],
@@ -584,8 +1060,11 @@ def main() -> int:
             "convention; use absolute magnitude when describing the presence of lag."
         ),
     }
-    (output / f"{args.case_label}_liquid_pressure_phase_lag.audit.json").write_text(
-        json.dumps(audit, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    audit_path = output / f"{args.case_label}_liquid_pressure_phase_lag.audit.json"
+    validate_phase_audit_artifacts(audit, expected_figure_paths=figure_paths)
+    atomic_write_json(audit_path, audit)
+    validate_phase_audit_artifacts(
+        read_json(audit_path), expected_figure_paths=figure_paths
     )
     print(json.dumps(audit["probe_results"], indent=2))
     print(f"Wrote liquid-pressure phase-lag figures to {output}")

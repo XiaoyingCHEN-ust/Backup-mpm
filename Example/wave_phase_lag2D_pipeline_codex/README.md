@@ -9,20 +9,33 @@ The case is a shallow-buried, empty PE100 SDR17 pipeline used as an indicator
 of support loss. The registered screen tests, rather than assumes, the proposed
 phase-lag mechanism:
 
-> Phase-resolved three-phase MPM linking hydraulic phase lag to post-liquefaction
+> Phase-resolved three-phase MPM testing whether hydraulic phase lag changes
+> near-pipeline pressure-gradient forcing, skeleton-stress loss and subsequent
 > pipeline migration, with a phase-erased numerical counterfactual and a cyclic
 > constitutive-model ablation.
 
-The completed seven-case phase-only screen gives a null/opposite result for the
-first part of that proposition. The raw phase-erased database preserved point
-means and fundamental amplitudes and reduced the mean probe lag by 45.37
-degrees, but the PIC-smoothed response-amplitude gate failed. RE, not RL, had
-the larger `IF>=1` area--time and same-particle joint
-`IF>=1`/`Rsigma<=0.05` occurrence, while pipe motion was materially
-indistinguishable. The paper must not claim from this screen that phase lag made
-liquefaction easier. SANISAND's additional cyclic mechanisms are demonstrated
-by the material-point diagnostic; field-scale superiority is not claimed
-because MC_EQ failed the unchanged stability gate.
+The earlier registered seven-case phase-only screen is retained as a
+sensitivity analysis, not as the primary Section 7.5 result. The raw
+phase-erased database preserved point means and fundamental amplitudes and
+reduced the mean probe lag by 45.37 degrees, but the response-amplitude control
+failed. An unsmoothed raw-database derivative gave RL larger local positive-part
+activity, whereas the VTK-smoothed derivative gave RE the larger `IF>=1`
+area--time; pipe motion was materially indistinguishable. This derivative
+sensitivity and the absence of a net-resultant test prevent a lag-to-
+liquefaction or uplift claim from that screen. SANISAND's additional cyclic
+mechanisms are demonstrated only by the material-point diagnostic;
+field-scale superiority is not claimed because MC_EQ failed the unchanged
+stability gate.
+
+The primary current-runner permeability screen uses four fixed points at
+`Sw=0.94`, disables both solver pressure-smoothing switches, and evaluates raw
+pressure-database gradients over two complete post-ramp cycles. All four points
+fail the net-uplift engineering gate. The fresh `k=1e-13 m2` point resolves a
+`+49.90 deg` crown phase difference with a crown/surface amplitude ratio of
+`0.132`, yet its net-uplift impulse changes by `-0.0239%`; the other three net
+changes are `-0.0131%`, `-0.1399%` and `-0.9038%`. The result supports the
+presence of phase lag, but not a resolved amplification of the pipeline-zone
+net-uplift driver in this matrix.
 
 The code does **not** assume that SANISAND must predict more displacement than
 Mohr-Coulomb.  The comparison tests whether cyclic memory, state dependence,
@@ -44,7 +57,8 @@ not monotonic.
 | RE | Same mean/amplitude as RL, fundamental lag erased | SANISAND | One-way numerical counterfactual; **not** a physical fully coupled solution |
 
 LS–HS is the physical comparison, but saturation also changes attenuation and
-drainage.  RL–RE is therefore the strict phase-only diagnostic.  RL–RM applies
+drainage.  RL–RE is therefore a controlled one-way phase-component diagnostic.
+RL–RM applies
 the same pressure database to both constitutive models and is the primary
 constitutive ablation; HS–HM is retained only as fully coupled context.
 
@@ -313,6 +327,12 @@ horizontal travelling-wave phase.
 
 ### Exploratory low-permeability, no-smoothing replay
 
+The current four-point, fail-closed permeability screen and its exact gates are
+recorded in `PHASE_LAG_PERMEABILITY_SCREEN.md`. Use
+`run_phase_lag_exploration.py` for new calculations; the longer direct-solver
+sequence below documents the original `1e-13 m2` legacy run and must not be
+used to overwrite or resume a partial exploration namespace.
+
 The registered screen/production configurations remain immutable.  A separate
 exploratory namespace can test a more strongly diffusion-limited pressure
 response using `Sw=0.94`, `intrinsic_permeability=1e-13 m^2`, and both pressure-
@@ -358,8 +378,9 @@ IDs, no particles outside the mesh, valid porosity and the primary `IF`,
 `R_sigma` and same-particle joint criteria.  These outputs are explicitly
 exploratory and do not replace registered manuscript evidence.
 
-The completed `k=1e-13 m^2`, `Sw=0.94`, no-smoothing run resolves a credible
-local pressure lag at the pipe crown: `+50.20 deg`, amplitude `37.48 Pa`
+The legacy WAVE-v2 `k=1e-13 m^2`, `Sw=0.94`, no-smoothing run resolves a
+credible local pressure lag at the pipe crown: `+50.20 deg` (the later HD
+phase-v3 reconstruction gives `+50.02 deg`), amplitude `37.48 Pa`
 (`0.132` of the same-column surface amplitude), and harmonic `R^2=0.9836`.
 The shoulder and far-field same-column lags are `-10.20 deg` and `+7.23 deg`;
 the invert estimate is rejected by the predeclared harmonic-quality gate
@@ -369,12 +390,15 @@ a maximum framewise particle `q95` pressure difference of `29.37 Pa` at
 the lagged run has `max|v|=1.370e-4 m/s` and porosity
 `0.484404--0.485223`.
 
-This stronger local lag does **not** make liquefaction easier in the short,
-fixed-pipe exploratory replay.  Relative to phase-erased, lagged `IF>=1`
+This stronger local lag does **not support the claim** that retained lag makes
+liquefaction easier in the short, fixed-pipe exploratory replay. Relative to
+phase-erased, lagged `IF>=1`
 area-time is `0.35%` smaller; the sparse `R_sigma<=0.05` area-time is `8.11%`
 smaller, and the same-particle/same-time joint criterion is zero in both cases.
 The result therefore supports the existence of a local hydraulic phase lag,
-but not the manuscript's proposed lag-to-liquefaction causal claim.  The large
+but not the manuscript's proposed lag-to-liquefaction causal claim. Its
+historical equilibrium-config identity was not frozen by the current-runner
+schema, so it is excluded from the primary four-point trend. The large
 raw no-smoothing snapshot roughness (`q95=137 Pa` between adjacent saved
 snapshots) is reported separately and is not interpreted as phase lag.
 
@@ -411,8 +435,8 @@ chain passed:
 
 1. **Trigger-chain audit:** phase/amplitude histories, `IF`, `Rsigma` and the
    same-particle joint indicator at common registered times, followed by
-   pipeline contact and `uy/D`. In the completed screen the separate metrics
-   do not establish a lag-driven causal chain.
+   pipeline contact and `uy/D`. In the earlier registered seven-case screen,
+   the separate metrics do not establish a lag-driven causal chain.
 2. **Physical and phase controls:** LS/HS and RL/RE curves of support-region
    criterion area, area-time, contact count and per-cycle uplift.  RL/RE must
    include the fitted mean/amplitude QA beside the response comparison.
