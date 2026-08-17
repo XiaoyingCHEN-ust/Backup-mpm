@@ -118,3 +118,33 @@ therefore excluded from the primary four-point summary.
 No point passes. The result is therefore phase present without resolved
 engineering-driver amplification for this matrix; thresholds are not relaxed
 to obtain a positive manuscript claim.
+
+## Phase-conditioned short-time result
+
+The complete-cycle conclusion above is retained as a cancellation guardrail.
+It does not answer the narrower question of short upward drag while the
+same-column seabed pressure is still negative and recovering from its trough.
+That comparison is generated from the same audited raw data with:
+
+```bash
+python3 analyze_phase_conditioned_uplift.py
+```
+
+The two registered recovery branches are `2.34--2.60 s` and
+`3.64--3.90 s`. They use the five contiguous saved frames from the surface
+pressure minimum to the cycle boundary while the excess pressure remains below
+10% of its fitted amplitude in suction. No derivative or metric is smoothed.
+
+| Intrinsic permeability | Local activity recovery 1 / 2 | Signed force recovery 1 / 2 | Short-time gate |
+|---:|---:|---:|:---:|
+| `1e-13 m2` | `-0.195% / -0.195%` | `-1.128% / -1.012%` | FAIL |
+| `3e-13 m2` | `+0.070% / +0.061%` | `-0.467% / -0.416%` | FAIL |
+| `1e-12 m2` | `+1.475% / +1.455%` | `-0.365% / -0.326%` | FAIL |
+| `3e-12 m2` | `+6.771% / +6.668%` | `+1.274% / +1.156%` | PASS |
+
+Thus retained phase structure produces a repeatable, resolved short-time
+upward hydraulic-demand increase at `3e-12 m2`, even though no case passes the
+two-cycle net-uplift gate. The lowest permeability has the largest crown delay
+but insufficient transmission, so the effect is non-monotonic. This PASS is a
+fixed-state hydraulic-risk mechanism, not realised liquefaction or pipe motion;
+independent lagged/phase-erased SANISAND replays remain required for that claim.

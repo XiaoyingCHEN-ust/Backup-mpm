@@ -37,6 +37,26 @@ changes are `-0.0131%`, `-0.1399%` and `-0.9038%`. The result supports the
 presence of phase lag, but not a resolved amplification of the pipeline-zone
 net-uplift driver in this matrix.
 
+A separate phase-conditioned diagnostic now answers the narrower engineering
+question that the complete-cycle integral cancels: short upward drag while the
+same-column seabed pressure is negative and recovering from its trough. At
+`k=3e-12 m2`, the two repeated recovery branches increase raw local
+upward-force activity by `6.77%` and `6.67%`; their signed support-force
+impulses increase by `1.27%` and `1.16%`. The other permeability points do not
+pass the fixed short-time mechanism gate. Thus the data support a transient
+hydraulic-risk window, not a monotonic low-permeability rule and not realised
+liquefaction. Reproduce the audited CSV and common-time two-dimensional fields
+with:
+
+```bash
+python3 analyze_phase_conditioned_uplift.py
+```
+
+Numeric derivatives and metrics remain unsmoothed; `sigma=0.75 pixels` is used
+only for the displayed two-dimensional raster. The resulting HTML technical
+report and PNG/PDF figures are written under
+`analysis/phase_conditioned_uplift/`.
+
 The code does **not** assume that SANISAND must predict more displacement than
 Mohr-Coulomb.  The comparison tests whether cyclic memory, state dependence,
 fabric evolution and cyclic mobility change the trigger, accumulation rate and

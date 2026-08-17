@@ -1,11 +1,12 @@
 # Draft manuscript section 7.5
 
-## 7.5 Fixed four-point phase-lag ablation around a shallow-buried pipeline
+## 7.5 Phase-lag ablation and negative-pressure uplift around a shallow-buried pipeline
 
 Sections 7.1--7.4 showed that attenuation and phase delay are coupled outcomes
 of storage and seepage. A shallow empty pipeline is used here to test the more
 specific engineering hypothesis that retaining the subsurface liquid-pressure
-phase structure increases the upward hydraulic driver near the pipe. The pipe
+phase structure increases the upward hydraulic driver near the pipe, especially
+during the short recovery from a negative seabed-pressure trough. The pipe
 diameter is 0.12 m and its cover-to-diameter ratio is 0.25. The comparison is
 therefore placed in the near-surface zone where the preceding calculations
 showed both pressure transmission and phase variation.
@@ -126,16 +127,77 @@ for net uplift, `+0.0239%` for local positive-part activity and `+0.3377%` for
 histories, so its relative change is undefined rather than a fabricated zero
 percentage. This point also fails the screen.
 
-The resulting engineering statement is deliberately narrower than the initial
-hypothesis: across the four fixed permeability points, resolvable subsurface
-phase structure did not produce a qualifying increase in the two-cycle
-pipeline-zone net-uplift driver. Fixed-state pressure results cannot by
-themselves establish additional liquefaction, skeleton-stress loss or pipeline
-motion. Because no point passed the pressure-only gate, independently
-integrated lagged/phase-erased and released-pipeline calculations are not
-promoted as follow-on evidence for this matrix.
+The resulting complete-cycle statement is deliberately narrow: across the four
+fixed permeability points, resolvable subsurface phase structure did not
+produce a qualifying increase in the two-cycle pipeline-zone net-uplift driver.
+This integral is a cancellation guardrail; it does not answer whether a short
+negative-pressure sub-cycle contains a stronger upward hydraulic demand. That
+phase-conditioned question is evaluated separately below. Fixed-state pressure
+results cannot by themselves establish additional liquefaction,
+skeleton-stress loss or pipeline motion.
 
-### 7.5.4 Relation to the earlier registered replay
+### 7.5.4 Negative-pressure recovery resolves a short-time hydraulic mechanism
+
+The short-time comparison is registered on the same two post-ramp cycles and
+uses no new solver output. In each cycle, the recovery branch begins at the
+minimum saved liquid pressure at the top-surface particle directly above the
+pipe and ends at the cycle boundary while the surface excess pressure remains
+below `-0.10` times its fitted amplitude. Each branch contains five saved
+frames over 0.26 s. The first (`2.34--2.60 s`) and second
+(`3.64--3.90 s`) branches sample the same physical wave phase and therefore
+provide an internal repeatability check.
+
+Two hydraulic quantities are distinguished. The local upward-activity impulse
+is the time integral of `integral max(f_y,0)dA` over the registered pipeline
+support zone; it measures the simultaneous upward drag acting on different soil
+regions. The signed support-force impulse integrates `integral f_y dA` over the
+same zone and retains spatial cancellation. A short-time mechanism is accepted
+only when a phase-resolved crown, shoulder or invert probe is present, both
+recovery branches increase local upward activity by at least 5%, both signed
+impulse differences have the positive direction, and the final recovery has at
+least a 5% same-frame local-force advantage. This gate is separate from, and
+cannot override, the complete-cycle net-uplift gate.
+
+| Intrinsic permeability (m2) | Recovery 1 local activity | Recovery 2 local activity | Recovery 2 signed force | Short-time mechanism |
+|---:|---:|---:|---:|:---:|
+| `1e-13` | `-0.195%` | `-0.195%` | `-1.012%` | FAIL |
+| `3e-13` | `+0.070%` | `+0.061%` | `-0.416%` | FAIL |
+| `1e-12` | `+1.475%` | `+1.455%` | `-0.326%` | FAIL |
+| `3e-12` | `+6.771%` | `+6.668%` | `+1.156%` | PASS |
+
+At `3e-12 m2`, the final recovery local upward-activity impulses are
+`118.712` and `111.291 N s/m` for the lagged and phase-erased fields,
+respectively. The lagged advantage is therefore `7.421 N s/m` (`+6.668%`).
+The corresponding signed impulses are `33.289` and `32.909 N s/m`
+(`+1.156%`). The preceding recovery gives closely repeated increases of
+`+6.771%` and `+1.274%`. The largest same-frame local advantage in the final
+branch is `+7.969%`. At the common two-dimensional comparison time
+`t=3.835 s`, the same-column surface excess pressure is `-168 Pa`; the raw
+lagged-minus-erased local upward activity is positive near the shallow-pipe
+support region. The Gaussian `sigma=0.75 pixel` filter affects raster display
+only, not these numbers.
+
+The relevant phase structure at `3e-12 m2` is not represented by the crown
+alone. The crown difference is below its earlier 18-degree qualification, but
+the invert retains a same-column phase difference of `-54.54 degrees`, an
+amplitude ratio of `0.0899` and `R2=0.982`. This vertical spatial phase
+structure is sufficient to redistribute the upward gradient during recovery.
+Conversely, `1e-13 m2` has a much larger crown delay but transmits too little
+amplitude to strengthen the integrated short-time driver. The four-point result
+therefore supports a permeability window, not the monotonic statement that a
+smaller permeability always produces a larger uplift hazard.
+
+This PASS supports only a potential transient hydraulic-risk mechanism. The
+`IF>=1` area-time does not increase at `3e-12 m2`, and the paired fields share
+one fixed HD skeleton state. The result does not yet demonstrate additional
+liquefaction, stress loss or pipe motion. It instead identifies
+`k_s=3e-12 m2`, `Sw=0.94` and the negative-pressure recovery branch as the
+first condition to test with independently integrated lagged and phase-erased
+SANISAND replays. The complete-cycle negative result remains a required
+guardrail against presenting a short favourable interval as a sustained net
+uplift.
+
+### 7.5.5 Relation to the earlier registered replay
 
 An earlier registered RL--RE replay at the baseline permeability produced a
 larger raw local positive-part impulse and a larger same-particle hydraulic-
@@ -154,7 +216,7 @@ same attenuation-versus-lag trade-off, but its historical equilibrium config
 identity was not frozen by the current runner schema. It is excluded from the
 primary four-point trend and replaced by the fresh current-runner case above.
 
-### 7.5.5 SANISAND capability and the Mohr--Coulomb limitation
+### 7.5.6 SANISAND capability and the Mohr--Coulomb limitation
 
 The planned zero-cohesion Mohr--Coulomb field comparison cannot be admitted.
 After restoring the elastic HS checkpoint, the MC equilibrium diagnostic
@@ -176,7 +238,7 @@ model's pressure-dependent stiffness, contraction--dilation, backstress/fabric
 memory and cyclic mobility. They do not demonstrate universal or independently
 validated field-scale superiority.
 
-### 7.5.6 Figures and evidence sources
+### 7.5.7 Figures and evidence sources
 
 **Figure 7 -- two-dimensional pressure transmission and phase.** Four common-
 scale quarter-cycle liquid-excess-pressure snapshots for one explicitly
@@ -185,7 +247,20 @@ and phase-difference maps. The pipe geometry and mask are identical in every
 panel. Phase is hidden where amplitude is below 5% of the local surface or the
 harmonic `R2` is below 0.8.
 
-**Figure 8 -- permeability screen and engineering guardrail.** Crown phase
+**Figure 8 -- negative-pressure recovery and permeability window.** The raw
+lagged-minus-erased local upward-force history in the final post-ramp period,
+followed by the two repeated recovery-branch changes in local upward activity
+and signed support force. The shaded interval is the registered
+negative-pressure recovery rather than a visually selected instant.
+
+**Figure 9 -- two-dimensional short-time upward hydraulic forcing.** At the
+common physical time `t=3.835 s` and same-column surface excess pressure
+`-168 Pa`, each permeability occupies one row with lagged, phase-erased and
+difference fields on the same geometry and colour scales. The figure shows the
+non-monotonic trade-off: the largest low-permeability phase angle is attenuated,
+whereas `3e-12 m2` produces the strongest short recovery-phase redistribution.
+
+**Supplementary permeability guardrail.** Crown phase
 magnitude and amplitude transmission for the four current-runner points,
 followed by raw two-cycle changes in net uplift, local positive-part activity,
 `IF>=1` area-time and shared-state co-location. Each point is labelled with its
@@ -197,8 +272,9 @@ Caption sentence common to both figures:
 
 > Raster smoothing is used for display only. All threshold markers, force
 > histories, integrals, extrema and gate decisions are computed from
-> unsmoothed raw pressure-database values. The displayed field is illustrative;
-> acceptance is determined from the complete 1.3--3.9 s two-cycle window.
+> unsmoothed raw pressure-database values. The complete-cycle gate uses
+> 1.3--3.9 s, whereas the short-time mechanism uses two pre-defined
+> trough-to-cycle-boundary negative-pressure recovery branches.
 
 The current-runner provenance is stored under
 `analysis/phase_lag_exploratory/<label>/runner_audit.json`. Each phase plot audit
@@ -207,3 +283,8 @@ PNG/PDF artifacts. Each driver audit rebinds that phase audit, the exact runner
 record and both raw pressure databases. The four-point summary rejects missing,
 legacy or hash-drifted inputs. Values in this section must be copied from those
 audits rather than estimated visually.
+
+The phase-conditioned short-time audit, exact CSV and PNG/PDF figures are
+stored under `analysis/phase_conditioned_uplift/`. Its audit revalidates all
+four runner, phase-v3 and full-cycle driver sources before calculating the
+recovery metrics.
