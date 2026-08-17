@@ -1,6 +1,6 @@
 # Draft manuscript section 7.5
 
-## 7.5 Phase-lag ablation and pipeline-support response
+## 7.5 Phase-lag ablation in a shallow-buried pipeline: from local gradient focusing to engineering response
 
 Sections 7.1--7.4 showed that pressure attenuation and phase lag are coupled
 outcomes of storage and seepage. Here, a shallow empty pipeline is used to test
@@ -58,11 +58,39 @@ The hydraulic trigger is the hydrostatic-corrected upward seepage-force index
 `IF = max[0, (f_seep,l + rho_l g) dot (-g/|g|) / gamma_sub]`,
 
 where `IF >= 1` means that the upward wave-induced seepage force reaches the
-submerged skeleton weight. The support-zone `IF >= 1` area--time was
-`3.0942 x 10^-3 m2 s` for RL and `4.08583 x 10^-3 m2 s` for RE. The phase-erased
-case was therefore 32.05% larger. The maximum indices were 2.072 and 3.243,
-respectively. These values are opposite to the hypothesis that retaining the
-subsurface phase lag increases the hydraulic trigger in this case.
+submerged skeleton weight. To connect this local index to the engineering load
+path, the signed upward wave-induced pressure-gradient force density is defined
+as
+
+`f_y^ex = [-grad(p_l) + rho_l g] dot (-g/|g|)`,
+
+and its positive resultant in the registered pipeline-support cohort is
+
+`F_up^+(t) = integral_Omega_sup max(f_y^ex, 0) dA`.
+
+`F_up^+` has units of N/m for the two-dimensional unit-thickness model. It was
+integrated from the raw particle seepage-force field and current particle
+volumes. No spatial smoothing was used for this force, `IF`, threshold area,
+frame selection or any acceptance gate; the optional Gaussian filter in Figure
+8 is confined to the displayed raster.
+
+At the common registered `t_IF=7.865 s`, RL produced
+`F_up^+=17.13 N/m`, compared with `13.92 N/m` for RE, an increase of 23.03%.
+The corresponding maximum `IF` was 1.858 for RL and 1.193 for RE (+55.70%),
+while the instantaneous `IF >= 1` area was `9.3285 x 10^-4 m2` and
+`9.9932 x 10^-5 m2`, respectively, a factor of 9.33. Thus retaining the fitted
+subsurface phase structure concentrated a stronger upward pressure gradient
+around the pipeline at this wave phase. This is the engineering bridge between
+the local phase-lag mechanism and an instantaneous upward lifting action.
+
+The effect was not uniformly larger over the record. The support-zone
+`IF >= 1` area--time was `3.0942 x 10^-3 m2 s` for RL and
+`4.08583 x 10^-3 m2 s` for RE, so the phase-erased value was 32.05% larger.
+Likewise, the full-record peak `F_up^+` was 25.72 N/m for RL and 35.28 N/m for
+RE, and its time integral was 159.91 and 178.07 N s/m, respectively. Retained
+lag therefore reduced the peak by 27.09% and the positive-force impulse by
+10.20% in this screen. These results support phase-specific gradient focusing,
+not a universal or cumulative increase in hydraulic severity.
 
 ### 7.5.2 Realised skeleton-stress loss and joint occurrence
 
@@ -98,14 +126,18 @@ registered large-deformation threshold `max|uy|/D >= 0.5`. Equal small pipeline
 responses do not prove that the local fields are identical, but they provide no
 engineering-scale support for easier liquefaction caused by the retained lag.
 
-The defensible result of this screen is therefore a null/opposite finding: the
-prescribed phase lag was removed successfully at the database level, but the
-PIC-smoothed pressure-response similarity gate failed; RE showed the larger IF
-and same-particle joint occurrence; and RL and RE produced nearly identical
-pipeline motion. The statement that phase lag makes liquefaction easier is not
-supported by this registered case. The larger separate RL stress-loss integral
-is reported as stress-path redistribution, not as proof of phase-lag-induced
-liquefaction.
+The defensible result of this screen is therefore mixed and phase specific. The
+prescribed phase lag was removed successfully at the database level, and RL
+showed a markedly stronger local upward gradient at the registered `t_IF`, but
+the response-amplitude similarity gate failed; RE showed the larger
+full-record hydraulic exposure and same-particle joint occurrence; and RL and
+RE produced nearly identical pipeline motion. The broad statement that phase
+lag always makes liquefaction easier is not supported by this registered case.
+The supported narrower statement is that lag can reorganise the pressure field
+so that a larger instantaneous gradient and lifting force occur near the pipe
+at particular wave phases. The larger separate RL stress-loss integral is
+reported as stress-path redistribution, not as proof of universally easier
+phase-lag-induced liquefaction.
 
 ### 7.5.3 What the SANISAND comparison does and does not show
 
@@ -139,14 +171,33 @@ two-way coupling and must always be described as a one-way numerical
 counterfactual. All reported threshold areas are based on two-dimensional
 unit-thickness material-point areas; they are not three-dimensional volumes.
 
-This negative result is informative for the broader phase-lag argument. Phase
+This mixed result is informative for the broader phase-lag argument. Phase
 delay can alter the spatial gradient and stress path, but its sign and severity
-cannot be inferred from lag magnitude alone. Pressure penetration, smoothing,
-boundary conditions and the relative phase of neighbouring material points
-jointly control the upward gradient. A confirmatory study would therefore need
-a redesigned control that preserves the response amplitude after PIC smoothing,
-followed by the same IF, `R_sigma`, joint-occurrence and pipeline-response gates.
-No such additional production calculation is included here.
+cannot be inferred from lag magnitude alone. Pressure penetration, the inherent
+particle--grid transfer, boundary conditions and the relative phase of
+neighbouring material points jointly control the upward gradient. Display-only
+smoothing can improve the readability of a two-dimensional raster, but it must
+not enter any computed force, threshold, integral or acceptance gate. A
+separate exploratory run at `k=1.0 x 10^-13 m2` and `Sw=0.94`, with solver
+pressure smoothing disabled, resolved a 50.20-degree crown lag with a harmonic
+`R2=0.984`; all 7,376 particles remained in the grid and the maximum velocity
+over the 3.9-s fixed-pipeline replay was `1.37 x 10^-4 m/s`. However, at the
+selected `t=3.705 s`, `F_up^+` was 254.11 N/m for the lagged replay and
+255.42 N/m for the phase-erased replay (-0.52%), while the saved-record impulses
+were 911.30 and 911.44 N s/m. Lowering permeability therefore left the local
+phase delay clearly resolvable but did not amplify the pipeline-zone resultant;
+reduced pressure penetration offset the delay. This diagnostic is not part of
+the registered manuscript evidence and the pipe remained fixed.
+
+A confirmatory study should not simply lower permeability until one selected
+frame looks favourable. It should pre-register a small `Sw=0.94`, no-solver-
+smoothing permeability series around `10^-13--10^-12 m2`, report the complete
+phase-resolved force curves, and retain both phase lag and pressure penetration
+as competing explanatory variables. Only after that fixed-pipeline screen
+should an extended pressure database and released RL--RE pair be run, followed
+by the same continuous-force, `IF`, `R_sigma`, joint-occurrence and
+pipeline-response gates. No such additional production calculation is included
+here.
 
 ## Figure/caption text to use
 
@@ -159,17 +210,23 @@ amplitude, phase and drainage vary together; it is not a phase-only comparison.
 The pipe outline uses its instantaneous position and the orange region marks the
 pre-registered support cohort.
 
-### Figure 8 -- two-dimensional phase-ablation fields
+### Figure 8 -- phase-lag-to-pipeline gradient-force bridge
 
-RL, RE and their Lagrangian ID-matched difference at three common registered
-times (`t_IF`, `t_joint` and `t_Rsigma`). Rows show checkpoint-relative excess
-mixture pressure, hydrostatic-corrected upward seepage index `IF`, eligible
-vertical-stress remaining ratio `R_sigma`, and the same-particle joint indicator
-`IF >= 1 and R_sigma <= 0.05`. Coordinates and colour limits are shared within
-each comparison, and each pipe outline uses the corresponding instantaneous
-pose. RE is a one-way numerical counterfactual. The panels show the opposite or
-mixed response and must not be captioned as evidence that lag makes
-liquefaction easier.
+(a,b) RL and RE upward excess seepage-force index fields at the common
+registered `t_IF=7.865 s`; open markers identify raw particles satisfying
+`IF >= 1`. (c) Lagrangian ID-matched `IF_RL - IF_RE`. (d) Raw support-zone
+positive upward pressure-gradient resultant `F_up^+`; (e) its RL--RE
+difference; and (f) pipeline vertical displacement normalised by diameter. The
+field raster uses a shared colour scale and optional display-only Gaussian
+smoothing, whereas all contours, markers, force integrals, extrema, impulses
+and response histories are calculated from unsmoothed particle values. The
+figure demonstrates stronger phase-specific gradient focusing in RL at
+`t_IF`, but not larger full-record exposure or engineering-scale pipe motion.
+RE remains a one-way numerical counterfactual.
+
+The multi-time `R_sigma` and same-particle joint-occurrence fields should be
+retained as a supplementary figure rather than combined with this mechanism
+bridge.
 
 ### Figure 9 -- SANISAND material-point mechanism and MC handoff audit
 
@@ -184,6 +241,9 @@ claim of universal predictive superiority.
 
 All values in this section come from
 `analysis/screen/manuscript_evidence.json`, the audited RL/RE case summaries and
-`analysis/material_point/cyclic_constitutive_comparison.audit.json`. The final
-claim wording is also generated in `analysis/screen/manuscript_evidence.md`.
-Values must not be replaced by visual estimates from the figures.
+`analysis/material_point/cyclic_constitutive_comparison.audit.json`. The
+continuous pipeline-gradient bridge is bound to the formal artifacts by
+`analysis/screen/figures/figure8_pipeline_gradient_force_bridge.audit.json` and
+its raw histories are in the adjacent CSV. The final claim wording is also
+generated in `analysis/screen/manuscript_evidence.md`. Values must not be
+replaced by visual estimates from the figures.
