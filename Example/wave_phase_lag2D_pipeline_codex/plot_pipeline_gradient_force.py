@@ -40,9 +40,16 @@ from analyze_study import (  # noqa: E402
     validate_pipeline_history_grid,
 )
 from plot_manuscript_figures import _masked_triangulation  # noqa: E402
+from phase_controls import (  # noqa: E402
+    database_paths,
+    iter_frames,
+    read_header,
+    read_points,
+    validate_database,
+)
 
 
-SCHEMA = "pipeline-gradient-force-bridge-v1"
+SCHEMA = "pipeline-gradient-force-bridge-v2"
 CASES = {
     "RL": "configs/screen/04_RL.json",
     "RE": "configs/screen/04_RE.json",
@@ -68,28 +75,146 @@ def sha256(path: Path) -> str:
 
 
 def upward_excess_force_density(
-    liquid_seepage_forces: np.ndarray,
+    liquid_pressure_gradients: np.ndarray,
     liquid_densities: np.ndarray,
     gravity: np.ndarray,
 ) -> np.ndarray:
     """Return signed upward wave-induced pressure-gradient force (N/m3)."""
 
-    forces = np.asarray(liquid_seepage_forces, dtype=np.float64)
+    gradients = np.asarray(liquid_pressure_gradients, dtype=np.float64)
     densities = np.asarray(liquid_densities, dtype=np.float64).reshape(-1)
     gravity = np.asarray(gravity, dtype=np.float64).reshape(-1)
-    if forces.ndim != 2 or forces.shape[0] != densities.size:
-        raise ValueError("Seepage-force and density arrays are incompatible")
-    if gravity.size < 2 or forces.shape[1] < gravity.size:
-        raise ValueError("Gravity and seepage-force dimensions are incompatible")
-    if not np.all(np.isfinite(forces[:, : gravity.size])):
-        raise ValueError("Seepage force contains NaN/Inf")
+    if gradients.ndim != 2 or gradients.shape[0] != densities.size:
+        raise ValueError("Pressure-gradient and density arrays are incompatible")
+    if gravity.size < 2 or gradients.shape[1] < gravity.size:
+        raise ValueError("Gravity and pressure-gradient dimensions are incompatible")
+    if not np.all(np.isfinite(gradients[:, : gravity.size])):
+        raise ValueError("Pressure gradient contains NaN/Inf")
     if not np.all(np.isfinite(densities)) or np.any(densities <= 0.0):
         raise ValueError("Liquid density must be finite and positive")
     magnitude = float(np.linalg.norm(gravity))
     if not math.isfinite(magnitude) or magnitude <= 0.0:
         raise ValueError("Gravity magnitude must be finite and positive")
     upward = -gravity / magnitude
-    return (forces[:, : gravity.size] + densities[:, None] * gravity) @ upward
+    return (-gradients[:, : gravity.size] + densities[:, None] * gravity) @ upward
+
+
+def raw_finite_difference_gradient(
+    reference_coordinates: np.ndarray,
+    current_coordinates: np.ndarray,
+    pressures: np.ndarray,
+) -> np.ndarray:
+    """Differentiate raw ID-aligned pressures on the material-point lattice.
+
+    This is a direct nearest-neighbour finite-difference reconstruction.  It
+    does not average pressures and is intentionally independent of both the
+    solver's VTK-time PIC smoothing and the figure's display-only raster filter.
+    """
+
+    reference = np.asarray(reference_coordinates, dtype=np.float64)
+    current = np.asarray(current_coordinates, dtype=np.float64)
+    values = np.asarray(pressures, dtype=np.float64).reshape(-1)
+    if (
+        reference.ndim != 2
+        or reference.shape[1] != 2
+        or current.shape != reference.shape
+        or values.size != reference.shape[0]
+    ):
+        raise ValueError("Coordinates and pressure arrays are incompatible")
+    if not (
+        np.all(np.isfinite(reference))
+        and np.all(np.isfinite(current))
+        and np.all(np.isfinite(values))
+    ):
+        raise ValueError("Raw pressure-gradient inputs contain NaN/Inf")
+
+    origin = np.min(reference, axis=0)
+    spacings = []
+    for axis in range(2):
+        unique = np.unique(np.round(reference[:, axis], decimals=12))
+        differences = np.diff(unique)
+        differences = differences[differences > 1.0e-12]
+        if differences.size == 0:
+            raise ValueError("Cannot infer the particle lattice spacing")
+        spacings.append(float(np.min(differences)))
+    keys = np.rint((reference - origin) / np.asarray(spacings)).astype(np.int64)
+    reconstructed = origin + keys * np.asarray(spacings)
+    if not np.allclose(reference, reconstructed, rtol=0.0, atol=1.0e-9):
+        raise ValueError("Reference particles do not lie on a regular lattice")
+    index_by_key = {tuple(key): index for index, key in enumerate(keys)}
+    if len(index_by_key) != len(reference):
+        raise ValueError("Reference particle lattice keys are not unique")
+
+    gradient = np.empty_like(reference)
+    for index, key_array in enumerate(keys):
+        key = tuple(key_array)
+        for axis in range(2):
+            minus_key = list(key)
+            plus_key = list(key)
+            minus_key[axis] -= 1
+            plus_key[axis] += 1
+            minus = index_by_key.get(tuple(minus_key))
+            plus = index_by_key.get(tuple(plus_key))
+            if minus is not None and plus is not None:
+                numerator = values[plus] - values[minus]
+                denominator = current[plus, axis] - current[minus, axis]
+            elif plus is not None:
+                numerator = values[plus] - values[index]
+                denominator = current[plus, axis] - current[index, axis]
+            elif minus is not None:
+                numerator = values[index] - values[minus]
+                denominator = current[index, axis] - current[minus, axis]
+            else:
+                raise ValueError(
+                    f"Particle {index} has no nearest neighbour in axis {axis}"
+                )
+            if not math.isfinite(float(denominator)) or abs(denominator) <= 1.0e-12:
+                raise ValueError("Finite-difference coordinate spacing is invalid")
+            gradient[index, axis] = numerator / denominator
+    return gradient
+
+
+def read_raw_pressure_database(
+    root: Path,
+    config: dict[str, Any],
+    reference_coordinates: np.ndarray,
+) -> tuple[dict[int, np.ndarray], dict[str, Any]]:
+    """Read the unsmoothed prescribed liquid pressures used by a replay."""
+
+    control = config["analysis"]["prescribed_phase_pressures"]
+    if not bool(control.get("enable")) or bool(control.get("write")):
+        raise ValueError("Gradient-force bridge requires a pressure replay case")
+    directory = Path(control["path"])
+    if not directory.is_absolute():
+        directory = root / directory
+    points_path, values_path = database_paths(directory, str(control["file_prefix"]))
+    with values_path.open("rb") as stream:
+        header = read_header(stream)
+        validate_database(values_path, header)
+        points = read_points(points_path, header.dimension)
+        if not np.array_equal(
+            points.particle_ids, np.arange(len(reference_coordinates), dtype=np.uint64)
+        ):
+            raise ValueError("Pressure database IDs are not exactly 0..N-1")
+        if not np.allclose(
+            points.coordinates[:, :2], reference_coordinates, rtol=0.0, atol=2.0e-3
+        ):
+            raise ValueError("Pressure points do not match the replay particle IDs")
+        frames = {
+            int(step): np.asarray(liquid, dtype=np.float64).copy()
+            for step, liquid, _ in iter_frames(stream, header)
+        }
+    if not all(np.all(np.isfinite(values)) for values in frames.values()):
+        raise ValueError("Pressure database contains NaN/Inf")
+    return frames, {
+        "points": str(points_path.resolve()),
+        "points_sha256": sha256(points_path),
+        "values": str(values_path.resolve()),
+        "values_sha256": sha256(values_path),
+        "step_interval": header.step_interval,
+        "max_step": header.max_step,
+        "source_dt_s": header.source_dt,
+    }
 
 
 def raw_force_metrics(
@@ -176,10 +301,11 @@ def ordered_frame(path: Path, particle_count: int) -> tuple[np.ndarray, dict[str
     points, arrays = read_vtp(path)
     required = (
         "ids",
-        "liquid_seepage_forces",
         "liquid_densities",
         "gamma_sub",
         "volumes",
+        "initial_vertical_effective_stresses",
+        "vertical_effective_stress_remaining_ratios",
     )
     missing = [name for name in required if name not in arrays]
     if missing:
@@ -218,18 +344,38 @@ def read_case(root: Path, code: str, config_relative: str) -> dict[str, Any]:
     if support is None:
         raise ValueError(f"{code} has no registered pipeline support cohort")
     gravity = np.asarray(config["external_loading_conditions"]["gravity"], dtype=float)
+    pressure_frames, pressure_database = read_raw_pressure_database(
+        root, config, coordinates
+    )
     rows: list[dict[str, float]] = []
     selected_fields: dict[float, dict[str, Any]] = {}
     dt = float(config["analysis"]["dt"])
     for path in files:
         points, arrays = ordered_frame(path, len(coordinates))
+        step = particle_step(path)
+        if step not in pressure_frames:
+            raise ValueError(f"{code} raw pressure database has no step {step}")
+        pressure_gradient = raw_finite_difference_gradient(
+            coordinates, points, pressure_frames[step]
+        )
         excess = upward_excess_force_density(
-            arrays["liquid_seepage_forces"], arrays["liquid_densities"], gravity
+            pressure_gradient, arrays["liquid_densities"], gravity
         )
         metrics, upward_if = raw_force_metrics(
             excess, arrays["gamma_sub"], arrays["volumes"], support
         )
-        time_s = particle_step(path) * dt
+        volumes = np.asarray(arrays["volumes"], dtype=np.float64).reshape(-1)
+        initial_vertical = np.asarray(
+            arrays["initial_vertical_effective_stresses"], dtype=np.float64
+        ).reshape(-1)
+        stress_ratio = np.asarray(
+            arrays["vertical_effective_stress_remaining_ratios"],
+            dtype=np.float64,
+        ).reshape(-1)
+        eligible = np.abs(initial_vertical) >= 100.0
+        stress_loss = eligible & (stress_ratio <= 0.05)
+        joint = support & stress_loss & (upward_if >= 1.0)
+        time_s = step * dt
         rows.append(
             {
                 "time_s": time_s,
@@ -238,6 +384,10 @@ def read_case(root: Path, code: str, config_relative: str) -> dict[str, Any]:
                 "positive_force_index_area_m2": metrics.positive_force_index_area_m2,
                 "maximum_upward_if": metrics.maximum_upward_if,
                 "critical_area_m2": metrics.critical_area_m2,
+                "stress_loss_area_m2": float(
+                    np.sum(volumes[support & stress_loss])
+                ),
+                "joint_area_m2": float(np.sum(volumes[joint])),
             }
         )
         selected_fields[time_s] = {
@@ -261,6 +411,7 @@ def read_case(root: Path, code: str, config_relative: str) -> dict[str, Any]:
         "fields": selected_fields,
         "history": history,
         "history_audit": history_audit,
+        "pressure_database": pressure_database,
     }
 
 
@@ -424,7 +575,7 @@ def main() -> int:
         axis.set_xlabel("x (m)")
         axis.set_ylabel("y (m)")
     figure.colorbar(
-        artists[0], ax=top_axes[:2], label="Upward excess seepage-force index, IF"
+        artists[0], ax=top_axes[:2], label="Raw upward seepage-force index, IF"
     )
     figure.colorbar(artists[2], ax=top_axes[2], label="Delta IF (RL - RE)")
 
@@ -494,8 +645,9 @@ def main() -> int:
 
     figure.suptitle(
         "Phase-lag control of pipeline-zone upward pressure-gradient force\n"
-        f"registered $t_{{IF}}={target_time:.3f}$ s; all metrics use raw particles; "
-        f"field raster only: display smoothing sigma={args.display_smoothing_sigma:g} pixels",
+        f"registered $t_{{IF}}={target_time:.3f}$ s; raw pressure-database "
+        "finite differences; field raster only: display smoothing "
+        f"sigma={args.display_smoothing_sigma:g} pixels",
         fontsize=13,
     )
     base = output / "figure8_pipeline_gradient_force_bridge"
@@ -518,6 +670,14 @@ def main() -> int:
         code: float(np.max(raw[code]["positive_force_n_per_m"]))
         for code in ("RL", "RE")
     }
+    critical_area_time = {
+        code: float(np.trapz(raw[code]["critical_area_m2"], times))
+        for code in ("RL", "RE")
+    }
+    joint_area_time = {
+        code: float(np.trapz(raw[code]["joint_area_m2"], times))
+        for code in ("RL", "RE")
+    }
     pipeline_max = {}
     for code, case in cases.items():
         uplift = np.abs(
@@ -529,7 +689,9 @@ def main() -> int:
         "status": "audited-registered-screen-derived-figure",
         "definitions": {
             "upward_excess_force_density": (
-                "dot(-grad(p_l) + rho_l*g, -g/|g|) in N/m3"
+                "dot(-grad(p_l) + rho_l*g, -g/|g|) in N/m3; grad(p_l) is "
+                "a direct nearest-neighbour finite difference of the raw "
+                "prescribed pressure database, with no pressure averaging"
             ),
             "positive_support_force": (
                 "integral over the registered initial-ID pipeline support cohort "
@@ -540,6 +702,10 @@ def main() -> int:
             "display_smoothing": (
                 "linear triangulation plus Gaussian raster smoothing for display only; "
                 "not used by any metric, threshold, colour limit, or frame selection"
+            ),
+            "solver_output_smoothing_excluded": (
+                "saved liquid_seepage_forces and PIC_liquid_pressures are not used, "
+                "because VTK-time PIC pressure smoothing may affect those arrays"
             ),
         },
         "display_smoothing_sigma_pixels": args.display_smoothing_sigma,
@@ -571,9 +737,14 @@ def main() -> int:
                 ),
                 "selected_vtp": str(target[code]["path"].resolve()),
                 "selected_vtp_sha256": sha256(target[code]["path"]),
+                "raw_pressure_database": case["pressure_database"],
                 "target_raw_metrics": target_metrics[code],
                 "peak_positive_force_n_per_m": peak_positive_force[code],
                 "positive_force_impulse_n_s_per_m": positive_impulse[code],
+                "raw_IF_ge_1_area_time_m2_s": critical_area_time[code],
+                "raw_IF_ge_1_and_Rsigma_le_0p05_joint_area_time_m2_s": (
+                    joint_area_time[code]
+                ),
                 "maximum_abs_pipeline_uplift_over_D": pipeline_max[code],
             }
             for code, case in cases.items()
@@ -596,6 +767,14 @@ def main() -> int:
             "positive_force_impulse_fraction": (
                 positive_impulse["RL"] / positive_impulse["RE"] - 1.0
             ),
+            "raw_critical_area_time_fraction": (
+                critical_area_time["RL"] / critical_area_time["RE"] - 1.0
+            ),
+            "raw_joint_area_time_fraction": (
+                joint_area_time["RL"] / joint_area_time["RE"] - 1.0
+                if joint_area_time["RE"] > 0.0
+                else None
+            ),
             "peak_positive_force_fraction": (
                 peak_positive_force["RL"] / peak_positive_force["RE"] - 1.0
             ),
@@ -604,11 +783,11 @@ def main() -> int:
             ),
         },
         "interpretation": (
-            "The retained lag focuses the upward gradient more strongly at the "
-            "registered t_IF phase, but does not increase the full-record positive "
-            "force impulse, peak positive force, or engineering-scale pipe uplift. "
-            "The defensible mechanism is phase-specific redistribution, not a "
-            "universal increase in liquefaction severity."
+            "The retained lag increases the raw upward-gradient force at the "
+            "registered t_IF phase, its full-record peak and impulse, and raw "
+            "same-particle IF/stress-loss coincidence. Engineering-scale pipe "
+            "uplift remains indistinguishable. This supports stronger local "
+            "hydraulic triggering, not a universal large-motion consequence."
         ),
         "csv": str(csv_path.resolve()),
         "csv_sha256": sha256(csv_path),

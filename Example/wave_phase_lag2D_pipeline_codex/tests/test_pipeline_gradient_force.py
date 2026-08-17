@@ -11,11 +11,31 @@ class PipelineGradientForceTests(unittest.TestCase):
     def test_hydrostatic_force_is_removed_before_upward_projection(self) -> None:
         gravity = np.asarray([0.0, -10.0])
         density = np.asarray([1000.0, 1000.0])
-        hydrostatic = np.asarray([[0.0, 10000.0], [0.0, 10000.0]])
+        hydrostatic_gradient = np.asarray([[0.0, -10000.0], [0.0, -10000.0]])
         np.testing.assert_allclose(
-            bridge.upward_excess_force_density(hydrostatic, density, gravity),
+            bridge.upward_excess_force_density(
+                hydrostatic_gradient, density, gravity
+            ),
             np.zeros(2),
         )
+
+    def test_raw_finite_difference_gradient_recovers_affine_field(self) -> None:
+        reference = np.asarray(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0],
+                [2.0, 1.0],
+            ]
+        )
+        current = reference + np.asarray([0.2, -0.1])
+        pressures = 7.0 + 3.0 * current[:, 0] - 4.0 * current[:, 1]
+        gradient = bridge.raw_finite_difference_gradient(
+            reference, current, pressures
+        )
+        np.testing.assert_allclose(gradient, np.tile([3.0, -4.0], (6, 1)))
 
     def test_raw_force_metrics_use_signed_and_positive_integrals(self) -> None:
         force = np.asarray([20.0, -10.0, 40.0])

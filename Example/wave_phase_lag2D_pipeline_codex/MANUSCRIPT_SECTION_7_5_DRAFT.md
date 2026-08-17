@@ -51,7 +51,8 @@ by surface amplitude was 5.953%. Both exceed the pre-registered 2% response
 similarity tolerance. Thus the raw forcing transformation is correct, but the
 overall pressure-response control fails. RL--RE remains useful as a numerical
 counterfactual, but it cannot be interpreted as a clean, response-level
-phase-only experiment.
+phase-only experiment. This failure also means that a gradient reconstructed
+from the VTK-smoothed output cannot be the primary hydraulic evidence.
 
 The hydraulic trigger is the hydrostatic-corrected upward seepage-force index
 
@@ -68,29 +69,43 @@ and its positive resultant in the registered pipeline-support cohort is
 
 `F_up^+(t) = integral_Omega_sup max(f_y^ex, 0) dA`.
 
-`F_up^+` has units of N/m for the two-dimensional unit-thickness model. It was
-integrated from the raw particle seepage-force field and current particle
-volumes. No spatial smoothing was used for this force, `IF`, threshold area,
+`F_up^+` has units of N/m for the two-dimensional unit-thickness model. For the
+primary gradient bridge, `grad(p_l)` was reconstructed by a direct
+nearest-neighbour finite difference of the raw prescribed-pressure database,
+with particle IDs defining the original lattice and current coordinates
+defining the spacing. The saved `PIC_liquid_pressures` and
+`liquid_seepage_forces` were deliberately excluded because VTK-time PIC
+smoothing can affect those arrays even though it is not written back to the
+solver state. Current particle volumes were used in all integrals. No pressure
+averaging or spatial smoothing was used for this force, `IF`, threshold area,
 frame selection or any acceptance gate; the optional Gaussian filter in Figure
 8 is confined to the displayed raster.
 
 At the common registered `t_IF=7.865 s`, RL produced
-`F_up^+=17.13 N/m`, compared with `13.92 N/m` for RE, an increase of 23.03%.
-The corresponding maximum `IF` was 1.858 for RL and 1.193 for RE (+55.70%),
-while the instantaneous `IF >= 1` area was `9.3285 x 10^-4 m2` and
-`9.9932 x 10^-5 m2`, respectively, a factor of 9.33. Thus retaining the fitted
+`F_up^+=287.75 N/m`, compared with `265.00 N/m` for RE, an increase of 8.59%.
+The corresponding maximum raw `IF` was 9.459 for RL and 7.752 for RE (+22.02%),
+while the instantaneous raw `IF >= 1` area was `1.04975 x 10^-2 m2` and
+`9.29698 x 10^-3 m2`, respectively (+12.91%). Thus retaining the fitted
 subsurface phase structure concentrated a stronger upward pressure gradient
 around the pipeline at this wave phase. This is the engineering bridge between
 the local phase-lag mechanism and an instantaneous upward lifting action.
 
-The effect was not uniformly larger over the record. The support-zone
-`IF >= 1` area--time was `3.0942 x 10^-3 m2 s` for RL and
-`4.08583 x 10^-3 m2 s` for RE, so the phase-erased value was 32.05% larger.
-Likewise, the full-record peak `F_up^+` was 25.72 N/m for RL and 35.28 N/m for
-RE, and its time integral was 159.91 and 178.07 N s/m, respectively. Retained
-lag therefore reduced the peak by 27.09% and the positive-force impulse by
-10.20% in this screen. These results support phase-specific gradient focusing,
-not a universal or cumulative increase in hydraulic severity.
+The retained-lag increase persisted in the raw full-record measures. Peak
+`F_up^+` was 393.81 N/m for RL and 362.77 N/m for RE (+8.56%), and its time
+integral was 2604.72 and 2458.00 N s/m (+5.97%), respectively. Raw
+`IF >= 1` area--times were `8.40026 x 10^-2` and
+`8.27400 x 10^-2 m2 s` (+1.53%). These results support a larger local and
+integrated upward pressure-gradient action when the fitted lag is retained in
+this counterfactual. They do not by themselves prove realised liquefaction or
+large pipeline movement.
+
+For transparency, the previously registered VTK-output `IF` sensitivity gave
+the opposite area--time ordering: `3.0942 x 10^-3 m2 s` for RL and
+`4.08583 x 10^-3 m2 s` for RE. That index was reconstructed after the
+output-only PIC smoothing and is retained as a numerical-sensitivity result,
+not substituted for the raw database-gradient metric. The sign reversal is
+why smoothing and derivative reconstruction must be declared rather than used
+silently to support either conclusion.
 
 ### 7.5.2 Realised skeleton-stress loss and joint occurrence
 
@@ -108,15 +123,17 @@ ratio is retained only as a probe diagnostic and is not used to define the
 trigger or realised stress loss.
 
 The separate IF and stress-loss integrals do not establish a causal chain.
-Requiring the same particle at the same saved time to satisfy both `IF >= 1`
-and `R_sigma <= 0.05` gives joint area--times of only
-`5.19624 x 10^-5 m2 s` for RL and `2.07851 x 10^-4 m2 s` for RE. Joint
-occurrence was active in 4 saved RL frames and 14 saved RE frames and was four
-times larger in the phase-erased case. Moreover, only 2 of 51 RL support-zone
-stress-loss particles and 2 of 43 RE particles experienced `IF >= 1` during
-the preceding 1.3-s wave cycle. The lagged case therefore accumulated somewhat
-more stress-loss area when that metric was integrated separately, but it did
-not establish the registered hydraulic-trigger-to-stress-loss chain.
+Requiring the same particle at the same saved time to satisfy both raw
+`IF >= 1` and `R_sigma <= 0.05` gives joint area--times of
+`6.65331 x 10^-3 m2 s` for RL and `4.46321 x 10^-3 m2 s` for RE. The
+retained-lag value is 49.07% larger. Together with the 17.23% larger separate
+RL stress-loss integral, this is consistent with the proposed sequence from
+lagged pressure-gradient concentration to local skeleton-stress loss. It is
+not a unique causal proof because the output response-amplitude gate failed and
+RE is one-way. The earlier joint result calculated with the VTK-smoothed `IF`
+(`5.19624 x 10^-5` versus `2.07851 x 10^-4 m2 s`) is retained only as the
+derivative/smoothing sensitivity; it cannot override or be merged with the raw
+definition.
 
 Pipeline response was correspondingly indistinguishable at engineering scale.
 The maximum `|uy|/D` was 0.002914 for RL and 0.002912 for RE, the maximum
@@ -126,18 +143,18 @@ registered large-deformation threshold `max|uy|/D >= 0.5`. Equal small pipeline
 responses do not prove that the local fields are identical, but they provide no
 engineering-scale support for easier liquefaction caused by the retained lag.
 
-The defensible result of this screen is therefore mixed and phase specific. The
-prescribed phase lag was removed successfully at the database level, and RL
-showed a markedly stronger local upward gradient at the registered `t_IF`, but
-the response-amplitude similarity gate failed; RE showed the larger
-full-record hydraulic exposure and same-particle joint occurrence; and RL and
-RE produced nearly identical pipeline motion. The broad statement that phase
-lag always makes liquefaction easier is not supported by this registered case.
-The supported narrower statement is that lag can reorganise the pressure field
-so that a larger instantaneous gradient and lifting force occur near the pipe
-at particular wave phases. The larger separate RL stress-loss integral is
-reported as stress-path redistribution, not as proof of universally easier
-phase-lag-induced liquefaction.
+The defensible result of this screen is therefore positive at the local
+hydraulic and stress-loss levels, but null at the pipe-motion level. The
+prescribed phase lag was removed successfully at the database level. Relative
+to RE, RL had larger raw instantaneous and integrated upward-gradient action,
+a 49.07% larger raw same-particle trigger/stress-loss area--time, and a 17.23%
+larger separate stress-loss integral. This supports the scoped statement that
+retained lag can make local liquefaction triggering more likely around the
+pipeline by concentrating the upward pressure gradient. It does not support a
+claim of proportionally larger engineering displacement: RL and RE produced
+nearly identical pipeline motion. The one-way construction, failed
+response-amplitude gate and derivative sensitivity preclude a universal causal
+claim.
 
 ### 7.5.3 What the SANISAND comparison does and does not show
 
@@ -182,11 +199,11 @@ separate exploratory run at `k=1.0 x 10^-13 m2` and `Sw=0.94`, with solver
 pressure smoothing disabled, resolved a 50.20-degree crown lag with a harmonic
 `R2=0.984`; all 7,376 particles remained in the grid and the maximum velocity
 over the 3.9-s fixed-pipeline replay was `1.37 x 10^-4 m/s`. However, at the
-selected `t=3.705 s`, `F_up^+` was 254.11 N/m for the lagged replay and
-255.42 N/m for the phase-erased replay (-0.52%), while the saved-record impulses
-were 911.30 and 911.44 N s/m. Lowering permeability therefore left the local
-phase delay clearly resolvable but did not amplify the pipeline-zone resultant;
-reduced pressure penetration offset the delay. This diagnostic is not part of
+selected `t=3.705 s`, raw `F_up^+` was 847.93 N/m for the lagged replay and
+849.24 N/m for the phase-erased replay (-0.15%), while the saved-record impulses
+were 3086.22 and 3085.90 N s/m (+0.01%). Lowering permeability therefore left
+the local phase delay clearly resolvable but did not amplify the pipeline-zone
+resultant; reduced pressure penetration offset the delay. This diagnostic is not part of
 the registered manuscript evidence and the pipe remained fixed.
 
 A confirmatory study should not simply lower permeability until one selected
@@ -218,11 +235,11 @@ registered `t_IF=7.865 s`; open markers identify raw particles satisfying
 positive upward pressure-gradient resultant `F_up^+`; (e) its RL--RE
 difference; and (f) pipeline vertical displacement normalised by diameter. The
 field raster uses a shared colour scale and optional display-only Gaussian
-smoothing, whereas all contours, markers, force integrals, extrema, impulses
-and response histories are calculated from unsmoothed particle values. The
-figure demonstrates stronger phase-specific gradient focusing in RL at
-`t_IF`, but not larger full-record exposure or engineering-scale pipe motion.
-RE remains a one-way numerical counterfactual.
+smoothing, whereas all markers, force integrals, extrema, impulses and response
+histories are calculated from raw pressure-database values. The figure
+demonstrates stronger instantaneous and full-record raw upward-gradient action
+in RL, while engineering-scale pipe motion remains nearly unchanged. RE remains
+a one-way numerical counterfactual.
 
 The multi-time `R_sigma` and same-particle joint-occurrence fields should be
 retained as a supplementary figure rather than combined with this mechanism

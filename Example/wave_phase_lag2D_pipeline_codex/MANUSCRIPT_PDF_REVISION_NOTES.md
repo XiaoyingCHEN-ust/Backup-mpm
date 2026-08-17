@@ -118,38 +118,42 @@ complete. Replace the Section 7.5 placeholder with
 `MANUSCRIPT_SECTION_7_5_DRAFT.md` and use the generated common-scale 2-D figures
 under `analysis/screen/figures/`.
 
-The result does not support the broad statement that phase lag always makes
-liquefaction easier. The database transformation preserved fitted means
+The result supports a scoped local statement, not the broad statement that
+phase lag always produces larger engineering motion. The database
+transformation preserved fitted means
 (maximum change 0 Pa) and amplitudes (maximum change
 `5.68 x 10^-14 Pa`) and reduced the mean crown/shoulder/invert lag by 45.37
-degrees. Nevertheless, the PIC-smoothed response-amplitude difference reached
-54.75%, so the registered response-level control failed. The phase-erased RE
-case had the larger support-zone `IF>=1` area--time
-(`4.08583 x 10^-3` versus `3.09420 x 10^-3 m2 s`) and four times the
-same-particle joint `IF>=1`/`Rsigma<=0.05` area--time. RL had a 17.23% larger
-separate stress-loss integral, but preceding-cycle particle overlap was weak and
-pipeline motion was materially indistinguishable. Report this as a
-mixed, phase-specific result and stress-path redistribution, not as universally
-easier phase-lag-induced liquefaction.
+degrees. The PIC-smoothed response-amplitude difference reached 54.75%, so the
+registered response-level control failed and the VTK-smoothed seepage-force
+field must not be used as the primary gradient metric. A direct
+nearest-neighbour derivative of the raw prescribed-pressure database instead
+gives RL a 5.97% larger positive-force impulse, a 1.53% larger raw `IF>=1`
+area--time and a 49.07% larger same-particle raw `IF>=1`/`Rsigma<=0.05`
+area--time. RL also had a 17.23% larger separate stress-loss integral, while
+pipeline motion remained materially indistinguishable. Report this as stronger
+local hydraulic triggering and stress-loss coincidence without claiming a
+large pipe-motion consequence or universal causality.
 
 A continuous engineering bridge is now available in
 `figure8_pipeline_gradient_force_bridge.{png,pdf,csv,audit.json}`. At the
 registered `t_IF=7.865 s`, the retained-lag RL case produced a raw support-zone
-positive upward pressure-gradient force of 17.13 N/m, versus 13.92 N/m for RE
-(+23.03%); its maximum `IF` was 55.70% larger and its instantaneous `IF>=1`
-area was 9.33 times larger. However, RL had a 27.09% lower full-record peak
-force and a 10.20% lower positive-force impulse. Use this to support the scoped
-statement that phase lag can concentrate a larger local lifting force at a
-particular wave phase, while retaining the null/opposite conclusion for
-cumulative severity and pipeline motion. All metrics use raw particle fields;
-Gaussian smoothing is permitted only for the displayed two-dimensional raster
-and must be identified as display-only in the caption.
+positive upward pressure-gradient force of 287.75 N/m, versus 265.00 N/m for RE
+(+8.59%); its maximum raw `IF` was 22.02% larger and its instantaneous raw
+`IF>=1` area was 12.91% larger. RL also had an 8.56% larger full-record peak
+force and a 5.97% larger positive-force impulse. Use this to support the scoped
+statement that phase lag can concentrate a larger local lifting force and
+increase local trigger/stress-loss coincidence, while retaining the null result
+for pipeline motion. All metrics use raw database pressures and current
+particle volumes. Gaussian smoothing is permitted only for the displayed
+two-dimensional raster and must be identified as display-only in the caption.
+The opposite VTK-smoothed `IF` ordering must be reported explicitly as a
+derivative/smoothing sensitivity.
 
 The completed exploratory `k=1.0 x 10^-13 m2`, `Sw=0.94` run should be used as
 a parameter-selection caution, not promoted to the main engineering result. It
 used no solver pressure smoothing and resolved a 50.20-degree crown lag, but
 the fixed-pipeline lagged/phase-erased positive upward resultants at 3.705 s
-were 254.11/255.42 N/m and their impulses were 911.30/911.44 N s/m. The low
+were 847.93/849.24 N/m and their impulses were 3086.22/3085.90 N s/m. The low
 permeability retained a clearly resolved delay while attenuating useful
 penetration, so it did not increase the integrated pipeline-zone uplift action.
 If a follow-up is run, pre-register a `Sw=0.94` permeability series around
