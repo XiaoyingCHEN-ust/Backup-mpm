@@ -10,6 +10,17 @@ import plot_pipeline_gradient_force as bridge
 
 
 class PipelineGradientForceTests(unittest.TestCase):
+    def test_vector_force_and_upward_projection_are_consistent(self) -> None:
+        gradients = np.asarray([[3.0, -20.0], [-4.0, -8.0]], dtype=float)
+        densities = np.asarray([2.0, 3.0], dtype=float)
+        gravity = np.asarray([0.0, -10.0], dtype=float)
+        vector = bridge.excess_force_density(gradients, densities, gravity)
+        np.testing.assert_allclose(vector, [[-3.0, 0.0], [4.0, -22.0]])
+        np.testing.assert_allclose(
+            bridge.upward_excess_force_density(gradients, densities, gravity),
+            vector[:, 1],
+        )
+
     def test_relative_difference_preserves_positive_denominator_results(self) -> None:
         self.assertAlmostEqual(bridge.relative_difference(12.0, 10.0), 0.2)
         self.assertAlmostEqual(
@@ -104,6 +115,40 @@ class PipelineGradientForceTests(unittest.TestCase):
         pressures = np.arange(len(reference), dtype=float)
         with self.assertRaisesRegex(ValueError, "direction system is singular"):
             bridge.raw_finite_difference_gradient(reference, current, pressures)
+
+    def test_local_linear_gradient_recovers_affine_field_on_skewed_lattice(self) -> None:
+        x, y = np.meshgrid(np.arange(4.0), np.arange(4.0), indexing="xy")
+        reference = np.column_stack((x.ravel(), y.ravel()))
+        deformation = np.asarray([[1.1, 0.35], [-0.2, 0.9]])
+        current = reference @ deformation + np.asarray([0.2, -0.1])
+        pressures = 7.0 + 3.0 * current[:, 0] - 4.0 * current[:, 1]
+        for radius in (1, 2):
+            with self.subTest(radius=radius):
+                gradient = bridge.local_linear_pressure_gradient(
+                    reference, current, pressures, lattice_radius=radius
+                )
+                np.testing.assert_allclose(
+                    gradient,
+                    np.tile([3.0, -4.0], (len(reference), 1)),
+                    atol=1.0e-12,
+                )
+
+    def test_local_linear_gradient_rejects_invalid_radius_and_singular_fit(self) -> None:
+        reference = np.asarray(
+            [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+        )
+        pressures = np.arange(len(reference), dtype=float)
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            bridge.local_linear_pressure_gradient(
+                reference, reference, pressures, lattice_radius=0
+            )
+        collapsed = np.column_stack(
+            (reference[:, 0] + reference[:, 1], np.zeros(len(reference)))
+        )
+        with self.assertRaisesRegex(ValueError, "direction system is singular"):
+            bridge.local_linear_pressure_gradient(
+                reference, collapsed, pressures, lattice_radius=1
+            )
 
     def test_raw_force_metrics_use_signed_and_positive_integrals(self) -> None:
         force = np.asarray([20.0, -10.0, 40.0])

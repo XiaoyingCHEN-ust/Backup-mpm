@@ -96,12 +96,12 @@ def relative_difference(
     return result
 
 
-def upward_excess_force_density(
+def excess_force_density(
     liquid_pressure_gradients: np.ndarray,
     liquid_densities: np.ndarray,
     gravity: np.ndarray,
 ) -> np.ndarray:
-    """Return signed upward wave-induced pressure-gradient force (N/m3)."""
+    """Return the wave-induced hydraulic force-density vector (N/m3)."""
 
     gradients = np.asarray(liquid_pressure_gradients, dtype=np.float64)
     densities = np.asarray(liquid_densities, dtype=np.float64).reshape(-1)
@@ -117,8 +117,22 @@ def upward_excess_force_density(
     magnitude = float(np.linalg.norm(gravity))
     if not math.isfinite(magnitude) or magnitude <= 0.0:
         raise ValueError("Gravity magnitude must be finite and positive")
-    upward = -gravity / magnitude
-    return (-gradients[:, : gravity.size] + densities[:, None] * gravity) @ upward
+    return -gradients[:, : gravity.size] + densities[:, None] * gravity
+
+
+def upward_excess_force_density(
+    liquid_pressure_gradients: np.ndarray,
+    liquid_densities: np.ndarray,
+    gravity: np.ndarray,
+) -> np.ndarray:
+    """Return signed upward wave-induced pressure-gradient force (N/m3)."""
+
+    gravity_array = np.asarray(gravity, dtype=np.float64).reshape(-1)
+    force = excess_force_density(
+        liquid_pressure_gradients, liquid_densities, gravity_array
+    )
+    upward = -gravity_array / float(np.linalg.norm(gravity_array))
+    return force @ upward
 
 
 def raw_finite_difference_gradient(
@@ -212,6 +226,120 @@ def raw_finite_difference_gradient(
         gradient[index] = np.linalg.solve(
             system, np.asarray(pressure_differences, dtype=np.float64)
         )
+    return gradient
+
+
+def local_linear_pressure_gradient(
+    reference_coordinates: np.ndarray,
+    current_coordinates: np.ndarray,
+    pressures: np.ndarray,
+    *,
+    lattice_radius: int = 1,
+) -> np.ndarray:
+    """Fit a local affine pressure plane without smoothing pressure in time.
+
+    The fit uses the material-point neighbours in a square reference-lattice
+    stencil and inverse-reference-distance-squared weights.  It is a secondary
+    spatial reconstruction for diagnosing lattice layering in figures; the
+    registered force metrics continue to use :func:`raw_finite_difference_gradient`.
+    An affine pressure field is reproduced exactly, including on a deformed or
+    sheared current lattice.
+    """
+
+    reference = np.asarray(reference_coordinates, dtype=np.float64)
+    current = np.asarray(current_coordinates, dtype=np.float64)
+    values = np.asarray(pressures, dtype=np.float64).reshape(-1)
+    if (
+        reference.ndim != 2
+        or reference.shape[1] != 2
+        or current.shape != reference.shape
+        or values.size != reference.shape[0]
+    ):
+        raise ValueError("Coordinates and pressure arrays are incompatible")
+    if not isinstance(lattice_radius, int) or isinstance(lattice_radius, bool):
+        raise ValueError("Local-linear lattice radius must be an integer")
+    if lattice_radius < 1:
+        raise ValueError("Local-linear lattice radius must be at least one")
+    if not (
+        np.all(np.isfinite(reference))
+        and np.all(np.isfinite(current))
+        and np.all(np.isfinite(values))
+    ):
+        raise ValueError("Local-linear pressure-gradient inputs contain NaN/Inf")
+
+    origin = np.min(reference, axis=0)
+    spacings: list[float] = []
+    for axis in range(2):
+        unique = np.unique(np.round(reference[:, axis], decimals=12))
+        differences = np.diff(unique)
+        differences = differences[differences > 1.0e-12]
+        if differences.size == 0:
+            raise ValueError("Cannot infer the particle lattice spacing")
+        spacings.append(float(np.min(differences)))
+    spacing = np.asarray(spacings, dtype=np.float64)
+    keys = np.rint((reference - origin) / spacing).astype(np.int64)
+    reconstructed = origin + keys * spacing
+    if not np.allclose(reference, reconstructed, rtol=0.0, atol=1.0e-9):
+        raise ValueError("Reference particles do not lie on a regular lattice")
+    index_by_key = {tuple(key): index for index, key in enumerate(keys)}
+    if len(index_by_key) != len(reference):
+        raise ValueError("Reference particle lattice keys are not unique")
+
+    gradient = np.empty_like(reference)
+    for index, key_array in enumerate(keys):
+        directions: list[np.ndarray] = []
+        differences: list[float] = []
+        weights: list[float] = []
+        key = tuple(key_array)
+        for offset_x in range(-lattice_radius, lattice_radius + 1):
+            for offset_y in range(-lattice_radius, lattice_radius + 1):
+                if offset_x == 0 and offset_y == 0:
+                    continue
+                neighbour = index_by_key.get(
+                    (key[0] + offset_x, key[1] + offset_y)
+                )
+                if neighbour is None:
+                    continue
+                direction = current[neighbour] - current[index]
+                reference_distance_squared = float(
+                    np.dot(
+                        np.asarray([offset_x, offset_y], dtype=np.float64) * spacing,
+                        np.asarray([offset_x, offset_y], dtype=np.float64) * spacing,
+                    )
+                )
+                if (
+                    not np.all(np.isfinite(direction))
+                    or float(np.linalg.norm(direction)) <= 1.0e-12
+                    or not math.isfinite(reference_distance_squared)
+                    or reference_distance_squared <= 0.0
+                ):
+                    raise ValueError("Local-linear neighbour direction is invalid")
+                directions.append(direction)
+                differences.append(float(values[neighbour] - values[index]))
+                weights.append(1.0 / reference_distance_squared)
+
+        if len(directions) < 2:
+            raise ValueError(
+                f"Particle {index} has too few local-linear lattice neighbours"
+            )
+        system = np.asarray(directions, dtype=np.float64)
+        right_hand_side = np.asarray(differences, dtype=np.float64)
+        square_root_weights = np.sqrt(np.asarray(weights, dtype=np.float64))
+        weighted_system = system * square_root_weights[:, None]
+        weighted_rhs = right_hand_side * square_root_weights
+        if np.linalg.matrix_rank(weighted_system, tol=1.0e-12) != 2:
+            raise ValueError("Local-linear direction system is singular")
+        solution, _, _, singular_values = np.linalg.lstsq(
+            weighted_system, weighted_rhs, rcond=None
+        )
+        if (
+            singular_values.size != 2
+            or singular_values[-1] <= 0.0
+            or singular_values[0] / singular_values[-1] > 1.0e8
+            or not np.all(np.isfinite(solution))
+        ):
+            raise ValueError("Local-linear direction system is ill-conditioned")
+        gradient[index] = solution
     return gradient
 
 

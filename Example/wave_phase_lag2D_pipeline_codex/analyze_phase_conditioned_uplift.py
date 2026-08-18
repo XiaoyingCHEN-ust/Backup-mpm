@@ -34,11 +34,18 @@ from matplotlib.patches import Circle  # noqa: E402
 
 import plot_pipeline_gradient_force as gradient_force_module  # noqa: E402
 import summarize_phase_lag_permeability_screen as permeability_summary  # noqa: E402
-from analyze_study import particle_step, read_initial_coordinates  # noqa: E402
+from analyze_study import (  # noqa: E402
+    particle_step,
+    pipeline_support_roi,
+    read_initial_coordinates,
+)
 from plot_pipeline_gradient_force import (  # noqa: E402
     display_smoothed_grid,
+    excess_force_density,
+    local_linear_pressure_gradient,
     ordered_frame,
     raw_finite_difference_gradient,
+    raw_force_metrics,
     read_raw_pressure_database,
     upward_excess_force_density,
 )
@@ -46,6 +53,11 @@ from plot_pipeline_gradient_force import (  # noqa: E402
 
 SCHEMA = "pipeline-phase-conditioned-uplift-v1"
 DEFAULT_LABELS = tuple(permeability_summary.DEFAULT_LABELS)
+UPPER_BOUND_SENSITIVITY_LABELS = (
+    "k5e-12_sw094_nosmooth",
+    "k7e-12_sw094_nosmooth",
+)
+EXTENDED_LABELS = DEFAULT_LABELS + UPPER_BOUND_SENSITIVITY_LABELS
 PERIOD_S = 1.3
 RECOVERY_CYCLES = ((1.3, 2.6), (2.6, 3.9))
 PRIMARY_CYCLE = RECOVERY_CYCLES[-1]
@@ -57,7 +69,7 @@ MINIMUM_RELEVANT_R_SQUARED = 0.8
 COMMON_FIELD_TIME_S = 3.835
 EXPECTED_FRAME_COUNT = 60
 EXPECTED_FRAME_DT_S = 0.065
-DISPLAY_SIGMA_DEFAULT = 1.25
+DISPLAY_SIGMA_DEFAULT = 2.0
 
 
 class ConditionedUpliftError(RuntimeError):
@@ -287,6 +299,27 @@ def integrate_branch(rows: list[dict[str, float]]) -> dict[str, Any]:
         ("critical_area_m2", "IF_ge_1_area_time", "m2 s"),
         ("maximum_upward_if", "maximum_upward_IF_time_integral", "s"),
     )
+    if all(
+        f"{role}_{source}" in row
+        for row in rows
+        for role in ("lagged", "phase_erased")
+        for source in (
+            "horizontal_absolute_force_n_per_m",
+            "vertical_absolute_force_n_per_m",
+        )
+    ):
+        metrics += (
+            (
+                "horizontal_absolute_force_n_per_m",
+                "horizontal_absolute_force_activity_impulse",
+                "N s/m",
+            ),
+            (
+                "vertical_absolute_force_n_per_m",
+                "vertical_absolute_force_activity_impulse",
+                "N s/m",
+            ),
+        )
     for source, name, units in metrics:
         lagged = np.asarray(
             [row[f"lagged_{source}"] for row in rows], dtype=np.float64
@@ -320,6 +353,23 @@ def integrate_branch(rows: list[dict[str, float]]) -> dict[str, Any]:
                         where=erased > 0.0,
                     )
                 )
+            ),
+        }
+    if "horizontal_absolute_force_activity_impulse" in output:
+        horizontal = output["horizontal_absolute_force_activity_impulse"]
+        vertical = output["vertical_absolute_force_activity_impulse"]
+        if horizontal["lagged"] <= 0.0 or horizontal["phase_erased"] <= 0.0:
+            raise ConditionedUpliftError(
+                "Horizontal force-activity impulse must be positive"
+            )
+        lagged_ratio = vertical["lagged"] / horizontal["lagged"]
+        erased_ratio = vertical["phase_erased"] / horizontal["phase_erased"]
+        output["vertical_to_horizontal_force_activity_ratio"] = {
+            "lagged": lagged_ratio,
+            "phase_erased": erased_ratio,
+            "lagged_minus_phase_erased": lagged_ratio - erased_ratio,
+            "lagged_minus_phase_erased_fraction": relative_fraction(
+                lagged_ratio, erased_ratio
             ),
         }
     return output
@@ -498,7 +548,7 @@ def load_case(root: Path, label: str) -> dict[str, Any]:
     branches = [integrate_branch(branch) for branch in branch_rows]
     phase_qualification = relevant_pipe_phase(phase_audit)
     gate = short_time_gate(branches, phase_qualification)
-    return {
+    case = {
         "label": label,
         "validated_case": validated,
         "runner_audit": runner_audit,
@@ -526,10 +576,123 @@ def load_case(root: Path, label: str) -> dict[str, Any]:
         "phase_qualification": phase_qualification,
         "gate": gate,
     }
+    case["raw_directional_branches"] = spatial_recovery_diagnostics(
+        case, local_linear=False
+    )
+    case["secondary_local_linear_branches"] = spatial_recovery_diagnostics(
+        case, local_linear=True
+    )
+    return case
+
+
+def spatial_recovery_diagnostics(
+    case: dict[str, Any], *, local_linear: bool
+) -> list[dict[str, Any]]:
+    """Re-evaluate recovery metrics and pressure-force orientation.
+
+    The raw route independently reproduces the registered upward metrics and
+    adds horizontal/vertical force activity.  The local-linear route is a
+    deliberately secondary one-layer reconstruction.  It changes neither the
+    raw history, the registered recovery windows nor the short-time gate.
+    """
+
+    hd = case["hd"]
+    support = pipeline_support_roi(hd, case["reference"])
+    if support is None or not np.any(support):
+        raise ConditionedUpliftError("Local-linear support cohort is empty")
+    records = case["runner_audit"]["stages"]["hd"]["audit"]["particle_vtp"]
+    by_step = {
+        particle_step(Path(record["path"])): Path(record["path"])
+        for record in records
+    }
+    gravity = np.asarray(hd["external_loading_conditions"]["gravity"], dtype=float)
+    output: list[dict[str, Any]] = []
+    for branch in case["branch_rows"]:
+        reconstructed_rows: list[dict[str, float]] = []
+        for raw_row in branch:
+            step = int(round(raw_row["time_s"] / float(hd["analysis"]["dt"])))
+            path = by_step.get(step)
+            if path is None:
+                raise ConditionedUpliftError(
+                    f"{case['label']}: missing VTP for local-linear step {step}"
+                )
+            points, arrays = ordered_frame(path, len(case["reference"]))
+            row: dict[str, float] = {
+                "time_s": raw_row["time_s"],
+                "surface_excess_pressure_pa": raw_row[
+                    "surface_excess_pressure_pa"
+                ],
+            }
+            for role, pressure in (
+                ("lagged", case["lagged_pressure"][step]),
+                ("phase_erased", case["erased_pressure"][step]),
+            ):
+                if local_linear:
+                    gradient = local_linear_pressure_gradient(
+                        case["reference"], points, pressure, lattice_radius=1
+                    )
+                else:
+                    gradient = raw_finite_difference_gradient(
+                        case["reference"], points, pressure
+                    )
+                vector_force = excess_force_density(
+                    gradient, arrays["liquid_densities"], gravity
+                )
+                force = upward_excess_force_density(
+                    gradient, arrays["liquid_densities"], gravity
+                )
+                metrics, _ = raw_force_metrics(
+                    force,
+                    arrays["gamma_sub"],
+                    arrays["volumes"],
+                    support,
+                )
+                row[f"{role}_positive_force_n_per_m"] = (
+                    metrics.positive_force_n_per_m
+                )
+                row[f"{role}_signed_force_n_per_m"] = metrics.signed_force_n_per_m
+                row[f"{role}_net_uplift_force_n_per_m"] = max(
+                    metrics.signed_force_n_per_m, 0.0
+                )
+                row[f"{role}_critical_area_m2"] = metrics.critical_area_m2
+                row[f"{role}_maximum_upward_if"] = metrics.maximum_upward_if
+                volumes = np.asarray(
+                    arrays["volumes"], dtype=np.float64
+                ).reshape(-1)
+                row[f"{role}_horizontal_absolute_force_n_per_m"] = float(
+                    np.sum(np.abs(vector_force[support, 0]) * volumes[support])
+                )
+                row[f"{role}_vertical_absolute_force_n_per_m"] = float(
+                    np.sum(np.abs(force[support]) * volumes[support])
+                )
+                if not local_linear:
+                    for observed, expected, name in (
+                        (
+                            metrics.positive_force_n_per_m,
+                            raw_row[f"{role}_positive_force_n_per_m"],
+                            "positive force",
+                        ),
+                        (
+                            metrics.signed_force_n_per_m,
+                            raw_row[f"{role}_signed_force_n_per_m"],
+                            "signed force",
+                        ),
+                    ):
+                        if not math.isclose(
+                            observed, expected, rel_tol=1.0e-10, abs_tol=1.0e-10
+                        ):
+                            raise ConditionedUpliftError(
+                                f"{case['label']}: raw {name} reconstruction drift"
+                            )
+            reconstructed_rows.append(row)
+        output.append(integrate_branch(reconstructed_rows))
+    return output
 
 
 def _case_colour(index: int) -> str:
-    return ("#2F5597", "#008C95", "#E07B39", "#A23B72")[index]
+    return ("#2F5597", "#008C95", "#E07B39", "#A23B72", "#6B8E23", "#6A5ACD")[
+        index
+    ]
 
 
 def _label_k(case: dict[str, Any]) -> str:
@@ -549,11 +712,12 @@ def atomic_savefig(figure: plt.Figure, path: Path) -> None:
 
 
 def plot_summary(cases: list[dict[str, Any]], output: Path) -> tuple[Path, Path]:
-    figure = plt.figure(figsize=(11.2, 7.4), constrained_layout=True)
-    grid = figure.add_gridspec(2, 2, height_ratios=(1.2, 1.0))
+    figure = plt.figure(figsize=(14.6, 7.4), constrained_layout=True)
+    grid = figure.add_gridspec(2, 3, height_ratios=(1.2, 1.0))
     history_axis = figure.add_subplot(grid[0, :])
     local_axis = figure.add_subplot(grid[1, 0])
     signed_axis = figure.add_subplot(grid[1, 1])
+    direction_axis = figure.add_subplot(grid[1, 2])
 
     for index, case in enumerate(cases):
         rows = [
@@ -645,6 +809,74 @@ def plot_summary(cases: list[dict[str, Any]], output: Path) -> tuple[Path, Path]
         axis.set_title(title)
         axis.grid(axis="y", alpha=0.22)
         axis.legend(frameon=False, fontsize=8.5)
+    raw_horizontal = [
+        100.0
+        * case["raw_directional_branches"][-1][
+            "horizontal_absolute_force_activity_impulse"
+        ]["lagged_minus_phase_erased_fraction"]
+        for case in cases
+    ]
+    raw_vertical = [
+        100.0
+        * case["raw_directional_branches"][-1][
+            "vertical_absolute_force_activity_impulse"
+        ]["lagged_minus_phase_erased_fraction"]
+        for case in cases
+    ]
+    local_horizontal = [
+        100.0
+        * case["secondary_local_linear_branches"][-1][
+            "horizontal_absolute_force_activity_impulse"
+        ]["lagged_minus_phase_erased_fraction"]
+        for case in cases
+    ]
+    local_vertical = [
+        100.0
+        * case["secondary_local_linear_branches"][-1][
+            "vertical_absolute_force_activity_impulse"
+        ]["lagged_minus_phase_erased_fraction"]
+        for case in cases
+    ]
+    direction_axis.bar(
+        x - width / 2,
+        raw_horizontal,
+        width,
+        color="#8093A8",
+        label=r"raw $|f_x|$",
+    )
+    direction_axis.bar(
+        x + width / 2,
+        raw_vertical,
+        width,
+        color="#D95F59",
+        label=r"raw $|f_y|$",
+    )
+    direction_axis.scatter(
+        x - width / 2,
+        local_horizontal,
+        marker="D",
+        s=28,
+        facecolor="white",
+        edgecolor="#26384A",
+        zorder=4,
+        label="one-layer check",
+    )
+    direction_axis.scatter(
+        x + width / 2,
+        local_vertical,
+        marker="D",
+        s=28,
+        facecolor="white",
+        edgecolor="#7B1E1E",
+        zorder=4,
+    )
+    direction_axis.axhline(0.0, color="0.25", linewidth=0.9)
+    direction_axis.set_xticks(x, labels)
+    direction_axis.set_xlabel("Intrinsic permeability $k_s$ (m$^2$)")
+    direction_axis.set_ylabel("Lagged − erased (%)")
+    direction_axis.set_title("(d) Recovery-2 force orientation")
+    direction_axis.grid(axis="y", alpha=0.22)
+    direction_axis.legend(frameon=False, fontsize=8.0)
     figure.suptitle(
         "Negative-boundary-pressure recovery: raw fixed-state hydraulic comparison",
         fontsize=14,
@@ -664,7 +896,9 @@ def plot_summary(cases: list[dict[str, Any]], output: Path) -> tuple[Path, Path]
     return png, pdf
 
 
-def _field_for_case(case: dict[str, Any], time_s: float) -> dict[str, Any]:
+def _field_for_case(
+    case: dict[str, Any], time_s: float, *, local_linear: bool = False
+) -> dict[str, Any]:
     hd = case["hd"]
     dt = float(hd["analysis"]["dt"])
     step = int(round(time_s / dt))
@@ -681,7 +915,14 @@ def _field_for_case(case: dict[str, Any], time_s: float) -> dict[str, Any]:
         ("lagged", case["lagged_pressure"][step]),
         ("phase_erased", case["erased_pressure"][step]),
     ):
-        gradient = raw_finite_difference_gradient(case["reference"], points, pressure)
+        if local_linear:
+            gradient = local_linear_pressure_gradient(
+                case["reference"], points, pressure, lattice_radius=1
+            )
+        else:
+            gradient = raw_finite_difference_gradient(
+                case["reference"], points, pressure
+            )
         force = upward_excess_force_density(
             gradient, arrays["liquid_densities"], gravity
         )
@@ -704,11 +945,14 @@ def plot_2d(
 ) -> tuple[Path, Path, dict[str, Any]]:
     if not math.isfinite(display_sigma) or display_sigma < 0.0:
         raise ConditionedUpliftError("Display sigma must be finite and non-negative")
-    raw_fields = [_field_for_case(case, COMMON_FIELD_TIME_S) for case in cases]
+    reconstructed_fields = [
+        _field_for_case(case, COMMON_FIELD_TIME_S, local_linear=True)
+        for case in cases
+    ]
     rasters: list[dict[str, Any]] = []
     all_positive: list[np.ndarray] = []
     all_difference: list[np.ndarray] = []
-    for case, field in zip(cases, raw_fields):
+    for case, field in zip(cases, reconstructed_fields):
         pipeline = case["hd"]["analysis"]["rigid_pipeline"]
         center = np.asarray(pipeline["center"], dtype=float)
         diameter = 2.0 * float(pipeline["outer_radius"])
@@ -747,7 +991,12 @@ def plot_2d(
     difference_limit = max(difference_limit, 1.0e-12)
 
     figure, axes = plt.subplots(
-        len(cases), 3, figsize=(11.3, 11.6), sharex=True, sharey=True, constrained_layout=True
+        len(cases),
+        3,
+        figsize=(11.3, 2.55 * len(cases) + 1.4),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
     )
     positive_mappable = None
     difference_mappable = None
@@ -827,7 +1076,7 @@ def plot_2d(
     figure.text(
         0.5,
         -0.008,
-        f"Display-only interpolation uses Gaussian sigma={display_sigma:g} pixels; all reported metrics use raw particle pressures.",
+        f"Field uses a one-lattice-layer local affine gradient plus display-only Gaussian sigma={display_sigma:g} pixels; all registered metrics use raw nearest-neighbour gradients.",
         ha="center",
         fontsize=9,
     )
@@ -841,9 +1090,16 @@ def plot_2d(
         "surface_excess_pressure_pa": pressure,
         "display_smoothing_sigma_pixels": display_sigma,
         "numeric_smoothing_applied": False,
+        "spatial_gradient_reconstruction": {
+            "method": "inverse-distance-weighted local affine pressure plane",
+            "reference_lattice_radius": 1,
+            "used_in_registered_metrics_or_gate": False,
+        },
         "positive_colour_limit": positive_limit,
         "difference_colour_limit": difference_limit,
-        "source_vtp": [file_record(field["path"]) for field in raw_fields],
+        "source_vtp": [
+            file_record(field["path"]) for field in reconstructed_fields
+        ],
     }
 
 
@@ -883,6 +1139,8 @@ def _summary_rows(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for case in cases:
         first, second = case["branches"]
         phase = case["phase_qualification"]["most_delayed_eligible_probe"]
+        raw_direction = case["raw_directional_branches"][-1]
+        local_direction = case["secondary_local_linear_branches"][-1]
         rows.append(
             {
                 "label": case["label"],
@@ -912,6 +1170,22 @@ def _summary_rows(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ],
                 "recovery_2_maximum_IF_effect_percent": 100.0
                 * second["maximum_upward_IF_time_integral"][
+                    "lagged_minus_phase_erased_fraction"
+                ],
+                "recovery_2_raw_horizontal_absolute_effect_percent": 100.0
+                * raw_direction["horizontal_absolute_force_activity_impulse"][
+                    "lagged_minus_phase_erased_fraction"
+                ],
+                "recovery_2_raw_vertical_absolute_effect_percent": 100.0
+                * raw_direction["vertical_absolute_force_activity_impulse"][
+                    "lagged_minus_phase_erased_fraction"
+                ],
+                "recovery_2_one_layer_horizontal_absolute_effect_percent": 100.0
+                * local_direction["horizontal_absolute_force_activity_impulse"][
+                    "lagged_minus_phase_erased_fraction"
+                ],
+                "recovery_2_one_layer_vertical_absolute_effect_percent": 100.0
+                * local_direction["vertical_absolute_force_activity_impulse"][
                     "lagged_minus_phase_erased_fraction"
                 ],
                 "most_delayed_eligible_probe": phase["probe"] if phase else "",
@@ -980,7 +1254,24 @@ def report_artifact(
                         ),
                     }
                 )
-    selected = summary_rows[-1]
+    passed_rows = [
+        row
+        for row in summary_rows
+        if row["short_time_mechanism_status"] == "PASS"
+    ]
+    selected = max(
+        passed_rows or summary_rows,
+        key=lambda row: min(
+            row["recovery_1_local_upward_activity_effect_percent"],
+            row["recovery_2_local_upward_activity_effect_percent"],
+        ),
+    )
+    selected_k = f"{selected['intrinsic_permeability_m2']:.0e}"
+    supported_k = ", ".join(
+        f"`{row['intrinsic_permeability_m2']:.0e} m2`" for row in passed_rows
+    )
+    if not supported_k:
+        supported_k = "none of the audited permeability points"
     def sql_literal(value: Any) -> str:
         if value is None:
             return "NULL"
@@ -1184,7 +1475,7 @@ def report_artifact(
             "tables": [
                 {
                     "id": "case_table",
-                    "title": "Audited four-point recovery comparison",
+                    "title": f"Audited {len(cases)}-point recovery comparison",
                     "subtitle": "Unsmoothed pressure data, Sw=0.94, fixed pipeline",
                     "dataset": "case_summary",
                     "defaultSort": {
@@ -1212,8 +1503,17 @@ def report_artifact(
                     "type": "markdown",
                     "sourceId": "case_summary_source",
                     "body": (
-                        "## The short-time mechanism is resolved at 3e-12 m2, not at the lowest permeability\n\n"
-                        "During the second negative-pressure recovery, retained phase structure increases local upward-force activity by **6.67%** and signed support-force impulse by **1.16%** at `k_s=3e-12 m2`. The preceding recovery gives **6.77%** and **1.27%**, respectively. At `1e-13 m2`, stronger crown delay is accompanied by attenuation and the local short-time effect is **-0.20%**."
+                        f"## Strongest repeatable short-time response: {selected_k} m2\n\n"
+                        "At this audited point, retained phase structure changes "
+                        "local upward-force activity by "
+                        f"**{selected['recovery_1_local_upward_activity_effect_percent']:+.2f}%** "
+                        "and "
+                        f"**{selected['recovery_2_local_upward_activity_effect_percent']:+.2f}%** "
+                        "in the two negative-pressure recoveries. The corresponding "
+                        "signed support-force changes are "
+                        f"**{selected['recovery_1_signed_support_effect_percent']:+.2f}%** "
+                        "and "
+                        f"**{selected['recovery_2_signed_support_effect_percent']:+.2f}%**."
                     ),
                 },
                 {"id": "metrics", "type": "metric-strip", "cardIds": ["local_effect_card", "signed_effect_card"]},
@@ -1223,7 +1523,11 @@ def report_artifact(
                     "sourceId": "case_summary_source",
                     "body": (
                         "## Recovery-phase forcing has a permeability window\n\n"
-                        "The chart compares both repeated trough-to-recovery branches. Only `3e-12 m2` clears the predeclared 5% local-activity threshold in both branches and keeps the signed support-force difference positive. This is a transient redistribution result: the earlier full-cycle net-uplift gate still fails because positive and negative parts cancel over a complete period."
+                        "The chart compares both repeated trough-to-recovery branches. "
+                        f"The complete short-time mechanism gate is supported at {supported_k}. "
+                        "This is a transient redistribution result: a complete-cycle "
+                        "net-uplift failure remains a guardrail because positive and "
+                        "negative parts can cancel over a full period."
                     ),
                 },
                 {"id": "chart", "type": "chart", "chartId": "recovery_effect_chart", "layout": "full"},
@@ -1250,7 +1554,12 @@ def report_artifact(
                     "type": "markdown",
                     "body": (
                         "## The result indicates potential risk, not realised liquefaction\n\n"
-                        "This pressure-only fixed-state comparison does not evolve separate lagged and phase-erased skeleton stresses, release the pipe, or establish additional liquefaction. At `3e-12 m2`, the `IF>=1` area-time does not increase even though local upward activity does, so the supported claim is a short-duration hydraulic-demand mechanism. Independent paired replay and released-pipeline calculations are required for a causal liquefaction or displacement claim."
+                        "This pressure-only fixed-state comparison does not evolve "
+                        "separate lagged and phase-erased skeleton stresses, release "
+                        "the pipe, or establish additional liquefaction. The supported "
+                        "claim is a short-duration hydraulic-demand mechanism. Independent "
+                        "paired replay and released-pipeline calculations are required "
+                        "for a causal liquefaction or displacement claim."
                     ),
                 },
                 {
@@ -1258,7 +1567,12 @@ def report_artifact(
                     "type": "markdown",
                     "body": (
                         "## Recommended next step\n\n"
-                        "Use `3e-12 m2`, `Sw=0.94`, and unsmoothed raw pressure as the first independent lagged/phase-erased SANISAND replay. Preserve the negative-pressure recovery metrics as registered secondary outcomes and keep the complete-cycle net result as a guardrail. Stop the stronger manuscript claim if separate skeleton states do not reproduce the short-time advantage."
+                        f"Use `{selected_k} m2`, `Sw=0.94`, and unsmoothed raw pressure "
+                        "for the first independent lagged/phase-erased SANISAND replay. "
+                        "Preserve the negative-pressure recovery metrics as registered "
+                        "secondary outcomes and keep the complete-cycle net result as a "
+                        "guardrail. Stop the stronger manuscript claim if separate "
+                        "skeleton states do not reproduce the short-time advantage."
                     ),
                 },
                 {
@@ -1289,12 +1603,17 @@ def report_artifact(
 def run(root: Path, labels: Iterable[str], output: Path, display_sigma: float) -> Path:
     root = root.resolve()
     labels = tuple(labels)
-    if set(labels) != set(DEFAULT_LABELS) or len(labels) != len(DEFAULT_LABELS):
+    if set(labels) == set(DEFAULT_LABELS) and len(labels) == len(DEFAULT_LABELS):
+        registered_order = DEFAULT_LABELS
+    elif set(labels) == set(EXTENDED_LABELS) and len(labels) == len(EXTENDED_LABELS):
+        registered_order = EXTENDED_LABELS
+    else:
         raise ConditionedUpliftError(
-            "The conditioned screen requires the exact registered four labels"
+            "The conditioned screen requires either the exact registered four "
+            "labels or the exact six-label upper-bound sensitivity extension"
         )
     cases_by_label = {label: load_case(root, label) for label in labels}
-    cases = [cases_by_label[label] for label in DEFAULT_LABELS]
+    cases = [cases_by_label[label] for label in registered_order]
     summary_png, summary_pdf = plot_summary(cases, output)
     field_png, field_pdf, field_audit = plot_2d(cases, output, display_sigma)
     csv_path = output / "phase_conditioned_uplift_summary.csv"
@@ -1318,6 +1637,10 @@ def run(root: Path, labels: Iterable[str], output: Path, display_sigma: float) -
                 ],
                 "phase_qualification": case["phase_qualification"],
                 "negative_pressure_recoveries": case["branches"],
+                "raw_directional_recoveries": case["raw_directional_branches"],
+                "secondary_one_layer_local_linear_recoveries": case[
+                    "secondary_local_linear_branches"
+                ],
                 "short_time_mechanism_gate": case["gate"],
                 "sources": case["validated_case"]["sources"],
             }
@@ -1360,7 +1683,19 @@ def run(root: Path, labels: Iterable[str], output: Path, display_sigma: float) -
                 "spatial integral over the same cohort of signed upward hydraulic "
                 "force density"
             ),
+            "force_orientation": (
+                "separate spatial integrals of absolute horizontal and absolute "
+                "vertical hydraulic force density over the same support cohort; "
+                "reported for the raw derivative and the one-layer sensitivity"
+            ),
             "numeric_pressure_smoothing": False,
+            "secondary_spatial_reconstruction": {
+                "method": "inverse-distance-weighted local affine pressure plane",
+                "reference_lattice_radius": 1,
+                "purpose": "lattice-layering sensitivity and two-dimensional display",
+                "used_in_registered_metrics_or_gate": False,
+                "two_layer_reconstruction_permitted_for_inference": False,
+            },
             "minimum_material_effect_fraction": MINIMUM_MATERIAL_EFFECT_FRACTION,
         },
         "claim_boundary": (

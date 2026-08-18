@@ -15,6 +15,32 @@ completion of the matrix. The points are
 run regardless of the `3e-12` result so that the matrix is not selected after
 looking at the outcome.
 
+### Pre-registered upper-bound sensitivity (2026-08-18)
+
+The four-point matrix showed a repeatable short-time upward-force advantage at
+its upper point during both negative-pressure recovery branches, while the
+complete-cycle result remained null.  Before running any additional solver
+case, two upper-bound sensitivity points were fixed at `5e-12` and `7e-12 m2`.
+Both retain `Sw=0.94`, the `0.12 m` wave height, `1.3 s` period, geometry,
+constitutive parameters, time grid, fixed pipe and both solver smoothing flags
+exactly as above.  Both points are run regardless of the first outcome.
+
+The extension is successful only if the *raw* nearest-neighbour calculation
+keeps the local upward-activity and signed-support differences positive in
+both registered recovery branches.  A one-lattice-layer local affine gradient
+fit is reported only as a secondary spatial-reconstruction sensitivity; it
+must reproduce an affine pressure field exactly and agree in effect direction.
+A directional decomposition separately integrates `|f_x|` and `|f_y|` over
+the same fixed support cohort.  The hypothesised redistribution is supported
+only when the raw calculation shows smaller horizontal activity and larger
+vertical activity for the lagged field, with the one-layer reconstruction
+preserving both signs.  This direction check is reported independently of the
+short-time gate and cannot rescue a failed raw upward-force comparison.
+A two-layer fit is prohibited for inference because the pre-run diagnostic
+changed the signed-effect direction, demonstrating excessive spatial
+averaging.  No solver pressure smoothing, time smoothing, window change or
+threshold relaxation may be used to turn a failed raw result into a pass.
+
 ## Invariants
 
 - Equilibrium: `LinearElastic2D`, pure PIC (`PIC=1`, `APIC=false`), fixed pipe,
@@ -30,7 +56,7 @@ looking at the outcome.
 - The phase-erased control rotates only the fitted fundamental to the local
   registered top-surface phase. It retains each point's mean, amplitude,
   residual/higher harmonics and progressive along-wave phase.
-- Any raster smoothing is display-only (`sigma=1.25 pixels` by default). Raw
+- Any raster smoothing is display-only (`sigma=2.0 pixels` by default). Raw
   particle pressures are differentiated and integrated before plotting.
 
 ## Locked qualification and effect rules
@@ -86,7 +112,7 @@ python3 plot_liquid_pressure_phase_lag.py \
   --checkpoint results/phase_lag_exploratory/LABEL/PLP_EXP_UUID_TOKEN_EQ/particle5000.vtp \
   --particles particles.txt --case-label CASE_LABEL --require-unsmoothed
 python3 analyze_phase_lag_driver_screen.py \
-  --label LABEL --display-smoothing-sigma 1.25
+  --label LABEL --display-smoothing-sigma 2.0
 ```
 
 `CASE_LABEL` is an identity field, not a free-form caption: it must equal
@@ -97,7 +123,7 @@ the runner UUIDs must be `PLP_EXP_UUID_TOKEN_EQ` and
 `UUID_TOKEN=K3E_13_SW094_NOSMOOTH`. Do not point the phase plot at `02_WAVE` or
 an `_WAVE` result when producing the current HD/pressure-control evidence.
 
-## Current audited status (2026-08-17)
+## Current audited status (2026-08-18)
 
 | Intrinsic permeability | Status | Crown lag / amplitude ratio | Pressure-only engineering screen |
 |---:|---|---:|---|
@@ -105,6 +131,8 @@ an `_WAVE` result when producing the current HD/pressure-control evidence.
 | `3e-13 m2` | EQ/HD/phase/2-D and raw-gradient audit complete | `+45.92 deg / 0.157` | failed; net uplift `-0.0131%`, joint advantage zero |
 | `1e-12 m2` | EQ/HD/phase/2-D and raw-gradient audit complete | `+24.00 deg / 0.193` | failed; net uplift `-0.1399%`, joint advantage zero |
 | `3e-12 m2` | EQ/HD/phase/2-D and raw-gradient audit complete | `-5.55 deg / 0.163` | failed; crown phase unresolved, net uplift `-0.9038%`, IF area-time `-0.8552%` |
+| `5e-12 m2` | upper-bound EQ/HD/phase/2-D and raw-gradient audit complete | `-15.74 deg / 0.146` | failed; net uplift `+0.1226%` is below 5% |
+| `7e-12 m2` | upper-bound EQ/HD/phase/2-D and raw-gradient audit complete | `-22.28 deg / 0.140` | failed; net uplift `+1.9125%` is below 5% |
 
 An earlier `1e-13` run remains useful only as a reproducibility reference. Its
 original v2 audit reported `+50.20 deg` from the `02_WAVE` / `_WAVE` solver
@@ -115,9 +143,11 @@ rounding of one result; `+50.02 deg` is the applicable historical HD value.
 That run failed the same net-uplift interpretation, and its historical EQ
 configuration identity was not frozen by the current runner schema. It is
 therefore excluded from the primary four-point summary.
-No point passes. The result is therefore phase present without resolved
-engineering-driver amplification for this matrix; thresholds are not relaxed
-to obtain a positive manuscript claim.
+No point passes the complete-cycle engineering gate. The result is therefore
+phase present without a resolved sustained net-uplift amplification; thresholds
+are not relaxed to obtain a positive claim. The distinct phase-conditioned
+short-time result below addresses recovery-stage vertical forcing and does not
+override this guardrail.
 
 ## Phase-conditioned short-time result
 
@@ -127,7 +157,12 @@ same-column seabed pressure is still negative and recovering from its trough.
 That comparison is generated from the same audited raw data with:
 
 ```bash
-python3 analyze_phase_conditioned_uplift.py
+python3 analyze_phase_conditioned_uplift.py \
+  --labels k1e-13_sw094_nosmooth_fresh k3e-13_sw094_nosmooth \
+  k1e-12_sw094_nosmooth k3e-12_sw094_nosmooth \
+  k5e-12_sw094_nosmooth k7e-12_sw094_nosmooth \
+  --output-dir analysis/phase_conditioned_uplift_upper_sensitivity_sigma2 \
+  --display-smoothing-sigma 2.0
 ```
 
 The two registered recovery branches are `2.34--2.60 s` and
@@ -141,10 +176,21 @@ pressure minimum to the cycle boundary while the excess pressure remains below
 | `3e-13 m2` | `+0.070% / +0.061%` | `-0.467% / -0.416%` | FAIL |
 | `1e-12 m2` | `+1.475% / +1.455%` | `-0.365% / -0.326%` | FAIL |
 | `3e-12 m2` | `+6.771% / +6.668%` | `+1.274% / +1.156%` | PASS |
+| `5e-12 m2` | `+7.040% / +6.960%` | `+5.231% / +4.799%` | PASS |
+| `7e-12 m2` | `+8.466% / +8.390%` | `+9.344% / +8.617%` | PASS |
+
+The upper-bound extension also resolves the direction of the effect. In the
+second recovery, raw `|f_x|` activity changes by `-3.126%` and `-3.770%` at
+`5e-12` and `7e-12 m2`, whereas raw `|f_y|` activity changes by `+7.331%` and
+`+8.352%`. The one-layer local-affine sensitivity retains all four signs. The
+result is therefore a shift from horizontal toward vertical forcing during the
+negative-pressure recovery, not a global increase of all gradient components.
 
 Thus retained phase structure produces a repeatable, resolved short-time
-upward hydraulic-demand increase at `3e-12 m2`, even though no case passes the
-two-cycle net-uplift gate. The lowest permeability has the largest crown delay
-but insufficient transmission, so the effect is non-monotonic. This PASS is a
-fixed-state hydraulic-risk mechanism, not realised liquefaction or pipe motion;
-independent lagged/phase-erased SANISAND replays remain required for that claim.
+upward hydraulic-demand increase at `3e-12 m2` and at both pre-registered upper
+sensitivity points, with the strongest directional result at `7e-12 m2`, even
+though no case passes the two-cycle net-uplift gate. The lowest permeability
+has the largest crown delay but insufficient transmission, so the effect is
+non-monotonic. These PASS results identify a fixed-state hydraulic-risk
+mechanism, not realised liquefaction or pipe motion; independent lagged and
+phase-erased SANISAND replays remain required for that claim.

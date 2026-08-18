@@ -37,25 +37,32 @@ changes are `-0.0131%`, `-0.1399%` and `-0.9038%`. The result supports the
 presence of phase lag, but not a resolved amplification of the pipeline-zone
 net-uplift driver in this matrix.
 
-A separate phase-conditioned diagnostic now answers the narrower engineering
+A separate phase-conditioned diagnostic answers the narrower engineering
 question that the complete-cycle integral cancels: short upward drag while the
-same-column seabed pressure is negative and recovering from its trough. At
-`k=3e-12 m2`, the two repeated recovery branches increase raw local
-upward-force activity by `6.77%` and `6.67%`; their signed support-force
-impulses increase by `1.27%` and `1.16%`. The other permeability points do not
-pass the fixed short-time mechanism gate. Thus the data support a transient
-hydraulic-risk window, not a monotonic low-permeability rule and not realised
-liquefaction. Reproduce the audited CSV and common-time two-dimensional fields
-with:
+same-column seabed pressure is negative and recovering from its trough. A
+pre-registered `5e-12, 7e-12 m2` upper-bound extension retains `Sw=0.94`, wave,
+geometry, material, time grid and both false solver-smoothing flags. At
+`k=7e-12 m2`, the two repeated recoveries increase raw local upward-force
+activity by `8.47%` and `8.39%`; their signed support-force impulses increase
+by `9.34%` and `8.62%`. In the second recovery, raw horizontal absolute force
+activity decreases by `3.77%` while vertical activity increases by `8.35%`.
+The one-layer local-affine check keeps those signs (`-3.05%`, `+16.05%`). Thus
+the data support a transient vertical redistribution and potential hydraulic-
+risk window, not realised liquefaction or sustained pipeline uplift. Reproduce
+the audited six-point CSV and common-time two-dimensional fields with:
 
 ```bash
-python3 analyze_phase_conditioned_uplift.py
+python3 analyze_phase_conditioned_uplift.py \
+  --labels k1e-13_sw094_nosmooth_fresh k3e-13_sw094_nosmooth \
+  k1e-12_sw094_nosmooth k3e-12_sw094_nosmooth \
+  k5e-12_sw094_nosmooth k7e-12_sw094_nosmooth \
+  --output-dir analysis/phase_conditioned_uplift_upper_sensitivity_sigma2 \
+  --display-smoothing-sigma 2.0
 ```
 
-Numeric derivatives and metrics remain unsmoothed; `sigma=1.25 pixels` is used
-only for the displayed two-dimensional raster. The resulting HTML technical
-report and PNG/PDF figures are written under
-`analysis/phase_conditioned_uplift/`.
+Numeric derivatives and metrics remain unsmoothed; `sigma=2.0 pixels` is used
+only for the displayed two-dimensional raster. The resulting technical-report
+artifact and PNG/PDF figures are written under the requested output directory.
 
 The code does **not** assume that SANISAND must predict more displacement than
 Mohr-Coulomb.  The comparison tests whether cyclic memory, state dependence,

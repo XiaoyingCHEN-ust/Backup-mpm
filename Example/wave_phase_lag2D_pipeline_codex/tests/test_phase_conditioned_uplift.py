@@ -63,6 +63,33 @@ class PhaseConditionedUpliftTest(unittest.TestCase):
         self.assertAlmostEqual(signed["lagged_minus_phase_erased_fraction"], 0.06)
         self.assertAlmostEqual(local["maximum_paired_delta_fraction"], 0.06)
 
+    def test_integrate_branch_reports_directional_redistribution(self) -> None:
+        rows = []
+        for index in range(5):
+            row = _row(3.64 + 0.065 * index, -284.0 + 50.0 * index, 106.0, 100.0)
+            row.update(
+                {
+                    "lagged_horizontal_absolute_force_n_per_m": 98.0,
+                    "phase_erased_horizontal_absolute_force_n_per_m": 100.0,
+                    "lagged_vertical_absolute_force_n_per_m": 112.0,
+                    "phase_erased_vertical_absolute_force_n_per_m": 100.0,
+                }
+            )
+            rows.append(row)
+        result = conditioned.integrate_branch(rows)
+        horizontal = result["horizontal_absolute_force_activity_impulse"]
+        vertical = result["vertical_absolute_force_activity_impulse"]
+        orientation = result["vertical_to_horizontal_force_activity_ratio"]
+        self.assertAlmostEqual(
+            horizontal["lagged_minus_phase_erased_fraction"], -0.02
+        )
+        self.assertAlmostEqual(
+            vertical["lagged_minus_phase_erased_fraction"], 0.12
+        )
+        self.assertGreater(
+            orientation["lagged"], orientation["phase_erased"]
+        )
+
     def test_gate_requires_repeatability_signed_direction_and_phase(self) -> None:
         branch = conditioned.integrate_branch(
             [

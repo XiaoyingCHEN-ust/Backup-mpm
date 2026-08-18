@@ -15,9 +15,16 @@ The fixed exploratory permeability screen uses four intrinsic permeabilities,
 `1e-13`, `3e-13`, `1e-12` and `3e-12 m2`, all at `Sw=0.94`. The four values,
 qualification criteria and effect gates were fixed before completion of the
 four-point matrix. Both solver pressure-smoothing switches are false. Gaussian smoothing
-with `sigma=1.25 pixels` is permitted only when rasterising a figure; no
+with `sigma=2.0 pixels` is permitted only when rasterising a figure; no
 smoothing enters a derivative, threshold, integral, extremum, frame selection
 or gate decision.
+
+After the four-point matrix had been closed, `5e-12` and `7e-12 m2` were
+pre-registered as an upper-bound sensitivity extension. Both points retain
+`Sw=0.94`, the 0.12-m wave height, 1.3-s period, geometry, constitutive
+parameters, time grid and fixed pipe, and both are run regardless of the first
+extension result. This separates a declared sensitivity test from post-hoc
+parameter selection.
 
 ### 7.5.1 Initial state and numerical controls
 
@@ -64,6 +71,8 @@ The current-runner results are:
 | `3e-13` | `+45.92` | `0.157` | yes | `-0.0131%` | FAIL |
 | `1e-12` | `+24.00` | `0.193` | yes | `-0.1399%` | FAIL |
 | `3e-12` | `-5.55` | `0.163` | no | `-0.9038%` | FAIL |
+| `5e-12` | `-15.74` | `0.146` | no | `+0.1226%` | FAIL |
+| `7e-12` | `-22.28` | `0.140` | yes | `+1.9125%` | FAIL |
 
 The two-dimensional fields show a resolved phase structure within and around
 the shallow pipe cavity. At `3e-13 m2`, for example, the crown lags its local
@@ -128,7 +137,8 @@ histories, so its relative change is undefined rather than a fabricated zero
 percentage. This point also fails the screen.
 
 The resulting complete-cycle statement is deliberately narrow: across the four
-fixed permeability points, resolvable subsurface phase structure did not
+fixed permeability points and two pre-registered upper-bound sensitivities,
+resolvable subsurface phase structure did not
 produce a qualifying increase in the two-cycle pipeline-zone net-uplift driver.
 This integral is a cancellation guardrail; it does not answer whether a short
 negative-pressure sub-cycle contains a stronger upward hydraulic demand. That
@@ -158,12 +168,24 @@ impulse differences have the positive direction, and the final recovery has at
 least a 5% same-frame local-force advantage. This gate is separate from, and
 cannot override, the complete-cycle net-uplift gate.
 
+To test the observed direction of the pressure-gradient force, the same
+support cohort also records the separate spatial integrals of `|f_x|` and
+`|f_y|`. The primary values use the raw nearest-neighbour derivative. A
+one-particle-layer, inverse-distance-weighted local affine fit is reported only
+as a spatial-reconstruction sensitivity and for the smoother two-dimensional
+raster. It exactly reproduces an affine pressure field on the translated or
+sheared particle lattice and is accepted only when it preserves the raw effect
+directions. A two-layer fit is excluded because the pre-run diagnostic reversed
+the signed effect, demonstrating excessive spatial averaging.
+
 | Intrinsic permeability (m2) | Recovery 1 local activity | Recovery 2 local activity | Recovery 2 signed force | Short-time mechanism |
 |---:|---:|---:|---:|:---:|
 | `1e-13` | `-0.195%` | `-0.195%` | `-1.012%` | FAIL |
 | `3e-13` | `+0.070%` | `+0.061%` | `-0.416%` | FAIL |
 | `1e-12` | `+1.475%` | `+1.455%` | `-0.326%` | FAIL |
 | `3e-12` | `+6.771%` | `+6.668%` | `+1.156%` | PASS |
+| `5e-12` | `+7.040%` | `+6.960%` | `+4.799%` | PASS |
+| `7e-12` | `+8.466%` | `+8.390%` | `+8.617%` | PASS |
 
 At `3e-12 m2`, the final recovery local upward-activity impulses are
 `118.712` and `111.291 N s/m` for the lagged and phase-erased fields,
@@ -174,8 +196,18 @@ The corresponding signed impulses are `33.289` and `32.909 N s/m`
 branch is `+7.969%`. At the common two-dimensional comparison time
 `t=3.835 s`, the same-column surface excess pressure is `-168 Pa`; the raw
 lagged-minus-erased local upward activity is positive near the shallow-pipe
-support region. The Gaussian `sigma=1.25 pixel` filter affects raster display
+support region. The Gaussian `sigma=2.0 pixel` filter affects raster display
 only, not these numbers.
+
+The upper-bound extension strengthens and clarifies the direction of this
+short-time result. At `7e-12 m2`, the second recovery reduces raw horizontal
+absolute force activity by `3.770%` while increasing vertical absolute force
+activity by `8.352%`; the first recovery gives `-3.598%` and `+8.326%`.
+The one-layer local-affine reconstruction preserves the signs and gives
+`-3.049%` and `+16.050%` in the second recovery. Hence the stronger upward
+driver is a redistribution from horizontal toward vertical pressure-gradient
+forcing, not an indiscriminate increase of every gradient component and not a
+result of display smoothing.
 
 The relevant phase structure at `3e-12 m2` is not represented by the crown
 alone. The crown difference is below its earlier 18-degree qualification, but
@@ -183,15 +215,17 @@ the invert retains a same-column phase difference of `-54.54 degrees`, an
 amplitude ratio of `0.0899` and `R2=0.982`. This vertical spatial phase
 structure is sufficient to redistribute the upward gradient during recovery.
 Conversely, `1e-13 m2` has a much larger crown delay but transmits too little
-amplitude to strengthen the integrated short-time driver. The four-point result
+amplitude to strengthen the integrated short-time driver. The completed result
 therefore supports a permeability window, not the monotonic statement that a
 smaller permeability always produces a larger uplift hazard.
 
-This PASS supports only a potential transient hydraulic-risk mechanism. The
-`IF>=1` area-time does not increase at `3e-12 m2`, and the paired fields share
-one fixed HD skeleton state. The result does not yet demonstrate additional
-liquefaction, stress loss or pipe motion. It instead identifies
-`k_s=3e-12 m2`, `Sw=0.94` and the negative-pressure recovery branch as the
+This PASS supports only a potential transient hydraulic-risk mechanism. At
+`7e-12 m2`, the complete-window `IF>=1` area-time increases by `1.357%` and
+the net-uplift impulse by `1.912%`, but the latter remains below the fixed 5%
+engineering gate; the paired fields also share one fixed HD skeleton state.
+The result does not yet demonstrate additional liquefaction, stress loss or
+pipe motion. It instead identifies
+`k_s=7e-12 m2`, `Sw=0.94` and the negative-pressure recovery branch as the
 first condition to test with independently integrated lagged and phase-erased
 SANISAND replays. The complete-cycle negative result remains a required
 guardrail against presenting a short favourable interval as a sustained net
@@ -250,15 +284,17 @@ harmonic `R2` is below 0.8.
 **Figure 8 -- negative-pressure recovery and permeability window.** The raw
 lagged-minus-erased local upward-force history in the final post-ramp period,
 followed by the two repeated recovery-branch changes in local upward activity
-and signed support force. The shaded interval is the registered
+and signed support force, and by the raw horizontal/vertical force-activity
+decomposition with one-layer sensitivity markers. The shaded interval is the registered
 negative-pressure recovery rather than a visually selected instant.
 
 **Figure 9 -- two-dimensional short-time upward hydraulic forcing.** At the
 common physical time `t=3.835 s` and same-column surface excess pressure
-`-168 Pa`, each permeability occupies one row with lagged, phase-erased and
+`-168 Pa`, each of the six permeabilities occupies one row with lagged, phase-erased and
 difference fields on the same geometry and colour scales. The figure shows the
 non-monotonic trade-off: the largest low-permeability phase angle is attenuated,
-whereas `3e-12 m2` produces the strongest short recovery-phase redistribution.
+whereas the upper-bound sensitivity points produce the strongest short
+recovery-phase vertical redistribution.
 
 **Supplementary permeability guardrail.** Crown phase
 magnitude and amplitude transmission for the four current-runner points,
@@ -284,7 +320,8 @@ record and both raw pressure databases. The four-point summary rejects missing,
 legacy or hash-drifted inputs. Values in this section must be copied from those
 audits rather than estimated visually.
 
-The phase-conditioned short-time audit, exact CSV and PNG/PDF figures are
-stored under `analysis/phase_conditioned_uplift/`. Its audit revalidates all
-four runner, phase-v3 and full-cycle driver sources before calculating the
-recovery metrics.
+The six-point phase-conditioned short-time audit, exact CSV and PNG/PDF figures
+are stored under
+`analysis/phase_conditioned_uplift_upper_sensitivity_sigma2/`. Its audit
+revalidates all six runner, phase-v3 and full-cycle driver sources before
+calculating the recovery metrics.
