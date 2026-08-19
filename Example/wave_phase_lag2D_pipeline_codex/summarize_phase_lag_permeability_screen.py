@@ -836,7 +836,12 @@ def _validated_driver_file_provenance(
     }
 
 
-def _validated_parameters(audit: dict[str, Any], context: str) -> dict[str, Any]:
+def _validated_parameters(
+    audit: dict[str, Any],
+    context: str,
+    *,
+    expected_saturation: float | None = EXPECTED_SATURATION,
+) -> dict[str, Any]:
     parameters = _mapping(audit.get("parameters"), f"{context}.parameters")
     permeability = _finite_float(
         parameters.get("intrinsic_permeability_m2"),
@@ -852,12 +857,15 @@ def _validated_parameters(audit: dict[str, Any], context: str) -> dict[str, Any]
     )
     if permeability <= 0.0:
         raise SummaryError(f"{context} permeability must be positive")
-    _same_float(
-        saturation,
-        EXPECTED_SATURATION,
-        f"{context} liquid saturation",
-        relative_tolerance=0.0,
-    )
+    if not 0.0 < saturation <= 1.0 or not 0.0 <= gas_saturation < 1.0:
+        raise SummaryError(f"{context} saturations are outside their physical range")
+    if expected_saturation is not None:
+        _same_float(
+            saturation,
+            expected_saturation,
+            f"{context} liquid saturation",
+            relative_tolerance=0.0,
+        )
     _same_float(
         saturation + gas_saturation,
         1.0,
@@ -1453,7 +1461,12 @@ def _validated_driver_metrics(
     }
 
 
-def load_case(root: Path, label: str) -> dict[str, Any]:
+def load_case(
+    root: Path,
+    label: str,
+    *,
+    expected_saturation: float | None = EXPECTED_SATURATION,
+) -> dict[str, Any]:
     """Load one exact current-runner/phase-v3/driver-screen audit set."""
 
     root = root.resolve()
@@ -1484,8 +1497,16 @@ def load_case(root: Path, label: str) -> dict[str, Any]:
     driver_audit = _read_audit(
         driver_path, DRIVER_SCHEMA, f"{label} driver-screen audit"
     )
-    phase_parameters = _validated_parameters(phase_audit, f"{label} phase-v3")
-    driver_parameters = _validated_parameters(driver_audit, f"{label} driver")
+    phase_parameters = _validated_parameters(
+        phase_audit,
+        f"{label} phase-v3",
+        expected_saturation=expected_saturation,
+    )
+    driver_parameters = _validated_parameters(
+        driver_audit,
+        f"{label} driver",
+        expected_saturation=expected_saturation,
+    )
     parameters = _validate_parameter_pair(
         phase_parameters, driver_parameters, label
     )

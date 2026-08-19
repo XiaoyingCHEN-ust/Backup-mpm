@@ -478,11 +478,18 @@ def _history_path(case: dict[str, Any]) -> Path:
         raise ConditionedUpliftError("Validated case lacks driver history") from error
 
 
-def load_case(root: Path, label: str) -> dict[str, Any]:
+def load_case(
+    root: Path,
+    label: str,
+    *,
+    expected_saturation: float | None = permeability_summary.EXPECTED_SATURATION,
+) -> dict[str, Any]:
     """Load one fully audited case and calculate its recovery metrics."""
 
     try:
-        validated = permeability_summary.load_case(root, label)
+        validated = permeability_summary.load_case(
+            root, label, expected_saturation=expected_saturation
+        )
     except Exception as error:  # preserve the detailed underlying cause
         raise ConditionedUpliftError(f"{label}: source audits are invalid") from error
     runner_path = Path(validated["runner_audit_path"]).resolve()

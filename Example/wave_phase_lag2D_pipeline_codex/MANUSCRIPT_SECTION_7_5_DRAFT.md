@@ -231,7 +231,51 @@ SANISAND replays. The complete-cycle negative result remains a required
 guardrail against presenting a short favourable interval as a sustained net
 uplift.
 
-### 7.5.5 Relation to the earlier registered replay
+### 7.5.5 Direct lower-permeability/lower-saturation engineering contrast
+
+To test the physical interpretation without relying only on the numerical
+phase-erasure operation, an additional fixed-pipe reference was calculated at
+`k_s=9.79e-12 m2` and `Sw=0.993`. It was compared directly with the
+`k_s=7e-12 m2`, `Sw=0.94` upper sensitivity and, separately, with the fresh
+`k_s=1e-13 m2`, `Sw=0.94` point. The wave, geometry, SANISAND parameters,
+time grid and both false pressure-smoothing flags are identical; only
+permeability, liquid/gas saturation, equilibrium state and case identity are
+allowed to differ. The measured surface-pressure histories differ by less
+than `0.020%`, so the applied wave is effectively matched.
+
+This comparison resolves why the local-positive and net-force interpretations
+appeared to disagree. The higher-permeability/higher-saturation reference
+transmits a larger absolute pressure-gradient field and therefore has much
+larger local upward positive-part activity. Nevertheless, alternating upward
+and downward layers around the pipe cancel strongly. Its signed upward
+support-force impulses are only `8.361` and `9.501 N s/m` in the two recovery
+branches. The corresponding `7e-12 m2`, `Sw=0.94` impulses are `26.879` and
+`28.955 N s/m`, increases of `221.5%` and `204.8%`. The extreme
+`1e-13 m2`, `Sw=0.94` values are `44.980` and `50.190 N s/m`, or `438.0%`
+and `428.3%` above the same reference.
+
+The directional ratios support the same reading. For `7e-12 m2`, the raw
+vertical-to-horizontal absolute-force ratio is `3.41%` and `1.21%` larger in
+the two recoveries; the one-layer affine reconstruction gives `17.0%` and
+`13.4%`. For `1e-13 m2`, the raw increases are `56.0%` and `52.1%`, and the
+one-layer values are `66.6%` and `59.9%`. Thus the lower-permeability/lower-
+saturation combinations carry less total gradient activity but a more
+vertically biased and less cancelled upward resultant during the negative-
+pressure recovery. This is the short-duration lifting-risk quantity of
+interest; it is distinct from the spatial integral of local positive parts.
+
+The reference cannot be called a no-lag solution. Its shoulder phase relative
+to the same-column surface is only `-3.72 degrees`, but the crown and invert
+retain differences of `-78.42` and `-101.84 degrees`. Moreover, the lower-
+permeability cases do not have a larger phase magnitude at every probe. Because
+both permeability and saturation change, the direct contrast is an engineering
+bracket rather than a phase-lag-only causal ablation. It supports a potential
+short-time hydraulic-risk mechanism, not realised liquefaction. Numerical
+metrics use the raw unsmoothed pressure field; a one-layer affine
+reconstruction and Gaussian `sigma=3 pixels` are confined to the displayed
+two-dimensional signed-force maps.
+
+### 7.5.6 Relation to the earlier registered replay
 
 An earlier registered RL--RE replay at the baseline permeability produced a
 larger raw local positive-part impulse and a larger same-particle hydraulic-
@@ -250,7 +294,7 @@ same attenuation-versus-lag trade-off, but its historical equilibrium config
 identity was not frozen by the current runner schema. It is excluded from the
 primary four-point trend and replaced by the fresh current-runner case above.
 
-### 7.5.6 SANISAND capability and the Mohr--Coulomb limitation
+### 7.5.7 SANISAND capability and the Mohr--Coulomb limitation
 
 The planned zero-cohesion Mohr--Coulomb field comparison cannot be admitted.
 After restoring the elastic HS checkpoint, the MC equilibrium diagnostic
@@ -272,7 +316,7 @@ model's pressure-dependent stiffness, contraction--dilation, backstress/fabric
 memory and cyclic mobility. They do not demonstrate universal or independently
 validated field-scale superiority.
 
-### 7.5.7 Figures and evidence sources
+### 7.5.8 Figures and evidence sources
 
 **Figure 7 -- two-dimensional pressure transmission and phase.** Four common-
 scale quarter-cycle liquid-excess-pressure snapshots for one explicitly
@@ -295,6 +339,15 @@ difference fields on the same geometry and colour scales. The figure shows the
 non-monotonic trade-off: the largest low-permeability phase angle is attenuated,
 whereas the upper-bound sensitivity points produce the strongest short
 recovery-phase vertical redistribution.
+
+**Figure 10 -- direct physical parameter-combination contrast.** The summary
+separates local positive-part activity, signed upward support-force impulse and
+the vertical/horizontal force-activity ratio for lower-`k`/lower-`Sw` and
+higher-`k`/higher-`Sw` physical cases. A companion signed two-dimensional map
+uses a common diverging scale at `t=3.835 s`; red and blue layers expose the
+spatial cancellation that makes total local activity and signed upward force
+order differently. The `1e-13 m2` comparison is shown as the extreme-
+attenuation sensitivity, not as the primary parameter pair.
 
 **Supplementary permeability guardrail.** Crown phase
 magnitude and amplitude transmission for the four current-runner points,

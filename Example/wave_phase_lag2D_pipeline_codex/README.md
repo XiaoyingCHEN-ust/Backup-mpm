@@ -64,6 +64,41 @@ Numeric derivatives and metrics remain unsmoothed; `sigma=2.0 pixels` is used
 only for the displayed two-dimensional raster. The resulting technical-report
 artifact and PNG/PDF figures are written under the requested output directory.
 
+A complementary cross-parameter comparison implements the physical contrast
+suggested for the engineering example. It compares `k=7e-12 m2, Sw=0.94`
+against `k=9.79e-12 m2, Sw=0.993`, then repeats the comparison with the extreme
+`k=1e-13 m2, Sw=0.94` sensitivity. The applied wave, geometry, material
+parameters other than `k` and saturation, time grid and fixed pipeline are
+identical; the measured surface-pressure histories differ by at most `0.0196%`.
+The high-`k`/high-`Sw` case is a physical reference, not an exact no-lag case:
+its shoulder phase difference is only `-3.72 deg`, but its crown and invert
+retain substantial spatial phase structure.
+
+During the two negative-pressure recoveries, `k=7e-12, Sw=0.94` gives signed
+upward support-force impulses `221.5%` and `204.8%` larger than the physical
+reference. The extreme `k=1e-13, Sw=0.94` case gives `438.0%` and `428.3%`
+larger signed impulses. In contrast, the high-`k`/high-`Sw` reference has much
+larger local positive-part and absolute force activity because it transmits a
+larger pressure amplitude. The apparent contradiction is spatial cancellation:
+the lower-`k`/lower-`Sw` cases have less total activity but a more upward-biased
+resultant. For the extreme case the raw vertical/horizontal activity ratio is
+`56.0%` and `52.1%` larger in the two recoveries; the one-layer affine check
+gives `66.6%` and `59.9%`. Reproduce the raw metrics and signed two-dimensional
+fields with:
+
+```bash
+python3 analyze_phase_lag_parameter_contrast.py
+python3 analyze_phase_lag_parameter_contrast.py \
+  --lower-label k1e-13_sw094_nosmooth_fresh \
+  --higher-label k9p79e-12_sw0993_nosmooth \
+  --output-dir analysis/phase_lag_parameter_contrast_extreme_low_k
+```
+
+All reported numbers use raw pressure. `sigma=3 pixels` is display-only and
+does not enter the phase fit, gradients or integrals. Because both `k` and
+saturation change, this comparison supports an engineering directional-risk
+contrast, not a phase-lag-only causal or realised-liquefaction claim.
+
 The code does **not** assume that SANISAND must predict more displacement than
 Mohr-Coulomb.  The comparison tests whether cyclic memory, state dependence,
 fabric evolution and cyclic mobility change the trigger, accumulation rate and

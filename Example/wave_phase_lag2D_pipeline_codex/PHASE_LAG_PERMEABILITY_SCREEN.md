@@ -194,3 +194,57 @@ has the largest crown delay but insufficient transmission, so the effect is
 non-monotonic. These PASS results identify a fixed-state hydraulic-risk
 mechanism, not realised liquefaction or pipe motion; independent lagged and
 phase-erased SANISAND replays remain required for that claim.
+
+## Cross-parameter physical reference
+
+The same-parameter phase-erased comparison above is the phase-component
+counterfactual. A second, deliberately different question compares two fully
+physical parameter combinations: lower permeability/lower saturation versus
+higher permeability/higher saturation. This brackets an engineering condition
+but cannot attribute the complete difference to phase lag because both `k` and
+`Sw` change.
+
+The main pair is `k=7e-12 m2, Sw=0.94` versus
+`k=9.79e-12 m2, Sw=0.993`; the `k=1e-13 m2, Sw=0.94` case is an extreme
+low-transmission sensitivity. All remaining HD configuration fields agree
+after removing only those two parameters and case identity paths. Both solver
+smoothing switches remain false. The common external wave is unchanged and the
+measured surface histories differ by only `0.0196%` for the main pair and
+`0.0171%` for the extreme pair.
+
+| Lower-k/lower-Sw case | Signed impulse change, recovery 1 / 2 | Local positive-part change, recovery 1 / 2 | Raw vertical/horizontal ratio change, recovery 1 / 2 |
+|---:|---:|---:|---:|
+| `7e-12 m2, 0.94` | `+221.5% / +204.8%` | `-71.5% / -72.6%` | `+3.41% / +1.21%` |
+| `1e-13 m2, 0.94` | `+438.0% / +428.3%` | `-36.8% / -40.0%` | `+56.0% / +52.1%` |
+
+The signs reconcile the earlier apparently opposite interpretations. The
+higher-`k`/higher-`Sw` reference transmits a much larger absolute pressure-
+gradient field, so its integral of local upward positive parts is larger. It
+also contains strong alternating upward/downward and lateral layers around the
+pipe. Spatial cancellation leaves signed upward impulses of only `8.361` and
+`9.501 N s/m`, compared with `26.879/28.955 N s/m` for `7e-12` and
+`44.980/50.190 N s/m` for `1e-13`. The one-layer affine sensitivity strengthens
+the directional result: the vertical/horizontal ratio rises by
+`17.0%/13.4%` for `7e-12` and `66.6%/59.9%` for `1e-13`.
+
+The reference is not labelled no-lag after inspecting the field. Its same-
+column shoulder difference is `-3.72 deg`, but crown and invert differences
+are `-78.42` and `-101.84 deg`; the lower-`k` cases also do not have a larger
+phase magnitude at every probe. The defensible conclusion is therefore that
+the lower-`k`/lower-`Sw` combinations redistribute the short recovery-stage
+gradient toward a more coherent upward resultant, which increases potential
+hydraulic risk. It is not proof that phase lag alone caused the difference or
+that liquefaction occurred.
+
+```bash
+python3 analyze_phase_lag_parameter_contrast.py
+python3 analyze_phase_lag_parameter_contrast.py \
+  --lower-label k1e-13_sw094_nosmooth_fresh \
+  --higher-label k9p79e-12_sw0993_nosmooth \
+  --output-dir analysis/phase_lag_parameter_contrast_extreme_low_k
+```
+
+Raw fields determine every number. A one-particle-layer affine reconstruction
+and Gaussian `sigma=3 pixels` are used only for the signed two-dimensional
+display; the alternating bands remain visible rather than being smoothed out
+of the evidence.
