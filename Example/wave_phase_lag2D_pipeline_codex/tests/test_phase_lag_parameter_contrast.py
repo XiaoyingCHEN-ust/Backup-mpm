@@ -156,6 +156,16 @@ class PhaseLagParameterContrastTest(unittest.TestCase):
         with self.assertRaises(contrast.ParameterContrastError):
             contrast.relative_fraction(float("nan"), 1.0)
 
+    def test_display_vector_clipping_preserves_direction(self) -> None:
+        vectors = np.asarray([[3.0, 4.0], [-6.0, 8.0], [0.5, 0.0]])
+        clipped, mask = contrast.clip_vector_magnitudes(vectors, 5.0)
+        np.testing.assert_allclose(np.linalg.norm(clipped, axis=1), [5.0, 5.0, 0.5])
+        np.testing.assert_array_equal(mask, [False, True, False])
+        self.assertGreater(float(np.dot(vectors[1], clipped[1])), 0.0)
+        self.assertAlmostEqual(clipped[1, 0] / clipped[1, 1], -0.75)
+        with self.assertRaises(contrast.ParameterContrastError):
+            contrast.clip_vector_magnitudes(vectors, 0.0)
+
     def test_compare_recoveries_reports_direct_orientation(self) -> None:
         strong = _case((120.0, 130.0), (60.0, 70.0))
         weak = _case((100.0, 100.0), (50.0, 50.0))

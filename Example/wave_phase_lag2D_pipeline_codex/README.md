@@ -83,8 +83,10 @@ larger pressure amplitude. The apparent contradiction is spatial cancellation:
 the lower-`k`/lower-`Sw` cases have less total activity but a more upward-biased
 resultant. For the extreme case the raw vertical/horizontal activity ratio is
 `56.0%` and `52.1%` larger in the two recoveries; the one-layer affine check
-gives `66.6%` and `59.9%`. Reproduce the raw metrics and signed two-dimensional
-fields with:
+gives `66.6%` and `59.9%`. The two-dimensional figure now shows two matched
+negative-pressure recoveries one period apart: colour is the signed vertical
+component and arrows are the complete `(fx, fy)` pressure-gradient force
+vector. Reproduce the raw metrics and vector fields with:
 
 ```bash
 python3 analyze_phase_lag_parameter_contrast.py
@@ -95,9 +97,12 @@ python3 analyze_phase_lag_parameter_contrast.py \
 ```
 
 All reported numbers use raw pressure. `sigma=3 pixels` is display-only and
-does not enter the phase fit, gradients or integrals. Because both `k` and
-saturation change, this comparison supports an engineering directional-risk
-contrast, not a phase-lag-only causal or realised-liquefaction claim.
+does not enter the phase fit, gradients or integrals. Arrow directions are
+unchanged; only their displayed lengths share one audited `97.5th`-percentile
+cap so the pipe-adjacent extremes do not hide the surrounding vector pattern.
+Because both `k` and saturation change, this comparison supports an
+engineering directional-risk contrast, not a phase-lag-only causal or
+realised-liquefaction claim.
 
 The code does **not** assume that SANISAND must predict more displacement than
 Mohr-Coulomb.  The comparison tests whether cyclic memory, state dependence,

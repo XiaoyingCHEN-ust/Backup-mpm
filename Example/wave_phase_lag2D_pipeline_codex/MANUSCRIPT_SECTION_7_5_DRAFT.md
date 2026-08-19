@@ -273,7 +273,11 @@ bracket rather than a phase-lag-only causal ablation. It supports a potential
 short-time hydraulic-risk mechanism, not realised liquefaction. Numerical
 metrics use the raw unsmoothed pressure field; a one-layer affine
 reconstruction and Gaussian `sigma=3 pixels` are confined to the displayed
-two-dimensional signed-force maps.
+two-dimensional force maps. Colour shows the signed vertical component and
+arrows show the complete pressure-gradient-force vector. To prevent a few
+pipe-adjacent arrows from obscuring direction elsewhere, all six panels use
+one `97.5th`-percentile display-length cap; directions and every numerical
+metric remain unmodified.
 
 ### 7.5.6 Relation to the earlier registered replay
 
@@ -343,8 +347,11 @@ recovery-phase vertical redistribution.
 **Figure 10 -- direct physical parameter-combination contrast.** The summary
 separates local positive-part activity, signed upward support-force impulse and
 the vertical/horizontal force-activity ratio for lower-`k`/lower-`Sw` and
-higher-`k`/higher-`Sw` physical cases. A companion signed two-dimensional map
-uses a common diverging scale at `t=3.835 s`; red and blue layers expose the
+higher-`k`/higher-`Sw` physical cases. A companion `2 x 3` field figure shows
+two matched negative-pressure recoveries at `t=2.535` and `3.835 s`, one period
+apart. Colour uses a common diverging scale for signed `fy/gamma'`; arrows show
+the complete `(fx,fy)/gamma'` vector and use one audited display-only `q97.5`
+length cap. The repeated red/blue layers and arrow directions expose the
 spatial cancellation that makes total local activity and signed upward force
 order differently. The `1e-13 m2` comparison is shown as the extreme-
 attenuation sensitivity, not as the primary parameter pair.

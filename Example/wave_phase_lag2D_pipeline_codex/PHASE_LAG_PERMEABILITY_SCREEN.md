@@ -245,6 +245,9 @@ python3 analyze_phase_lag_parameter_contrast.py \
 ```
 
 Raw fields determine every number. A one-particle-layer affine reconstruction
-and Gaussian `sigma=3 pixels` are used only for the signed two-dimensional
-display; the alternating bands remain visible rather than being smoothed out
-of the evidence.
+and Gaussian `sigma=3 pixels` are used only for the two-dimensional display;
+the alternating bands remain visible rather than being smoothed out of the
+evidence. The display contains six panels at two recoveries one period apart.
+Colour gives signed `fy/gamma'`, while arrows give the complete
+`(fx,fy)/gamma'` vector. A single audited `q97.5` arrow-length cap is shared by
+all panels, preserves direction, and is not used in any reported metric.
