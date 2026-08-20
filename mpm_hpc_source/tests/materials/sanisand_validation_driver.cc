@@ -27,14 +27,34 @@ constexpr double kLiteratureQAmplitudePa = 114200.;
 constexpr unsigned kMonotonicSteps = 1000;
 constexpr double kMonotonicFinalAxialStrain = -0.02;
 
-Json properties(double stress_tolerance) {
+enum class Parameterization {
+  LegacyMpm,
+  Liu2019CriticalState,
+  Liu2019Elasticity,
+  Liu2019Parent
+};
+
+const char* implementation_name(Parameterization parameterization) {
+  switch (parameterization) {
+    case Parameterization::Liu2019CriticalState:
+      return "mpm_sanisand04_direct_csl";
+    case Parameterization::Liu2019Elasticity:
+      return "mpm_sanisand04_direct_elasticity";
+    case Parameterization::Liu2019Parent:
+      return "mpm_sanisand04_liu2019_parent";
+    default:
+      return "mpm_sanisand04_style";
+  }
+}
+
+Json properties(double stress_tolerance, Parameterization parameterization) {
   // Toyoura parameters from Liu et al. (2019), Table A1.  The current model
   // uses a different critical-state-line and bulk-modulus parameterisation.
   // Nc/Lambda/alpha_c are a least-squares mapping of
   // e_c=0.934-0.019(p/Patm)^0.7 over p'=10--500 kPa; K0 matches nu=0.05 at
   // the literature initial state p'=294 kPa, e=0.808.  Those approximations
   // are deliberately exposed in the CSV/report rather than hidden.
-  return Json{{"density", 2650.0},
+  Json result{{"density", 2650.0},
               {"porosity", kPorosity},
               {"intrinsic_permeability", 1.E-12},
               {"theta", 0.0},
@@ -64,6 +84,22 @@ Json properties(double stress_tolerance) {
               {"FTOL", stress_tolerance},
               {"STOL", stress_tolerance},
               {"LTOL", 1.E-8}};
+  if (parameterization == Parameterization::Liu2019CriticalState ||
+      parameterization == Parameterization::Liu2019Parent) {
+    result["nu"] = 0.05;
+    result["e0"] = 0.934;
+    result["lambda_c"] = 0.019;
+    result["xi"] = 0.7;
+  }
+  if (parameterization == Parameterization::Liu2019Elasticity) {
+    result["parameterization"] = "liu2019_elasticity";
+    result["nu"] = 0.05;
+  } else if (parameterization == Parameterization::Liu2019CriticalState) {
+    result["parameterization"] = "liu2019_critical_state";
+  } else if (parameterization == Parameterization::Liu2019Parent) {
+    result["parameterization"] = "liu2019_parent";
+  }
+  return result;
 }
 
 double pressure(const Vector6d& stress) {
@@ -133,7 +169,8 @@ void emit_header() {
          "fabric_norm,controller_target_q_pa,controller_residual_pa,status\n";
 }
 
-void emit(const char* path_id, double tolerance, unsigned step,
+void emit(Parameterization parameterization, const char* path_id,
+          double tolerance, unsigned step,
           double cycle_time, const PointState& point,
           double controller_target =
               std::numeric_limits<double>::quiet_NaN(),
@@ -145,7 +182,8 @@ void emit(const char* path_id, double tolerance, unsigned step,
   const double nan = std::numeric_limits<double>::quiet_NaN();
   require(std::isfinite(p) && std::isfinite(q) && p > 0.,
           "non-finite or non-compressive material-point state");
-  std::cout << "mpm_sanisand04_style," << path_id << ',' << tolerance << ','
+  std::cout << implementation_name(parameterization) << ',' << path_id << ','
+            << tolerance << ','
             << step << ',' << cycle_time << ',' << point.axial_strain << ','
             << p << ',' << q << ',' << 1. - p / kInitialPressurePa << ','
             << point.state.at("void_ratio") << ','
@@ -158,10 +196,11 @@ void emit(const char* path_id, double tolerance, unsigned step,
             << status << '\n';
 }
 
-void run_monotonic(double tolerance) {
-  mpm::Sanisand<2> material(0, properties(tolerance));
+void run_monotonic(double tolerance, Parameterization parameterization) {
+  mpm::Sanisand<2> material(0, properties(tolerance, parameterization));
   auto point = initialise(&material);
-  emit("toyoura_monotonic_constant_volume", tolerance, 0, 0., point);
+  emit(parameterization, "toyoura_monotonic_constant_volume", tolerance, 0,
+       0., point);
   const double increment = kMonotonicFinalAxialStrain / kMonotonicSteps;
   for (unsigned step = 1; step <= kMonotonicSteps; ++step) {
     point.stress = material.compute_stress(
@@ -169,14 +208,16 @@ void run_monotonic(double tolerance) {
         &point.state);
     point.axial_strain += increment;
     if (step % 5 == 0)
-      emit("toyoura_monotonic_constant_volume", tolerance, step, 0., point);
+      emit(parameterization, "toyoura_monotonic_constant_volume", tolerance,
+           step, 0., point);
   }
 }
 
-void run_cyclic(double tolerance) {
-  mpm::Sanisand<2> material(0, properties(tolerance));
+void run_cyclic(double tolerance, Parameterization parameterization) {
+  mpm::Sanisand<2> material(0, properties(tolerance, parameterization));
   auto point = initialise(&material);
-  emit("toyoura_cyclic_constant_volume", tolerance, 0, 0., point);
+  emit(parameterization, "toyoura_cyclic_constant_volume", tolerance, 0, 0.,
+       point);
   double previous_target = 0.;
   const unsigned total_steps = kCycles * kStepsPerCycle;
   for (unsigned step = 1; step <= total_steps; ++step) {
@@ -189,8 +230,8 @@ void run_cyclic(double tolerance) {
         &point.state);
     point.axial_strain = target;
     if (step % 5 == 0)
-      emit("toyoura_cyclic_constant_volume", tolerance, step, cycle_time,
-           point);
+      emit(parameterization, "toyoura_cyclic_constant_volume", tolerance,
+           step, cycle_time, point);
   }
 }
 
@@ -249,10 +290,12 @@ PointState solve_q_target(mpm::Sanisand<2>* material,
   return std::abs(lower_residual) < std::abs(upper_residual) ? lower : upper;
 }
 
-void run_literature_q_controlled(double tolerance) {
-  mpm::Sanisand<2> material(0, properties(tolerance));
+void run_literature_q_controlled(double tolerance,
+                                 Parameterization parameterization) {
+  mpm::Sanisand<2> material(0, properties(tolerance, parameterization));
   auto point = initialise(&material);
-  emit("toyoura_literature_q_controlled", tolerance, 0, 0., point, 0., 0.);
+  emit(parameterization, "toyoura_literature_q_controlled", tolerance, 0, 0.,
+       point, 0., 0.);
   const unsigned total_steps = kLiteratureCycles * kStepsPerCycle;
   for (unsigned step = 1; step <= total_steps; ++step) {
     const double cycle_time = static_cast<double>(step) / kStepsPerCycle;
@@ -262,25 +305,42 @@ void run_literature_q_controlled(double tolerance) {
         signed_triaxial_q(point.stress) - target_q;
     if (std::abs(controller_residual) >
         0.00501 * kLiteratureQAmplitudePa) {
-      emit("toyoura_literature_q_controlled", tolerance, step, cycle_time,
-           point, target_q, controller_residual, "controller_limit");
+      emit(parameterization, "toyoura_literature_q_controlled", tolerance,
+           step, cycle_time, point, target_q, controller_residual,
+           "controller_limit");
       break;
     }
-    emit("toyoura_literature_q_controlled", tolerance, step, cycle_time,
-         point, target_q, controller_residual);
+    emit(parameterization, "toyoura_literature_q_controlled", tolerance, step,
+         cycle_time, point, target_q, controller_residual);
   }
 }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   try {
+    Parameterization parameterization = Parameterization::LegacyMpm;
+    if (argc == 2) {
+      const std::string argument(argv[1]);
+      if (argument == "--direct-csl")
+        parameterization = Parameterization::Liu2019CriticalState;
+      else if (argument == "--direct-elasticity")
+        parameterization = Parameterization::Liu2019Elasticity;
+      else if (argument == "--liu2019-parent")
+        parameterization = Parameterization::Liu2019Parent;
+      else
+        throw std::invalid_argument("unknown validation parameterization");
+    } else if (argc != 1) {
+      throw std::invalid_argument(
+          "usage: sanisand_validation_driver [--direct-csl|"
+          "--direct-elasticity|--liu2019-parent]");
+    }
     std::cout << std::setprecision(17);
     emit_header();
     for (const double tolerance : {1.E-5, 1.E-7}) {
-      run_monotonic(tolerance);
-      run_cyclic(tolerance);
-      run_literature_q_controlled(tolerance);
+      run_monotonic(tolerance, parameterization);
+      run_cyclic(tolerance, parameterization);
+      run_literature_q_controlled(tolerance, parameterization);
     }
     return 0;
   } catch (const std::exception& exception) {

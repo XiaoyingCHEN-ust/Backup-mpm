@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-SCHEMA = "pipeline-sanisand-independent-validation-v1"
+SCHEMA = "pipeline-sanisand-independent-validation-v2"
 EXPECTED_REFERENCE_COMMIT = "205c13b0a8fe5ffdcc1404b6fe63a59a67e613b9"
 REFERENCE_URL = "https://github.com/FedericoPisano/SANISAND-MS-UDSM"
 LIU_2019_DOI = "https://doi.org/10.1680/jgeot.17.P.307"
@@ -952,7 +952,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--output-dir",
         type=Path,
-        default=script_dir / "analysis" / "sanisand_validation" / "run_205c13b0",
+        default=script_dir
+        / "analysis"
+        / "sanisand_validation"
+        / "run_205c13b0_v2",
     )
     result.add_argument(
         "--current-driver",

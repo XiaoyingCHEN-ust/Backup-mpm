@@ -304,6 +304,59 @@ TEST_CASE("SANISAND rejects missing and invalid parameters") {
     properties["G0"] = std::numeric_limits<double>::infinity();
     REQUIRE_THROWS(mpm::Sanisand<2>(0, properties));
   }
+
+  SECTION("unknown parent parameterization") {
+    auto properties = sanisand_properties();
+    properties["parameterization"] = "unregistered";
+    REQUIRE_THROWS(mpm::Sanisand<2>(0, properties));
+  }
+
+  SECTION("invalid Liu parent parameters") {
+    auto properties = sanisand_properties();
+    properties["parameterization"] = "liu2019_parent";
+    properties["nu"] = 0.5;
+    properties["e0"] = 0.934;
+    properties["lambda_c"] = 0.019;
+    properties["xi"] = 0.7;
+    REQUIRE_THROWS(mpm::Sanisand<2>(0, properties));
+  }
+}
+
+TEST_CASE("SANISAND parent parameterization is explicit and legacy stable") {
+  auto explicit_properties = sanisand_properties();
+  explicit_properties["parameterization"] = "legacy_mpm";
+  mpm::Sanisand<2> implicit_legacy(0, sanisand_properties());
+  mpm::Sanisand<2> explicit_legacy(1, explicit_properties);
+
+  auto direct_properties = sanisand_properties();
+  direct_properties["parameterization"] = "liu2019_parent";
+  direct_properties["nu"] = 0.05;
+  direct_properties["e0"] = 0.934;
+  direct_properties["lambda_c"] = 0.019;
+  direct_properties["xi"] = 0.7;
+  direct_properties.erase("K0");
+  direct_properties.erase("Lambda");
+  direct_properties.erase("N_c");
+  direct_properties.erase("alpha_c");
+  mpm::Sanisand<2> direct_parent(2, direct_properties);
+
+  Eigen::Matrix<double, 6, 1> stress;
+  stress << -294000., -294000., -294000., 0., 0., 0.;
+  Eigen::Matrix<double, 6, 1> increment;
+  increment << 1.E-7, 1.E-7, 1.E-7, 0., 0., 0.;
+  auto implicit_state = implicit_legacy.initialise_state_variables();
+  auto explicit_state = explicit_legacy.initialise_state_variables();
+  auto direct_state = direct_parent.initialise_state_variables();
+  const auto implicit_stress = implicit_legacy.compute_stress(
+      stress, increment, nullptr, &implicit_state);
+  const auto explicit_stress = explicit_legacy.compute_stress(
+      stress, increment, nullptr, &explicit_state);
+  const auto direct_stress =
+      direct_parent.compute_stress(stress, increment, nullptr, &direct_state);
+
+  REQUIRE((implicit_stress - explicit_stress).norm() == Approx(0.).margin(1.E-12));
+  REQUIRE((implicit_stress - direct_stress).norm() > 1.E-6);
+  REQUIRE(direct_stress.allFinite());
 }
 
 TEST_CASE("SANISAND hydrostatic compression updates stress and void ratio") {

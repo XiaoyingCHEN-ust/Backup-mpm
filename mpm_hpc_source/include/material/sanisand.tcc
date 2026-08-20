@@ -120,12 +120,51 @@ mpm::Sanisand<Tdim>::Sanisand(unsigned id, const Json& material_properties)
   if (porosity_ <= 0. || porosity_ >= 1.)
     throw std::invalid_argument("SANISAND porosity must be between zero and one");
 
+  const std::string parameterization = material_properties.value(
+      "parameterization", std::string("legacy_mpm"));
+  if (parameterization == "legacy_mpm") {
+    parameterization_ = Parameterization::LegacyMpm;
+  } else if (parameterization == "liu2019_critical_state") {
+    parameterization_ = Parameterization::Liu2019CriticalState;
+  } else if (parameterization == "liu2019_elasticity") {
+    parameterization_ = Parameterization::Liu2019Elasticity;
+  } else if (parameterization == "liu2019_parent") {
+    parameterization_ = Parameterization::Liu2019Parent;
+  } else {
+    throw std::invalid_argument(
+        "SANISAND parameterization must be 'legacy_mpm', "
+        "'liu2019_critical_state', 'liu2019_elasticity' or "
+        "'liu2019_parent'");
+  }
+  const bool use_liu_elasticity =
+      parameterization_ == Parameterization::Liu2019Elasticity ||
+      parameterization_ == Parameterization::Liu2019Parent;
+  const bool use_liu_critical_state =
+      parameterization_ == Parameterization::Liu2019CriticalState ||
+      parameterization_ == Parameterization::Liu2019Parent;
+
   G0_ = require_positive(material_properties, "G0");
-  K0_ = require_positive(material_properties, "K0");
+  if (use_liu_elasticity) {
+    poisson_ratio_ = require_finite(material_properties, "nu");
+    if (poisson_ratio_ <= -1. || poisson_ratio_ >= 0.5)
+      throw std::invalid_argument(
+          "SANISAND parameter 'nu' must lie between -1 and 0.5");
+  } else {
+    K0_ = require_positive(material_properties, "K0");
+  }
   Mc_ = require_positive(material_properties, "Mc");
-  lambda_ = require_positive(material_properties, "Lambda");
-  N_c_ = require_positive(material_properties, "N_c");
-  alpha_c_ = require_positive(material_properties, "alpha_c");
+  if (use_liu_critical_state) {
+    reference_critical_void_ratio_ =
+        require_positive(material_properties, "e0");
+    critical_state_slope_ =
+        require_positive(material_properties, "lambda_c");
+    critical_state_exponent_ =
+        require_positive(material_properties, "xi");
+  } else {
+    lambda_ = require_positive(material_properties, "Lambda");
+    N_c_ = require_positive(material_properties, "N_c");
+    alpha_c_ = require_positive(material_properties, "alpha_c");
+  }
   n_b_ = require_positive(material_properties, "n_b");
   ch_ = require_positive(material_properties, "ch");
   n_d_ = require_positive(material_properties, "n_d");
@@ -148,6 +187,12 @@ mpm::Sanisand<Tdim>::Sanisand(unsigned id, const Json& material_properties)
   stol_ = require_positive(material_properties, "STOL");
   ftol_ = require_positive(material_properties, "FTOL");
   ltol_ = require_positive(material_properties, "LTOL");
+
+  if (use_liu_critical_state) {
+    if (critical_void_ratio(p_min_) <= 0.)
+      throw std::invalid_argument(
+          "SANISAND direct critical-state line is non-positive");
+  }
 
   properties_ = material_properties;
 }
@@ -416,8 +461,14 @@ mpm::Sanisand<Tdim>::compute_moduli(const Vector6d& stress,
   const double void_ratio = specific_volume - 1.;
   const double shear = std::pow(pressure_ratio, 0.5) * G0_ * patm_ *
                        std::pow(2.97 - void_ratio, 2.) / specific_volume;
-  const double bulk = std::pow(pressure_ratio, 2. / 3.) * K0_ * patm_ *
-                      specific_volume / void_ratio;
+  const bool use_liu_elasticity =
+      parameterization_ == Parameterization::Liu2019Elasticity ||
+      parameterization_ == Parameterization::Liu2019Parent;
+  const double bulk = use_liu_elasticity
+                          ? 2. * (1. + poisson_ratio_) * shear /
+                                (3. * (1. - 2. * poisson_ratio_))
+                          : std::pow(pressure_ratio, 2. / 3.) * K0_ * patm_ *
+                                specific_volume / void_ratio;
   if (!std::isfinite(shear) || !std::isfinite(bulk) || shear <= 0. ||
       bulk <= 0.)
     throw std::runtime_error("SANISAND elastic moduli are invalid");
@@ -447,6 +498,18 @@ mpm::Sanisand<Tdim>::yield_gradient(const Vector6d& stress,
 
 template <unsigned Tdim>
 double mpm::Sanisand<Tdim>::critical_void_ratio(double mean_stress) const {
+  if (parameterization_ == Parameterization::Liu2019CriticalState ||
+      parameterization_ == Parameterization::Liu2019Parent) {
+    const double pressure_ratio = std::max(p_min_, mean_stress) / patm_;
+    const double critical = reference_critical_void_ratio_ -
+                            critical_state_slope_ *
+                                std::pow(pressure_ratio,
+                                         critical_state_exponent_);
+    if (!std::isfinite(critical) || critical <= 0.)
+      throw std::runtime_error(
+          "SANISAND liu2019_parent critical-state line is invalid");
+    return critical;
+  }
   const double argument = std::max(p_min_, mean_stress) + alpha_c_;
   if (argument <= 0.)
     throw std::runtime_error("SANISAND critical-state logarithm is invalid");

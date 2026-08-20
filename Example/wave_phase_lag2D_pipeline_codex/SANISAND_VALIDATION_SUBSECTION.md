@@ -130,6 +130,47 @@ more limited claim used here: relative to Mohr--Coulomb, the adopted
 SANISAND04-style law resolves cyclic state dependence and fabric-mediated
 stress-path effects, but it is not numerically equivalent to SANISAND-MS.
 
+### X.X.5 Post-validation parameterization study
+
+A separate method study tested whether the parent SANISAND04 response could
+be improved simply by replacing the MPM parameter mappings with the equations
+used by Liu et al. (2019). This was implemented as a 2-by-2 factorial design:
+the existing mapped critical-state line versus the direct power-law line, and
+the existing pressure-dependent bulk modulus versus a bulk modulus obtained
+from the Hardin shear modulus and Poisson's ratio. The four variants shared
+all remaining parameters, initial states, strain histories, controller limits
+and integration tolerances. The new options are explicit material properties;
+omitting `parameterization` selects `legacy_mpm`, so existing pipeline inputs
+and restart states are unchanged.
+
+Model selection was divided into calibration and holdout stages. A candidate
+first had to reduce the maximum normalized error on the virgin monotonic path
+by at least 1%. It then had to keep (i) the pressure and deviator-stress RMSEs
+on the eight-cycle common-strain path and (ii) the SANISAND-MS terminal-cycle
+gap on the Appendix-II stress-controlled path within 10% of the mapped
+baseline. The latter two histories were therefore not reused to tune the
+candidate. These thresholds and all calculations used raw output without
+smoothing.
+
+Direct substitution did not pass this generalization test (Fig. X3). Replacing
+only the elastic bulk-modulus law reduced the monotonic maximum error from
+8.581% to 8.062%. However, the cyclic pressure RMSE increased by 13.4%, and
+the error in the stress-controlled terminal-cycle gap increased by 49.5%.
+Replacing only the critical-state line did not improve the monotonic metric
+(9.807%), while replacing both laws inherited the cyclic regressions and gave
+a 9.224% monotonic maximum error. None of the three candidates both improved
+the calibration path and passed the two holdouts. The existing mapped
+parameterization was consequently retained for production calculations.
+
+This negative selection result narrows the next defensible model-development
+step. Further curve fitting of the parent equations is unlikely to reproduce
+the UDSM's cyclic response without contaminating monotonic calibration.
+Improvement of high-cycle predictions should instead be pursued through a
+separate, fully state-serialized memory surface implementation. Such an
+implementation must be registered under a new material name, rather than
+silently changing `SANISAND2D`, and must repeat the independent convergence,
+monotonic-calibration and cyclic-holdout workflow reported here.
+
 ### Figure captions
 
 ![Figure X1: material-point verification](manuscript_figures/sanisand_validation/Figure_X1_SANISAND_validation.png)
@@ -150,6 +191,16 @@ residual per cycle. Crosses mark the first increment beyond the predeclared
 0.5%-of-amplitude control limit; they are terminal audit records rather than
 additional constitutive data.
 
+![Figure X3: parameterization selection](manuscript_figures/sanisand_validation/Figure_X3_SANISAND_method_selection.png)
+
+**Figure X3.** Post-validation 2-by-2 parameterization study: (a) maximum
+normalized errors on the virgin calibration path; (b) RMSEs on the
+eight-cycle holdout; (c) prescribed-deviator-stress controller terminal, with
+the independent SANISAND-MS UDSM shown as the dashed reference; and (d)
+holdout regressions relative to the mapped baseline. The dotted line is the
+predeclared 10% regression limit. Bars show raw material-point metrics without
+display or numerical smoothing.
+
 ### Reproduction command
 
 ```bash
@@ -158,9 +209,13 @@ git -C /tmp/SANISAND-MS-UDSM checkout 205c13b0a8fe5ffdcc1404b6fe63a59a67e613b9
 cd /home/chen/mpm/pipeline
 python3 Example/wave_phase_lag2D_pipeline_codex/run_sanisand_validation.py \
   --reference-root /tmp/SANISAND-MS-UDSM
+python3 Example/wave_phase_lag2D_pipeline_codex/run_sanisand_method_optimization.py \
+  --skip-build
 ```
 
 The complete local evidence package is written to
-`Example/wave_phase_lag2D_pipeline_codex/analysis/sanisand_validation/run_205c13b0/`.
+`Example/wave_phase_lag2D_pipeline_codex/analysis/sanisand_validation/run_205c13b0_v2/`.
 It includes both raw CSV files, cycle metrics, vector and raster figures, a
 short results note and `validation_audit.json` with source and artifact hashes.
+The factorial-study CSVs, selection metrics, figure and a second hash audit are
+written to `analysis/sanisand_validation/method_optimization_v1/`.

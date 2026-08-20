@@ -85,6 +85,13 @@ class Sanisand : public Material<Tdim> {
     unsigned rejected_substeps{0};
   };
 
+  enum class Parameterization {
+    LegacyMpm,
+    Liu2019CriticalState,
+    Liu2019Elasticity,
+    Liu2019Parent
+  };
+
   static double require_finite(const Json& properties,
                                const std::string& key);
   static double require_positive(const Json& properties,
@@ -148,6 +155,12 @@ class Sanisand : public Material<Tdim> {
   double stol_{std::numeric_limits<double>::quiet_NaN()};
   double ftol_{std::numeric_limits<double>::quiet_NaN()};
   double ltol_{std::numeric_limits<double>::quiet_NaN()};
+  Parameterization parameterization_{Parameterization::LegacyMpm};
+  double poisson_ratio_{std::numeric_limits<double>::quiet_NaN()};
+  double reference_critical_void_ratio_{
+      std::numeric_limits<double>::quiet_NaN()};
+  double critical_state_slope_{std::numeric_limits<double>::quiet_NaN()};
+  double critical_state_exponent_{std::numeric_limits<double>::quiet_NaN()};
 };
 
 }  // namespace mpm
