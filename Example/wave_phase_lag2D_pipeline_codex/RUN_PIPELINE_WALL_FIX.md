@@ -2,17 +2,25 @@
 
 ## What was wrong
 
-The failed diagnostic run did not show physical large deformation before the
-abort. At step 26000 the maximum soil displacement was only
-`4.29e-5 m = 0.00215` background cells. The initialization then aborted at
-step 27742 because a particle left the mesh.
+The downloaded v2 initialization completed, but it was not a valid equilibrium.
+Although `initial_liquid_pressures.txt` contains the intended hydrostatic field
+(about 9.76 kPa at the base), the three-phase particle's empty
+`initial_pore_pressure()` override discarded it. The first VTP therefore had
+zero liquid pressure through most of the bed. During four seconds of numerical
+relaxation, the mean vertical skeleton stress changed from about -2.03 kPa
+(compression) to +2.32 kPa (tension), and the compressive-particle fraction
+fell from 1.0 to 0.00027.
 
-The visible pipe-region pattern was mainly a boundary-discretisation artifact:
-22 fixed Cartesian background nodes (old node set 4) represented a circular
-pipe. Their radii ranged from 0.050 to 0.0671 m for a real 0.060 m pipe, so the
-stair-step wall imposed a grid-shaped liquid/gas constraint and could not
-follow a moving pipe. The earlier analyzer also used an overly wide wall ring
-and mixed 132 particles into its statistics.
+The following SANISAND run inherited that tensile checkpoint, stayed on its
+low-confinement elastic fallback (`eps_p_q=0` everywhere), and aborted at
+0.7266 s with `SANISAND elastic fallback became invalid`. This was before pipe
+release and was not physical large deformation.
+
+The older fixed-wall model had an additional discretisation artifact: 22 fixed
+Cartesian nodes represented the circle with radii from 0.050 to 0.0671 m for a
+real 0.060 m pipe. Its wall-saturation spread was larger than the moving
+particle-level no-flux result, so reverting to the old Euler/node wall would
+not fix the hydrostatic error.
 
 ## What changed
 
@@ -29,6 +37,17 @@ and mixed 132 particles into its statistics.
   fresh checkpoint, returns to `SANISAND2D`, and uses
   `PIC=0, APIC=false` with the same permeability.
 - Fresh UUIDs prevent old partial results from being reused.
+- A second source patch preserves the hydrostatic liquid pressure until the
+  liquid/gas properties are available, then derives gas pressure by adding the
+  saturation-dependent capillary suction.
+- The submerged seabed pressure boundary now adds water/wave pressure equally
+  to liquid and gas phases instead of forcing suction to zero. This prevents
+  the top two particle rows next to the shallow pipe crown from jumping from
+  `Sr=0.94` to about 0.999 in the first time step.
+- `check_initial_state.py` gates the SANISAND stage. It rejects a missing
+  hydrostatic field, a mostly tensile skeleton checkpoint, non-decayed solid
+  velocity, a final pressure RMSE above 500 Pa, pipe-wall saturation more than
+  0.02 from the prescribed 0.94, or nonzero pipe-wall phase flux.
 
 GIMP is deliberately not enabled in this diagnostic. The downloaded result
 never approached one background-cell displacement, so changing interpolation
@@ -68,9 +87,9 @@ wave_job=${wave_job%%;*}
 printf 'initial=%s wave=%s\n' "$init_job" "$wave_job"
 ```
 
-The patch application is idempotent: rerunning it reports that the patch is
-already applied only after both required source markers are found. Empty or
-truncated patch files are rejected. The two calculation jobs request partition
+Patch application is idempotent: the moving no-flux and hydrostatic-pressure
+patches are verified/applied independently. Empty or truncated patches are
+rejected. The two calculation jobs request partition
 `granularmech`, account `comgranmech` and 32 CPUs.
 
 Monitor without hiding failed batch steps:
@@ -88,10 +107,14 @@ Do not submit the wave job manually if initialization fails; inspect
 ## Outputs and acceptance check
 
 Initialization:
-`results/Initial_094_1E11_pipeline_moving_noflux_v2`
+`results/Initial_094_1E11_pipeline_hydrostatic_noflux_v3`
 
 Dynamic:
-`results/Wave2D_SN_094_1E11_pipeline_moving_noflux_v2`
+`results/Wave2D_SN_094_1E11_pipeline_hydrostatic_noflux_v3`
+
+The initialization job writes `initial_state_qa.json` and returns nonzero if
+the checkpoint is unacceptable. It must contain `"passed": true` before the
+dependent dynamic job can start.
 
 After the dynamic job:
 
@@ -111,7 +134,7 @@ The legacy `liquid_seepage_velocities` field is not used as this acceptance
 metric because its current implementation omits the gravity term and is
 nonzero even under a hydrostatic pressure gradient.
 
-This v2 rerun uses the target permeability in both stages. If a later
+This v3 rerun uses the target permeability in both stages. If a later
 equilibration sensitivity is needed, change only `mpm-initial.json` and use a
 fresh UUID; do not silently change the scientific target in `mpm-3p.json`.
 
@@ -134,9 +157,8 @@ the diagnostic CSV, initial/release/peak/final particle and pipeline frames,
 the final initialization checkpoint, and the logs. These retained results stay
 local/HPC-only and are not committed to GitHub.
 
-The incomplete v1 initialization downloaded on 2026-08-20 was generated by a
-stale executable: its saved wall-normal liquid and gas velocities were not
-zero even though the JSON enabled `phase_no_flux`. It is retained only as a
-failure diagnostic and must not be used for physical interpretation. The v2
-run is acceptable only if the build/source checks pass and the post-step-0
-wall-normal relative velocities are near floating-point noise.
+The v1 and v2 results are failure diagnostics only and must not be used for
+physical interpretation. The v3 run is acceptable only when source/build
+checks pass, `initial_state_qa.json` passes, skeleton stress stays predominantly
+compressive, and post-step-0 wall-normal relative phase velocities remain near
+floating-point noise.

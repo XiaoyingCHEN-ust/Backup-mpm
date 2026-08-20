@@ -4,6 +4,8 @@ set -euo pipefail
 case_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(cd "${case_dir}/../../mpm" && pwd)
 patch_file="${case_dir}/mpm_pipeline_no_flux.patch"
+pressure_patch_file="${case_dir}/mpm_initial_hydrostatic_pressure.patch"
+particle_header="${source_dir}/include/particles/particle_threephase_lag.h"
 particle_source="${source_dir}/include/particles/particle_threephase_lag.tcc"
 solver_source="${source_dir}/include/solvers/thm_mpm_explicit_threephase_lag.tcc"
 
@@ -29,9 +31,18 @@ if [[ ! -s "${patch_file}" ]]; then
   echo "Patch file is missing or empty: ${patch_file}" >&2
   exit 2
 fi
+if [[ ! -s "${pressure_patch_file}" ]]; then
+  echo "Patch file is missing or empty: ${pressure_patch_file}" >&2
+  exit 2
+fi
 if ! grep -Fq "apply_rigid_circle_phase_no_flux" "${patch_file}" ||
    ! grep -Fq "apply_rigid_pipeline_phase_no_flux" "${patch_file}"; then
   echo "Patch file does not contain the required no-flux changes." >&2
+  exit 2
+fi
+if ! grep -Fq "has_input_initial_liquid_pressure_" "${pressure_patch_file}" ||
+   ! grep -Fq "registered capillary suction and target saturation" "${pressure_patch_file}"; then
+  echo "Patch file does not contain the required phase-pressure fixes." >&2
   exit 2
 fi
 
@@ -56,4 +67,29 @@ if ! grep -Fq "apply_rigid_circle_phase_no_flux" "${particle_source}" ||
   exit 3
 fi
 
-echo "Verified moving pipeline no-flux patch in ${source_dir}."
+if grep -Fq "has_input_initial_liquid_pressure_" "${particle_header}" &&
+   grep -Fq "input_initial_liquid_pressure_" "${particle_source}" &&
+   grep -Fq "registered capillary suction and target saturation" "${particle_source}"; then
+  echo "Hydrostatic initial-pressure patch is already applied."
+elif git -C "${repo_root}" apply "${apply_directory_args[@]}" \
+    --unidiff-zero \
+    --ignore-space-change --ignore-whitespace \
+    --check --verbose "${pressure_patch_file}"; then
+  git -C "${repo_root}" apply "${apply_directory_args[@]}" \
+    --unidiff-zero \
+    --ignore-space-change --ignore-whitespace \
+    --verbose "${pressure_patch_file}"
+else
+  echo "Hydrostatic pressure patch cannot be applied cleanly to ${source_dir}." >&2
+  echo "Do not run the case with an unverified initial phase-pressure state." >&2
+  exit 2
+fi
+
+if ! grep -Fq "has_input_initial_liquid_pressure_" "${particle_header}" ||
+   ! grep -Fq "input_initial_liquid_pressure_" "${particle_source}" ||
+   ! grep -Fq "registered capillary suction and target saturation" "${particle_source}"; then
+  echo "Patch command completed without installing the pressure markers." >&2
+  exit 3
+fi
+
+echo "Verified moving no-flux and hydrostatic-pressure patches in ${source_dir}."

@@ -1,0 +1,61 @@
+diff --git a/include/particles/particle_threephase_lag.h b/include/particles/particle_threephase_lag.h
+index 71f99ae..40cdf71 100644
+--- a/include/particles/particle_threephase_lag.h
++++ b/include/particles/particle_threephase_lag.h
+@@ -75 +75,3 @@ public:
+-    // Initial pore pressure
++  // Store an initial liquid pressure read before compute_mass(). The
++  // three-phase properties (including suction) are not available until the
++  // material initialisation performed by compute_mass(), so apply it there.
+@@ -77,7 +79,3 @@ public:
+-    // this->pore_pressure_ = pore_pressure;
+-    // this->liquid_pressure_ = pore_pressure;
+-    // this->gas_pressure_ = pore_pressure;
+-    // this->PIC_liquid_pressure_ = pore_pressure;
+-    // this->PIC_gas_pressure_ = pore_pressure;
+-
+-  };
++    this->input_initial_liquid_pressure_ = pore_pressure;
++    this->has_input_initial_liquid_pressure_ = true;
++  }
+@@ -293,0 +292,2 @@ protected:
++  double input_initial_liquid_pressure_{0.};
++  bool has_input_initial_liquid_pressure_{false};
+diff --git a/include/particles/particle_threephase_lag.tcc b/include/particles/particle_threephase_lag.tcc
+index fb9536a..90d78de 100644
+--- a/include/particles/particle_threephase_lag.tcc
++++ b/include/particles/particle_threephase_lag.tcc
+@@ -971 +971,6 @@ bool mpm::ThreePhaseParticleLag<Tdim>::assign_initial_properties() {
+-    this->liquid_pressure_ = 0.0;
++    // MPMBase reads the optional particle pressure field before compute_mass.
++    // Preserve that hydrostatic liquid pressure while deriving gas pressure
++    // and the saturation-weighted pore pressure from the material properties.
++    this->liquid_pressure_ = this->has_input_initial_liquid_pressure_ ?
++                                 this->input_initial_liquid_pressure_ :
++                                 0.0;
+@@ -1867,2 +1872,3 @@ void mpm::ThreePhaseParticleLag<Tdim>::compute_pore_pressure(double dt){
+-      this->gas_pressure_ = this->liquid_pressure_;
+-      this->suction_pressure_ = 0.0;
++      // Apply external water/wave pressure equally to both pore phases so the
++      // registered capillary suction and target saturation are retained.
++      this->gas_pressure_ = this->liquid_pressure_ + this->suction_pressure_;
+@@ -2363 +2369 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_pore_pressure_watertable(
+-        this->liquid_pressure_ =
++        this->input_initial_liquid_pressure_ =
+@@ -2370 +2376 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_pore_pressure_watertable(
+-        this->liquid_pressure_ =
++        this->input_initial_liquid_pressure_ =
+@@ -2375 +2381 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_pore_pressure_watertable(
+-      this->liquid_pressure_ =
++      this->input_initial_liquid_pressure_ =
+@@ -2380,0 +2387 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_pore_pressure_watertable(
++    this->has_input_initial_liquid_pressure_ = true;
+@@ -2476 +2483 @@ bool mpm::ThreePhaseParticleLag<Tdim>::compute_pore_pressure_smoothing() noexcep
+-      gas_pressure = liquid_pressure;
++      gas_pressure = liquid_pressure + this->suction_pressure_;
+@@ -2528 +2535 @@ bool mpm::ThreePhaseParticleLag<Tdim>::
+-          gas_pressure = liquid_pressure;
++          gas_pressure = liquid_pressure + this->suction_pressure_;
+@@ -2532 +2539 @@ bool mpm::ThreePhaseParticleLag<Tdim>::
+-        gas_pressure = liquid_pressure;
++        gas_pressure = liquid_pressure + this->suction_pressure_;

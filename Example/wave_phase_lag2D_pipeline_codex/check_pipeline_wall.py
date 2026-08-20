@@ -30,6 +30,15 @@ def read_particles(path):
     return points
 
 
+def read_scalars(path, count):
+    with path.open(encoding="utf-8") as stream:
+        declared = int(stream.readline())
+        values = np.loadtxt(stream, ndmin=1)
+    if declared != count or values.shape != (count,) or not np.all(np.isfinite(values)):
+        raise RuntimeError(f"{path.name} is malformed")
+    return values
+
+
 def check_batch(path):
     text = path.read_text(encoding="utf-8")
     required = (
@@ -44,18 +53,34 @@ def check_batch(path):
 
 def main():
     source_root = ROOT.parent.parent / "mpm"
-    source_checks = {
-        source_root / "include/particles/particle_threephase_lag.tcc":
+    source_checks = (
+        (
+            source_root / "include/particles/particle_threephase_lag.h",
+            "has_input_initial_liquid_pressure_",
+        ),
+        (
+            source_root / "include/particles/particle_threephase_lag.tcc",
+            "input_initial_liquid_pressure_",
+        ),
+        (
+            source_root / "include/particles/particle_threephase_lag.tcc",
+            "registered capillary suction and target saturation",
+        ),
+        (
+            source_root / "include/particles/particle_threephase_lag.tcc",
             "apply_rigid_circle_phase_no_flux",
-        source_root / "include/solvers/thm_mpm_explicit_threephase_lag.tcc":
+        ),
+        (
+            source_root / "include/solvers/thm_mpm_explicit_threephase_lag.tcc",
             "apply_rigid_pipeline_phase_no_flux",
-    }
-    for source, marker in source_checks.items():
+        ),
+    )
+    for source, marker in source_checks:
         if not source.is_file():
             raise RuntimeError(f"Expected solver source file is missing: {source}")
         if marker not in source.read_text(encoding="utf-8", errors="replace"):
             raise RuntimeError(
-                f"Required no-flux marker {marker!r} is absent from {source}; "
+                f"Required solver marker {marker!r} is absent from {source}; "
                 "run bash apply_mpm_patch.sh and rebuild MPM"
             )
 
@@ -68,6 +93,12 @@ def main():
         raise RuntimeError("Stale pipeline_wall_euler_angles.txt is still present")
 
     particles = read_particles(ROOT / "particles.txt")
+    initial_pressures = read_scalars(
+        ROOT / "initial_liquid_pressures.txt", particles.shape[0]
+    )
+    expected_pressures = 1000.0 * 9.81 * np.maximum(1.0 - particles[:, 1], 0.0)
+    if not np.allclose(initial_pressures, expected_pressures, atol=1.0e-8, rtol=0.0):
+        raise RuntimeError("initial_liquid_pressures.txt is not hydrostatic")
     particle_sets = {
         entry["id"]: np.asarray(entry["set"], dtype=int)
         for entry in entity_sets["particle_sets"]
@@ -149,6 +180,11 @@ def main():
             raise RuntimeError("Initialization and dynamic no-flux cohorts differ")
 
     initial, dynamic = configs
+    initial_pressure_file = initial["mesh"].get(
+        "particles_pore_pressures", {}
+    ).get("file")
+    if initial_pressure_file != "initial_liquid_pressures.txt":
+        raise RuntimeError("Initialization does not register the hydrostatic pressure file")
     if initial["materials"][0]["type"] != "LinearElastic2D":
         raise RuntimeError("Initialization must use LinearElastic2D")
     if initial["analysis"]["PIC"] != 1 or initial["analysis"].get("APIC", False):
