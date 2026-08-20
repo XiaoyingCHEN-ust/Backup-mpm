@@ -6,6 +6,7 @@
 #endif
 #include "spdlog/spdlog.h"
 
+#include "parallelism.h"
 #include "io.h"
 #include "mpm.h"
 
@@ -38,11 +39,10 @@ int main(int argc, char** argv) {
     // Create an IO object
     auto io = std::make_shared<mpm::IO>(argc, argv);
 
-    // If number of threads are positive set to nthreads
-    unsigned nthreads = io->nthreads();
-#ifdef _OPENMP
-    omp_set_num_threads(nthreads > 0 ? nthreads : omp_get_max_threads());
-#endif
+    // Keep both runtime controls alive for the entire solve.  This bounds the
+    // OpenMP and TBB work used by MPM; unrelated third-party pools may still
+    // own idle/helper threads.
+    mpm::ParallelismGuard parallelism(io->nthreads());
 
     // Get analysis type
     const std::string analysis = io->analysis_type();

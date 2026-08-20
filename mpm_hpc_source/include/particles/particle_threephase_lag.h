@@ -14,10 +14,50 @@
 #include <string>
 #include <vector>
 
+#include "facet_traction_context.h"
 #include "logger.h"
 #include "particle.h"
 
 namespace mpm {
+
+namespace threephase_lag_boundary {
+
+//! Create an immutable total-pressure-traction marker from the configured
+//! free-surface particle set and the particle's stage-initial geometry.
+inline bool make_surface_traction_marker(bool configured_free_surface,
+                                         bool configured_nonfree_surface,
+                                         double reference_particle_y,
+                                         double reference_seabed_y,
+                                         double particle_size_y) {
+  if (!configured_free_surface || configured_nonfree_surface) return false;
+  const double surface_band =
+      std::max(0.75 * std::abs(particle_size_y), 1.e-12);
+  const double distance_below_surface =
+      reference_seabed_y - reference_particle_y;
+  return distance_below_surface >= -1.e-12 &&
+         distance_below_surface <= surface_band;
+}
+
+}  // namespace threephase_lag_boundary
+
+namespace threephase_lag_force {
+
+inline double excess_phase_pressure(double pressure,
+                                    double reference_pressure) {
+  if (!std::isfinite(pressure) || !std::isfinite(reference_pressure))
+    throw std::invalid_argument("Phase pressure and reference must be finite");
+  return pressure - reference_pressure;
+}
+
+template <typename Derived>
+inline void require_finite_force(const Eigen::MatrixBase<Derived>& force,
+                                 const char* phase) {
+  if (!force.allFinite())
+    throw std::runtime_error(std::string("Non-finite ") + phase +
+                             " force contribution");
+}
+
+}  // namespace threephase_lag_force
 
 // ThreePhaseParticleLag class
 template <unsigned Tdim>
@@ -72,21 +112,24 @@ public:
   // pre-compute pf for wave
   bool build_wave_pf_context() override;
 
-    // Initial pore pressure
+  // Store an initial liquid pressure read before compute_mass().  The
+  // three-phase properties (including suction) are not available until the
+  // material initialisation performed by compute_mass(), so the value is
+  // applied there rather than being discarded.
   void initial_pore_pressure(double pore_pressure) override {
-    // this->pore_pressure_ = pore_pressure;
-    // this->liquid_pressure_ = pore_pressure;
-    // this->gas_pressure_ = pore_pressure;
-    // this->PIC_liquid_pressure_ = pore_pressure;
-    // this->PIC_gas_pressure_ = pore_pressure;
-
-  };
+    this->input_initial_liquid_pressure_ = pore_pressure;
+    this->has_input_initial_liquid_pressure_ = true;
+  }
 
   //============================================================================
   // APPLY BOUNDARY CONDITIONS
 
   // Assign traction to the particle
   bool assign_particle_traction(unsigned direction, double traction) override;
+
+  // Assign traction using interpolation projected onto the requested facet
+  bool assign_particle_traction_on_facet(unsigned facet, unsigned direction,
+                                          double traction) override;
 
   // Assign particle liquid phase velocity constraints
   bool assign_particle_liquid_velocity_constraint(unsigned dir,
@@ -189,6 +232,7 @@ public:
   double flat_water_depth(double x) const;
   double seabed_surface_y(double x) const;
   double local_water_depth(double x) const;
+  bool is_physical_seabed_surface() const;
   
   // Update porosity of the particle
   bool update_particle_porosity(double dt) override;
@@ -242,6 +286,19 @@ protected:
 
 protected:
 
+  // Build a frozen reference context from the current stage-start geometry.
+  mpm::facet_traction::FacetTractionContext make_facet_traction_context(
+      unsigned public_facet) const;
+
+  // Build the dynamic excess-pressure context on the physical +y surface.
+  void initialise_dynamic_surface_traction_context();
+
+  // Clear one static traction amplitude without retaining a stale load.
+  void clear_static_traction(unsigned direction);
+
+  // Recompute the aggregate static-traction flag.
+  void update_static_traction_flag();
+
   // Inherit properties from ParticleBase class
   using ParticleBase<Tdim>::id_;
   using ParticleBase<Tdim>::coordinates_;
@@ -285,6 +342,8 @@ protected:
   unsigned liquid_material_id_{std::numeric_limits<unsigned>::max()};
   double pore_pressure_;
   double ini_pore_pressure_;
+  double input_initial_liquid_pressure_{0.};
+  bool has_input_initial_liquid_pressure_{false};
   double suction_pressure_;
   double mixture_mass_;
   double ini_porosity_;
@@ -387,7 +446,7 @@ protected:
   // Wave prosities
   bool wave_pressure_;
   double domain_length_x_;
-  double Nx_;
+  double Nx_{0.};
   double sea_level_;
   double depth_left_;
   double depth_right_;
@@ -402,6 +461,7 @@ protected:
   double gamma_b_;
   double wave_x_ref_;
   bool wave_x_ref_initialized_;
+  bool physical_seabed_surface_marker_;
   std::vector<double> seabed_surface_x_;
   std::vector<double> water_depth_;
   std::vector<double> beta_k_;
@@ -414,6 +474,11 @@ protected:
   bool set_mixture_traction_;
   bool set_pressure_constraint_;
   Eigen::Matrix<double, Tdim, 1> mixture_traction_;
+  std::array<bool, 3 * Tdim> static_traction_active_{};
+  std::array<mpm::facet_traction::FacetTractionContext, 3 * Tdim>
+      static_traction_contexts_;
+  mpm::facet_traction::FacetTractionContext
+      dynamic_surface_traction_context_;
   std::map<unsigned, double> liquid_velocity_constraints_;
   double pore_pressure_constraint_{std::numeric_limits<unsigned>::max()};
 

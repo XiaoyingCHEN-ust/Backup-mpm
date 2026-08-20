@@ -456,7 +456,8 @@ bool mpm::MPMBase<Tdim>::initialise_vtk() {
   bool status = true;
 
   // Default VTK attributes for single phase
-  std::vector<std::string> vtk = {"current_time",      
+  std::vector<std::string> vtk = {"ids",
+                                  "current_time",
                                   "porosities",
                                   "PIC_porosities",
                                   "volumes",
@@ -500,7 +501,9 @@ bool mpm::MPMBase<Tdim>::initialise_vtk() {
                                   "AlphaInitialZZ", "AlphaInitialZY",
                                   "AlphaInitialZX", "AlphaInitialXY",
                                   "ZXX", "ZYY", "ZZZ", "ZZY", "ZZX",
-                                  "ZXY", "eps_p_q", "void_ratio"};
+                                  "ZXY", "eps_p_q", "void_ratio",
+                                  "phi", "psi", "cohesion", "pdstrain",
+                                  "vertical_effective_stress_remaining_ratios"};
 
   try {
     if (post_process_.at("vtk").is_array() &&
@@ -732,7 +735,8 @@ void mpm::MPMBase<Tdim>::write_vtk(mpm::Index step, mpm::Index max_steps) {
   const unsigned soil_skeleton = mpm::ParticlePhase::Solid;
 
   //! VTK scalar variable, 1 component
-  std::vector<std::string> vtk_scalar_data = {"porosities",
+  std::vector<std::string> vtk_scalar_data = {"ids",
+                                              "porosities",
                                               "PIC_porosities",
                                               "volumetric_strains",
                                               "dvolumetric_strains",
@@ -753,6 +757,7 @@ void mpm::MPMBase<Tdim>::write_vtk(mpm::Index step, mpm::Index max_steps) {
                                               "PIC_ru",
                                               "initial_vertical_effective_stresses",
                                               "dynamic_vertical_effective_stresses",
+                                              "vertical_effective_stress_remaining_ratios",
                                               "liquefaction_potentials",
                                               "momentary_liquefied",
                                               "gamma_sub",
@@ -859,7 +864,8 @@ void mpm::MPMBase<Tdim>::write_vtk(mpm::Index step, mpm::Index max_steps) {
       "AlphaInitialZY", "AlphaInitialZX", "AlphaInitialXY",
       "ZXX",            "ZYY",            "ZZZ",
       "ZZY",            "ZZX",            "ZXY",
-      "eps_p_q",        "void_ratio"};
+      "eps_p_q",        "void_ratio",      "phi",
+      "psi",            "cohesion",        "pdstrain"};
 
   vtk_writer->create_new_dataset();
 

@@ -1,3 +1,5 @@
+#include <cmath>
+
 // Constructor with id
 template <unsigned Tdim>
 mpm::Mesh<Tdim>::Mesh(unsigned id, bool isoparametric)
@@ -1186,19 +1188,43 @@ bool mpm::Mesh<Tdim>::create_particles_tractions(
   return status;
 }
 
-///! Apply particle tractions
+//! Initialise particle facet-traction contexts and current amplitudes without
+//! mapping nodal forces. Solvers call this once after a possible checkpoint
+//! restore so the frozen context represents the exact stage-start geometry.
 template <unsigned Tdim>
-void mpm::Mesh<Tdim>::apply_traction_on_particles(double current_time) {
+void mpm::Mesh<Tdim>::initialise_particle_traction_contexts(
+    double current_time) {
   // Iterate over all particle tractions
   for (const auto& ptraction : particle_tractions_) {
     int set_id = ptraction->setid();
+    unsigned facet = ptraction->facet();
     unsigned dir = ptraction->dir();
     double traction = ptraction->traction(current_time);
+    if (!std::isfinite(traction))
+      throw std::runtime_error(
+          "Particle traction is non-finite for set " +
+          std::to_string(set_id) + ", facet " + std::to_string(facet) +
+          ", direction " + std::to_string(dir));
 
     this->iterate_over_particle_set(
-        set_id, std::bind(&mpm::ParticleBase<Tdim>::assign_particle_traction,
-                          std::placeholders::_1, dir, traction));
+        set_id,
+        [facet, dir, traction](
+            const std::shared_ptr<mpm::ParticleBase<Tdim>>& particle) {
+          if (!particle->assign_particle_traction_on_facet(facet, dir,
+                                                            traction))
+            throw std::runtime_error(
+                "Failed to assign particle facet traction to particle " +
+                std::to_string(particle->id()) + ", facet " +
+                std::to_string(facet) + ", direction " +
+                std::to_string(dir));
+        });
   }
+}
+
+///! Apply particle tractions
+template <unsigned Tdim>
+void mpm::Mesh<Tdim>::apply_traction_on_particles(double current_time) {
+  this->initialise_particle_traction_contexts(current_time);
   if (!particle_tractions_.empty()) {
     this->iterate_over_particles(std::bind(
         &mpm::ParticleBase<Tdim>::map_traction_force, std::placeholders::_1));
@@ -1717,32 +1743,52 @@ bool mpm::Mesh<Tdim>::read_particles_hdf5(unsigned phase,
   // Throw an error if file can't be found
   if (file_id < 0) throw std::runtime_error("HDF5 particle file is not found");
 
-  // Calculate the size and the offsets of our struct members in memory
-  const unsigned nparticles = this->nparticles();
-  const hsize_t NRECORDS = nparticles;
+  try {
+    // Validate the on-disk table before passing memory-layout arrays to HDF5.
+    hsize_t table_fields = 0;
+    hsize_t table_records = 0;
+    if (H5TBget_table_info(file_id, "table", &table_fields, &table_records) <
+        0)
+      throw std::runtime_error(
+          "Cannot read HDF5 particle table metadata");
 
-  const hsize_t NFIELDS = mpm::hdf5::particle::NFIELDS;
+    const unsigned nparticles = this->nparticles();
+    mpm::hdf5::particle::validate_table_metadata(
+        table_fields, table_records, static_cast<hsize_t>(nparticles));
 
-  std::vector<HDF5Particle> dst_buf(nparticles);
-  // Read the table
-  H5TBread_table(file_id, "table", mpm::hdf5::particle::dst_size,
-                 mpm::hdf5::particle::dst_offset,
-                 mpm::hdf5::particle::dst_sizes, dst_buf.data());
+    std::vector<HDF5Particle> dst_buf(nparticles);
+    const herr_t read_status = H5TBread_table(
+        file_id, "table", mpm::hdf5::particle::dst_size,
+        mpm::hdf5::particle::dst_offset,
+        mpm::hdf5::particle::dst_sizes, dst_buf.data());
+    if (read_status < 0)
+      throw std::runtime_error("Cannot read HDF5 particle table data");
 
-  unsigned i = 0;
-  for (auto pitr = particles_.cbegin(); pitr != particles_.cend(); ++pitr) {
-    HDF5Particle particle = dst_buf[i];
-    const auto material_override = particle_material_ids_.find((*pitr)->id());
-    if (material_override != particle_material_ids_.end())
-      particle.material_id = material_override->second;
-    // Get particle's material from list of materials
-    auto material = materials_.at(particle.material_id);
-    // Initialise particle with HDF5 data
-    (*pitr)->initialise_particle(particle, material);
-    ++i;
+    // A legacy 159-field table contains only svars_0..svars_5. Do not let a
+    // material declaring more history silently restart with zero-filled state.
+    mpm::hdf5::particle::prepare_state_variables_for_restart(
+        table_fields, dst_buf.data(), dst_buf.size());
+
+    unsigned i = 0;
+    for (auto pitr = particles_.cbegin(); pitr != particles_.cend(); ++pitr) {
+      HDF5Particle particle = dst_buf[i];
+      const auto material_override =
+          particle_material_ids_.find((*pitr)->id());
+      if (material_override != particle_material_ids_.end())
+        particle.material_id = material_override->second;
+      // Get particle's material from list of materials
+      auto material = materials_.at(particle.material_id);
+      // Initialise particle with HDF5 data
+      (*pitr)->initialise_particle(particle, material);
+      ++i;
+    }
+  } catch (...) {
+    H5Fclose(file_id);
+    throw;
   }
-  // close the file
-  H5Fclose(file_id);
+
+  if (H5Fclose(file_id) < 0)
+    throw std::runtime_error("Cannot close HDF5 particle file after reading");
   return true;
 }
 
@@ -2316,9 +2362,15 @@ bool mpm::Mesh<Tdim>::compute_nodal_corrected_force(
 //! Compute free surface cells, nodes, and particles
 template <unsigned Tdim>
 bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
-                                           double tolerance) {
+                                           double tolerance,
+                                           bool map_nodal_volume_for_density) {
   bool status = true;
   try {
+    if (free_surface_particle != "detect" &&
+        free_surface_particle != "assign")
+      throw std::invalid_argument(
+          "Unknown free-surface particle mode: " + free_surface_particle);
+
     // Reset free surface cell
     this->iterate_over_cells(std::bind(&mpm::Cell<Tdim>::assign_free_surface,
                                        std::placeholders::_1, false));
@@ -2326,6 +2378,13 @@ bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
     // Reset free surface node
     this->iterate_over_nodes(std::bind(&mpm::NodeBase<Tdim>::assign_free_surface,
                                        std::placeholders::_1, false));
+
+    // Geometric interface status and the pore-phase kinematic boundary have
+    // different ownership in assigned mode. Reset both explicitly before the
+    // geometric pass below rebuilds free_surface().
+    this->iterate_over_nodes(std::bind(
+        &mpm::NodeBase<Tdim>::assign_phase_kinematic_boundary,
+        std::placeholders::_1, false));
 
     // Reset volume fraction
     this->iterate_over_cells(std::bind(&mpm::Cell<Tdim>::assign_volume_fraction,
@@ -2406,26 +2465,22 @@ bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
       }
     }
 
-    // Compute boundary particles based on density function
-    // Lump cell volume to nodes
-    this->iterate_over_cells(std::bind(
-        &mpm::Cell<Tdim>::map_cell_volume_to_nodes, std::placeholders::_1, 0));
-
-    // Compute nodal value of mass density
-    this->iterate_over_nodes_predicate(
-        std::bind(&mpm::NodeBase<Tdim>::compute_density, std::placeholders::_1),
-        std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));
-
     // Evaluate free surface particles
     if (free_surface_particle == "detect") {
-      // // Lump cell volume to nodes
-      // this->iterate_over_cells(std::bind(
-      //     &mpm::Cell<Tdim>::map_cell_volume_to_nodes, std::placeholders::_1, 0));
-
-      // // Compute nodal value of mass density
-      // this->iterate_over_nodes_predicate(
-      //     std::bind(&mpm::NodeBase<Tdim>::compute_density, std::placeholders::_1),
-      //     std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));
+      // Density detection needs nodal cell volume, while assigned surfaces do
+      // not. Explicit solvers can map volume earlier in the same nodal cycle
+      // for their support threshold; honour that ownership to avoid doubling
+      // the denominator used by subsequent acceleration calculations.
+      if (map_nodal_volume_for_density) {
+        this->iterate_over_cells(std::bind(
+            &mpm::Cell<Tdim>::map_cell_volume_to_nodes,
+            std::placeholders::_1, 0));
+      }
+      this->iterate_over_nodes_predicate(
+          std::bind(&mpm::NodeBase<Tdim>::compute_density,
+                    std::placeholders::_1),
+          std::bind(&mpm::NodeBase<Tdim>::status,
+                    std::placeholders::_1));
 
       this->iterate_over_particles(
           std::bind(&mpm::ParticleBase<Tdim>::compute_particle_free_surface,
@@ -2463,6 +2518,14 @@ bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
 
       std::set<mpm::Index> boundary_particles = this->free_surface_particles();
 
+      // Detection owns the entire geometric interface, so its historical
+      // phase-kinematic condition continues to apply at every detected
+      // free-surface node.
+      this->iterate_over_nodes(
+          [](const std::shared_ptr<mpm::NodeBase<Tdim>>& node) {
+            node->assign_phase_kinematic_boundary(node->free_surface());
+          });
+
       // for (const auto boundary_particle : boundary_particles)
       //   map_particles_[boundary_particle]->initial_pore_pressure(0.0);
         
@@ -2471,12 +2534,74 @@ bool mpm::Mesh<Tdim>::compute_free_surface(std::string free_surface_particle,
           std::bind(&mpm::ParticleBase<Tdim>::assign_particle_free_surfaces,
                     std::placeholders::_1));
       std::set<mpm::Index> boundary_particles = this->free_surface_particles();
+
+      // In assigned mode only configured free-surface particles own the
+      // three-phase kinematic boundary. Rebuild that ownership from the
+      // positive vertical facet of each marker's current cell. This is
+      // deliberately independent of free_surface(): the latter remains the
+      // geometric interface used by pressure/output algorithms and can also
+      // contain cavity nodes.
+      for (const auto particle_id : boundary_particles) {
+        const auto particle_iterator = map_particles_.find(particle_id);
+        if (particle_iterator == map_particles_.end())
+          throw std::runtime_error(
+              "Assigned free-surface particle is absent from the mesh");
+        const auto cell_iterator =
+            map_cells_.find(particle_iterator->second->cell_id());
+        if (cell_iterator == map_cells_.end())
+          throw std::runtime_error(
+              "Assigned free-surface particle has no current cell");
+
+        const auto& cell = cell_iterator->second;
+        const auto element = cell->element_ptr();
+        if (element == nullptr)
+          throw std::invalid_argument(
+              "Assigned free-surface particle cell has no element");
+
+        const unsigned expected_nfunctions = 1u << Tdim;
+        if ((Tdim != 2 && Tdim != 3) ||
+            element->shapefn_type() != mpm::ShapefnType::NORMAL_MPM ||
+            element->nfunctions() != expected_nfunctions)
+          throw std::invalid_argument(
+              "Assigned free-surface kinematics support only normal-MPM Q4 "
+              "or H8 elements");
+
+        const auto cell_nodes = cell->nodes();
+        if (cell_nodes.size() != expected_nfunctions)
+          throw std::invalid_argument(
+              "Assigned free-surface cell connectivity is invalid");
+
+        constexpr unsigned positive_vertical_public_facet =
+            2 * (Tdim - 1);
+        const unsigned element_face =
+            mpm::facet_traction::public_facet_to_element_face(
+                Tdim, positive_vertical_public_facet, element->nfaces());
+        const Eigen::VectorXi face_indices =
+            element->face_indices(element_face);
+        const Eigen::Index expected_face_nodes = 1u << (Tdim - 1);
+        if (face_indices.size() != expected_face_nodes)
+          throw std::invalid_argument(
+              "Assigned free-surface element facet is invalid");
+
+        std::vector<bool> visited(expected_nfunctions, false);
+        for (Eigen::Index i = 0; i < face_indices.size(); ++i) {
+          const int local_node = face_indices[i];
+          if (local_node < 0 ||
+              static_cast<unsigned>(local_node) >= expected_nfunctions ||
+              visited[local_node])
+            throw std::invalid_argument(
+                "Assigned free-surface facet connectivity is invalid");
+          visited[local_node] = true;
+          cell_nodes[local_node]->assign_phase_kinematic_boundary(true);
+        }
+      }
       // for (const auto boundary_particle : boundary_particles)
       //   map_particles_[boundary_particle]->initial_pore_pressure(0.0);
     }
 
   } catch (std::exception& exception) {
     console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
+    throw;
   }
   return status;
 }

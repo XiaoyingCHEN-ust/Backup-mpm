@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <limits>
+#include <stdexcept>
 
 #include "Eigen/Dense"
 
@@ -14,6 +15,21 @@ namespace mpm {
 namespace mohrcoulomb {
 //! Failure state
 enum FailureState { Elastic, Tensile, Shear };
+
+//! A return map converges on its active surface, not merely anywhere inside
+//! the elastic domain. The inactive surface may remain strictly negative.
+inline bool active_surface_converged(
+    FailureState active_surface,
+    const Eigen::Matrix<double, 2, 1>& yield_residuals, double tolerance) {
+  if (active_surface == FailureState::Elastic || tolerance < 0. ||
+      !std::isfinite(tolerance) || !yield_residuals.allFinite())
+    return false;
+  const unsigned active =
+      active_surface == FailureState::Tensile ? 0U : 1U;
+  const unsigned inactive = 1U - active;
+  return std::fabs(yield_residuals(active)) <= tolerance &&
+         yield_residuals(inactive) <= tolerance;
+}
 }  // namespace mohrcoulomb
 
 //! MohrCoulomb class
@@ -44,6 +60,14 @@ class MohrCoulomb : public Material<Tdim> {
   //! Initialise history variables
   //! \retval state_vars State variables with history
   mpm::dense_map initialise_state_variables() override;
+
+  //! Initialise a fresh MC history from a restored equilibrium particle
+  //! \param[in] porosity Restored particle porosity (validated for handoff)
+  //! \details Mohr-Coulomb has no porosity-dependent internal variables, but
+  //! this explicit opt-in makes a LinearElastic-to-MC checkpoint handoff
+  //! auditable and prevents accidental state-size fallback.
+  mpm::dense_map initialise_state_variables_from_particle(
+      double porosity) override;
 
   //! Compute stress
   //! \param[in] stress Stress

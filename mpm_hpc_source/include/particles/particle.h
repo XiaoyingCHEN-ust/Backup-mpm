@@ -212,7 +212,7 @@ class Particle : public ParticleBase<Tdim> {
     void update_particle_thermal_strain() noexcept override;
 
     // Update particle stress
-    void update_particle_stress() noexcept override;
+    void update_particle_stress() override;
 
     // Compute updated update porosity of the particle
     void update_particle_volume()  override;

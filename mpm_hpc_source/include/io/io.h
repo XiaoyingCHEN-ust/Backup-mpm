@@ -32,7 +32,7 @@ class IO {
   //! \param[in] argv Input arguments
   IO(int argc, char** argv);
 
-  //! Return number of tbb threads
+  //! Return the OpenMP/TBB solver thread limit
   unsigned nthreads() const;
 
   //! Return input file name of mesh/submesh/soil particles

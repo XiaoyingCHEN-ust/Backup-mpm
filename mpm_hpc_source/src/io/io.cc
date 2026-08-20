@@ -19,9 +19,9 @@ mpm::IO::IO(int argc, char** argv) {
                                            "mpm.json", "input_file");
     cmd.add(input_arg);
 
-    // Define # TBB parallel threads
+    // Define the OpenMP/TBB solver thread limit
     TCLAP::ValueArg<unsigned int> tbb_arg("p", "tbb_parallel",
-                                          "Number of parallel TBB threads",
+                                          "Maximum parallel solver threads",
                                           false, 0, "tbb_parallel");
     cmd.add(tbb_arg);
 
@@ -217,5 +217,5 @@ Json mpm::IO::json_object(const std::string& key) const {
 //! Return post processing object
 Json mpm::IO::post_processing() const { return json_["post_processing"]; }
 
-//! Return number of tbb threads
+//! Return the OpenMP/TBB solver thread limit
 unsigned mpm::IO::nthreads() const { return nthreads_; }

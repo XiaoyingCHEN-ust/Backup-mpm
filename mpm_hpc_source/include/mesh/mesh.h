@@ -36,6 +36,7 @@ using Json = nlohmann::json;
 #include "io.h"
 #include "io_mesh.h"
 #include "loads_bcs/friction_constraint.h"
+#include "loads_bcs/facet_traction_context.h"
 #include "loads_bcs/traction.h"
 #include "loads_bcs/contact.h"
 #include "loads_bcs/heat_source.h"
@@ -284,6 +285,10 @@ class Mesh {
   bool create_particles_tractions(
       const std::shared_ptr<FunctionBase>& mfunction, int set_id,
       unsigned facet, unsigned dir, double traction);
+
+  //! Initialise particle facet-traction contexts without mapping nodal forces
+  //! \param[in] current_time Current time
+  void initialise_particle_traction_contexts(double current_time);
 
   //! Apply traction to particles
   //! \param[in] current_time Current time
@@ -551,9 +556,13 @@ class Mesh {
   mpm::Container<NodeBase<Tdim>> nodes() { return nodes_; }
 
   //! Compute free surface
+  //! \param[in] map_nodal_volume_for_density Map cell volume when detection
+  //! requires nodal density. Set false when the solver already mapped cell
+  //! volume during the current nodal initialisation cycle.
   bool compute_free_surface(
       std::string free_surface_particle,
-      double tolerance = std::numeric_limits<unsigned>::epsilon());
+      double tolerance = std::numeric_limits<unsigned>::epsilon(),
+      bool map_nodal_volume_for_density = true);
 
   //! Get free surface node set
   std::set<mpm::Index> free_surface_nodes();

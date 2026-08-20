@@ -185,6 +185,16 @@ public:
   // Assign traction
   virtual bool assign_particle_traction(unsigned direction, double traction) = 0;
 
+  // Assign traction on a specified particle facet. Legacy particle types keep
+  // their historical centre-based mapping; particle implementations that need
+  // facet-exact balance (including ThreePhaseParticleLag) override this API.
+  virtual bool assign_particle_traction_on_facet(unsigned facet,
+                                                  unsigned direction,
+                                                  double traction) {
+    static_cast<void>(facet);
+    return this->assign_particle_traction(direction, traction);
+  }
+
   // Assign heat source
   virtual bool assign_particle_heat_source(double heat_source, double dt) = 0;
 
@@ -517,7 +527,10 @@ public:
   virtual void update_particle_thermal_strain() noexcept  = 0;
 
   // Compute stress
-  virtual void update_particle_stress() noexcept = 0;
+  // Material integrations may reject an invalid return map.  Propagate that
+  // diagnostic to the solver instead of terminating inside a noexcept
+  // particle update.
+  virtual void update_particle_stress() = 0;
 
   // Update volume based on centre volumetric strain rate
   virtual void update_particle_volume()  = 0;

@@ -37,6 +37,10 @@ class Sanisand : public Material<Tdim> {
   mpm::dense_map initialise_state_variables_from_particle(
       double porosity) override;
 
+  //! Initialise SANISAND history from restored porosity and effective stress
+  mpm::dense_map initialise_state_variables_from_particle(
+      double porosity, const Vector6d& stress) override;
+
   //! Compute effective stress from an MPM strain increment
   Vector6d compute_stress(const Vector6d& stress, const Vector6d& dstrain,
                           const ParticleBase<Tdim>* ptr,
@@ -79,6 +83,13 @@ class Sanisand : public Material<Tdim> {
     State state;
     unsigned accepted_substeps{0};
     unsigned rejected_substeps{0};
+  };
+
+  enum class Parameterization {
+    LegacyMpm,
+    Liu2019CriticalState,
+    Liu2019Elasticity,
+    Liu2019Parent
   };
 
   static double require_finite(const Json& properties,
@@ -144,6 +155,12 @@ class Sanisand : public Material<Tdim> {
   double stol_{std::numeric_limits<double>::quiet_NaN()};
   double ftol_{std::numeric_limits<double>::quiet_NaN()};
   double ltol_{std::numeric_limits<double>::quiet_NaN()};
+  Parameterization parameterization_{Parameterization::LegacyMpm};
+  double poisson_ratio_{std::numeric_limits<double>::quiet_NaN()};
+  double reference_critical_void_ratio_{
+      std::numeric_limits<double>::quiet_NaN()};
+  double critical_state_slope_{std::numeric_limits<double>::quiet_NaN()};
+  double critical_state_exponent_{std::numeric_limits<double>::quiet_NaN()};
 };
 
 }  // namespace mpm

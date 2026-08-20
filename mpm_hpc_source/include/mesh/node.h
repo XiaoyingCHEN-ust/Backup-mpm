@@ -189,6 +189,11 @@ public:
   // Compute velocity from the momentum
   void compute_velocity(double dt) override;
 
+  //! Set the minimum supported solid density for nodal momentum updates
+  void assign_minimum_nodal_density(double density) noexcept override {
+    minimum_nodal_density_ = density;
+  }
+
   // Compute nodal temperature from heat
   void compute_temperature(unsigned phase) override;
 
@@ -332,6 +337,12 @@ public:
   // Assign free surface
   void assign_free_surface(bool free_surface) override {
     free_surface_ = free_surface;
+  }
+
+  //! Assign the phase-kinematic boundary without changing the geometric
+  //! free-surface flag used by pressure and interface algorithms
+  void assign_phase_kinematic_boundary(bool boundary) override {
+    phase_kinematic_boundary_ = boundary;
   }
 
   // Assign water table
@@ -535,6 +546,11 @@ public:
   // Return free surface bool
   bool free_surface() override { return free_surface_; }
 
+  //! Return phase-kinematic boundary status
+  bool phase_kinematic_boundary() override {
+    return phase_kinematic_boundary_;
+  }
+
   // Return material ids in node
   std::set<unsigned> material_ids() const override { return material_ids_; }
 
@@ -629,6 +645,8 @@ private:
   double pore_pressure_increment_;
   double mean_length_;
   double gas_saturation_;
+  //! Ignore newly activated nodes with vanishing particle support
+  double minimum_nodal_density_{0.};
 
   // Vector properties
   Eigen::Matrix<double, Tdim, Tnphases> velocity_;
@@ -677,6 +695,8 @@ private:
   bool contact_{false}; 
   // Free surface
   bool free_surface_{false};
+  //! Pore phases follow the skeleton velocity and acceleration at this node
+  bool phase_kinematic_boundary_{false};
   // Water table
   bool water_table_{false};
   bool convective_heat_boundary_{false};
@@ -707,4 +727,3 @@ private:
 #include "node_twophase.tcc"
 #include "node_threephase.tcc"
 #endif  // MPM_NODE_H_
-

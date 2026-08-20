@@ -1,0 +1,20 @@
+{
+    "description": "Coupled circular rigid PE100 SDR17 pipeline",
+    "center": [
+        0.7,
+        0.41000000000000003
+    ],
+    "outer_radius": 0.06,
+    "diameter": 0.12,
+    "cover": 0.03,
+    "cover_over_diameter": 0.25,
+    "invert_depth": 0.14999999999999997,
+    "wall_thickness": 0.007058823529411764,
+    "density": 959.0,
+    "contents": "empty",
+    "friction_coefficient": 0.15,
+    "surface_segments": 64,
+    "background_cell_size": 0.02,
+    "soil_particle_spacing": 0.01,
+    "connected_to_mpm_solver": true
+}

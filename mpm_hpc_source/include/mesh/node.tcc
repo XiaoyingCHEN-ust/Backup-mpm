@@ -67,6 +67,7 @@ void mpm::Node<Tdim, Tdof, Tnphases>::initialise() noexcept {
 
   // Specific variables for two phase
   free_surface_ = false;
+  phase_kinematic_boundary_ = false;
   set_velocity_constraints_ = false;
   drag_force_coefficient_.setZero();
   drag_force_.setZero();
@@ -561,32 +562,43 @@ void mpm::Node<Tdim, Tdof, Tnphases>::update_scalers(
 template <unsigned Tdim, unsigned Tdof, unsigned Tnphases>
 void mpm::Node<Tdim, Tdof, Tnphases>::compute_velocity(double dt) {
   const double tolerance = 1.E-15;
+  if (minimum_nodal_density_ > 0. && volume_(0) > tolerance &&
+      mass_(0) / volume_(0) < minimum_nodal_density_) {
+    velocity_.setZero();
+    acceleration_.setZero();
+    this->apply_velocity_constraints();
+    return;
+  }
   for (unsigned phase = 0; phase < Tnphases; ++phase) {
     if (mass_(phase) > tolerance) {
       velocity_.col(phase) = momentum_.col(phase) / mass_(phase);
 
+      // Check to see if value is below threshold
+      for (unsigned i = 0; i < velocity_.rows(); ++i)
+        if (std::abs(velocity_.col(phase)(i)) < 1.E-15)
+          velocity_.col(phase)(i) = 0.;
+    }
+  }
+
+  // At a three-phase free-surface node the pore phases share the skeleton
+  // velocity. Apply the condition only after every phase velocity has been
+  // reconstructed; doing it inside the phase loop can be overwritten by a
+  // later momentum-to-velocity calculation.
+  if (this->phase_kinematic_boundary_ && Tnphases == 3) {
+    velocity_.col(1) = velocity_.col(0);
+    velocity_.col(2) = velocity_.col(0);
+  }
+
+  // Contact is authoritative over the unconstrained free-surface update. A
+  // prescribed velocity constraint is applied below and remains the final
+  // boundary condition in case both are present at the same node.
   if (this->contact_) {
-    // Compute acceleration
     rigid_acceleration_ = (rigid_velocity_ - velocity_) / dt;
     velocity_ = rigid_velocity_;
     acceleration_ = rigid_acceleration_;
   }
 
-  if (this->free_surface_) {
-    if (Tnphases == 3) {
-      velocity_.col(2) == velocity_.col(0);
-      velocity_.col(1) == velocity_.col(0);
-    }
-  }
-
-    // Check to see if value is below threshold
-    for (unsigned i = 0; i < velocity_.rows(); ++i)
-      if (std::abs(velocity_.col(phase)(i)) < 1.E-15)
-        velocity_.col(phase)(i) = 0.;
-    }
-  } 
-
-  // Apply velocity constraints, which also sets acceleration to 0,
+  // Apply velocity constraints last; this also sets acceleration to zero.
   this->apply_velocity_constraints();
   // if (this->contact_) velocity_ = rigid_velocity_;   
 
@@ -1510,7 +1522,3 @@ void mpm::Node<Tdim, Tdof, Tnphases>::assign_intermediate_velocity_from_rigid(
     acceleration_inter_ = rigid_acceleration_;
   }
 }
-
-
-
-

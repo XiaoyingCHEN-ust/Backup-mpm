@@ -459,6 +459,7 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_particle(const HDF5Particle& p
     // When a second-stage analysis resumes from a stabilised HDF5 state,
     // use that resumed state as the new reference for excess-pressure-based
     // quantities.
+    this->ini_gas_pressure_ = this->gas_pressure_;
     this->ini_liquid_pressure_ = this->liquid_pressure_;
     this->ini_pore_pressure_ = this->pore_pressure_;
     this->ini_vertical_effective_stress_ = this->stress_[1];
@@ -494,7 +495,7 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_particle(
         // reject this operation by default.
         this->state_variables_ =
             material_->initialise_state_variables_from_particle(
-                particle.porosity);
+                particle.porosity, this->stress_);
       } else {
         throw std::runtime_error(
             "Checkpoint material state is incompatible with the selected "
@@ -525,13 +526,19 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
   // Mixture
     set_mixture_traction_ = false;
     set_pressure_constraint_ = false;
+    mixture_traction_.setZero();
+    static_traction_active_.fill(false);
+    for (auto& context : static_traction_contexts_) context.reset();
+    dynamic_surface_traction_context_.reset();
     pore_pressure_ = 0.;
     ini_vertical_effective_stress_ = 0.;
     suction_pressure_ = 0.;
 
   // Liquid
     liquid_velocity_.setZero();
+    liquid_acceleration_.setZero();
     liquid_flux_.setZero();
+    liquid_traction_.setZero();
     liquid_pressure_gradient_.setZero();
     liquid_seepage_velocity_.setZero();
     liquid_seepage_force_.setZero();
@@ -553,7 +560,10 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
 
   // Gas
     gas_velocity_.setZero();
+    gas_acceleration_.setZero();
+    pgravity_.setZero();
     gas_flux_.setZero();
+    gas_traction_.setZero();
     gas_pressure_gradient_.setZero();
     gas_C_matrix_.setZero();
     gas_strain_.setZero();
@@ -587,6 +597,7 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
     surface_right_y_ = 0.0;
     wave_x_ref_ = 0.0;
     wave_x_ref_initialized_ = false;
+    physical_seabed_surface_marker_ = false;
 
     
     // Link data with NAME
@@ -598,30 +609,43 @@ void mpm::ThreePhaseParticleLag<Tdim>::initialise_liquid_gas_phases() {
                                     const double excess_pore_pressure = this->PIC_pore_pressure_ -
                                         this->ini_pore_pressure_;
                                     if (excess_pore_pressure <= 0.0 ||
-                                        this->ini_vertical_effective_stress_ <= 1.e-12)
+                                        std::fabs(this->ini_vertical_effective_stress_) <= 1.e-12)
                                       return 0.0;
                                     return excess_pore_pressure /
-                                           this->ini_vertical_effective_stress_;
+                                           std::fabs(this->ini_vertical_effective_stress_);
                                   }},
       {"initial_vertical_effective_stresses",
                                   [&]() {return this->ini_vertical_effective_stress_;}},
       {"dynamic_vertical_effective_stresses",
                                   [&]() {return this->stress_[1] -
                                                  this->ini_vertical_effective_stress_;}},
+      {"vertical_effective_stress_remaining_ratios", [&]() {
+                                    if (std::fabs(this->ini_vertical_effective_stress_) <=
+                                        1.e-12)
+                                      return 1.0;
+                                    return this->stress_[1] /
+                                           this->ini_vertical_effective_stress_;
+                                  }},
       {"liquefaction_potentials", [&]() {
-                                    if (this->ini_vertical_effective_stress_ <= 1.e-12)
+                                    if (std::fabs(this->ini_vertical_effective_stress_) <=
+                                        1.e-12)
                                       return 0.0;
+                                    // Legacy vertical-effective-stress-loss
+                                    // diagnostic; this is not the seepage-force
+                                    // liquefaction index (LI).
                                     return std::max(
                                         0.0, 1.0 - this->stress_[1] /
                                                        this->ini_vertical_effective_stress_);
                                   }},
       {"momentary_liquefied",     [&]() {
-                                    if (this->ini_vertical_effective_stress_ <= 1.e-12)
+                                    if (std::fabs(this->ini_vertical_effective_stress_) <=
+                                        1.e-12)
                                       return 0.0;
                                     // Treat a 95% loss of the initial vertical
                                     // effective stress as momentary liquefaction.
-                                    return (this->stress_[1] <=
-                                            0.05 * this->ini_vertical_effective_stress_) ?
+                                    return (this->stress_[1] /
+                                                this->ini_vertical_effective_stress_ <=
+                                            0.05) ?
                                                1.0 : 0.0;
                                   }},
       {"gamma_sub",               [&]() {
@@ -815,8 +839,8 @@ bool mpm::ThreePhaseParticleLag<Tdim>::assign_liquid_material(
         throw std::runtime_error("Material is undefined!");
         }
     } catch (std::exception& exception) {
-      console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__, __func__,
-                      exception.what());
+      console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__,
+                      __func__, exception.what());
     }
     return status;
 }
@@ -968,7 +992,12 @@ bool mpm::ThreePhaseParticleLag<Tdim>::assign_initial_properties() {
     // this->suction_pressure_ = para_p0 * std::pow(effective_saturation_, -1. / para_m);
     this->suction_pressure_ = para_p0 * 
           std::pow(std::pow(this->effective_saturation_, -1. / para_m) - 1., 1. - para_m);
-    this->liquid_pressure_ = 0.0;
+    // MPMBase reads the optional particle pressure field before compute_mass.
+    // Preserve that hydrostatic liquid pressure while deriving the gas and
+    // saturation-weighted pore pressures from the now-available materials.
+    this->liquid_pressure_ = this->has_input_initial_liquid_pressure_ ?
+                                 this->input_initial_liquid_pressure_ :
+                                 0.0;
     this->gas_pressure_ = this->suction_pressure_ + this->liquid_pressure_;
     this->PIC_gas_pressure_ = this->gas_pressure_;
     this->PIC_liquid_pressure_ = this->liquid_pressure_;
@@ -1023,6 +1052,73 @@ double mpm::ThreePhaseParticleLag<Tdim>::local_water_depth(double x) const {
   return std::max(this->sea_level_ - this->seabed_surface_y(x), 1.e-6);
 }
 
+template <unsigned Tdim>
+bool mpm::ThreePhaseParticleLag<Tdim>::is_physical_seabed_surface() const {
+  if (Tdim < 2) return true;
+  // This value is captured from the configured particle set and reference
+  // geometry when the stage first builds its wave context. It deliberately
+  // does not depend on the particle's subsequently displaced coordinates.
+  return this->wave_x_ref_initialized_ &&
+         this->physical_seabed_surface_marker_;
+}
+
+// Build a frozen facet-traction context from the geometry at the beginning of
+// this stage. The context is not recomputed as volume_, size_ or xi_ evolve.
+template <unsigned Tdim>
+mpm::facet_traction::FacetTractionContext
+mpm::ThreePhaseParticleLag<Tdim>::make_facet_traction_context(
+    unsigned public_facet) const {
+  if (this->cell_ == nullptr)
+    throw std::runtime_error(
+        "Cannot build facet traction context without an assigned cell");
+  return mpm::facet_traction::make_context<Tdim>(
+      this->cell_->element_ptr(), this->cell_->nodal_coordinates(), this->xi_,
+      this->natural_size_, public_facet);
+}
+
+// Remove one static amplitude before attempting an update. A failed update
+// therefore cannot leave the previous time-step load active.
+template <unsigned Tdim>
+void mpm::ThreePhaseParticleLag<Tdim>::clear_static_traction(
+    unsigned direction) {
+  if (direction >= 3 * Tdim) return;
+  static_traction_active_.at(direction) = false;
+  const unsigned component = direction % Tdim;
+  if (direction < Tdim)
+    mixture_traction_[component] = 0.;
+  else if (direction < 2 * Tdim)
+    liquid_traction_[component] = 0.;
+  else
+    gas_traction_[component] = 0.;
+  this->update_static_traction_flag();
+}
+
+template <unsigned Tdim>
+void mpm::ThreePhaseParticleLag<Tdim>::update_static_traction_flag() {
+  this->set_mixture_traction_ = std::any_of(
+      static_traction_active_.cbegin(), static_traction_active_.cend(),
+      [](bool active) { return active; });
+}
+
+// The dynamic pressure load owns a context independent of every configured
+// static traction. Public facet 2 is +y by contract, not element face 2 by
+// assumption (the central converter performs that mapping).
+template <unsigned Tdim>
+void mpm::ThreePhaseParticleLag<Tdim>::
+    initialise_dynamic_surface_traction_context() {
+  constexpr unsigned public_positive_y_facet = 2;
+  if (!dynamic_surface_traction_context_.initialised()) {
+    dynamic_surface_traction_context_ =
+        this->make_facet_traction_context(public_positive_y_facet);
+  } else if (dynamic_surface_traction_context_.public_facet !=
+                 public_positive_y_facet ||
+             !dynamic_surface_traction_context_.valid(
+                 Tdim, static_cast<Eigen::Index>(this->nodes_.size()))) {
+    throw std::runtime_error(
+        "Dynamic surface traction context is inconsistent");
+  }
+}
+
 // pre-compute pf for wave
 template <unsigned Tdim>
 bool mpm::ThreePhaseParticleLag<Tdim>::build_wave_pf_context(){
@@ -1030,8 +1126,22 @@ bool mpm::ThreePhaseParticleLag<Tdim>::build_wave_pf_context(){
   try {
       if (!this->wave_x_ref_initialized_) {
         this->wave_x_ref_ = this->coordinates_[0];
+        if constexpr (Tdim >= 2) {
+          this->physical_seabed_surface_marker_ =
+              mpm::threephase_lag_boundary::make_surface_traction_marker(
+                  this->initial_free_surface(),
+                  this->initial_nonfree_surface_, this->coordinates_[1],
+                  this->seabed_surface_y(this->wave_x_ref_), this->size_(1));
+        } else {
+          this->physical_seabed_surface_marker_ =
+              this->initial_free_surface() &&
+              !this->initial_nonfree_surface_;
+        }
         this->wave_x_ref_initialized_ = true;
       }
+
+      if (this->is_physical_seabed_surface())
+        this->initialise_dynamic_surface_traction_context();
 
       const double pgravity =
           std::abs(this->pgravity_[1]) > 1.e-12 ? -this->pgravity_[1] : 9.81;
@@ -1147,13 +1257,94 @@ void mpm::ThreePhaseParticleLag<Tdim>::map_external_force(const VectorDim& pgrav
     try {
       this->pgravity_ = pgravity;
       Eigen::Matrix<double, Tdim, 1> mixture_force, liquid_force, gas_force;
+      const Eigen::Index node_count =
+          static_cast<Eigen::Index>(this->nodes_.size());
+      const bool has_static_facet_traction = std::any_of(
+          this->static_traction_active_.cbegin(),
+          this->static_traction_active_.cend(),
+          [](bool active) { return active; });
+      if ((has_static_facet_traction ||
+           this->is_physical_seabed_surface()) &&
+          this->cell_ == nullptr)
+        throw std::runtime_error(
+            "Cannot map facet traction without an assigned current cell");
+
+      std::array<Eigen::VectorXd, 3 * Tdim> current_static_weights;
+      for (unsigned direction = 0; direction < 3 * Tdim; ++direction) {
+        if (!this->static_traction_active_.at(direction)) continue;
+        const auto& context =
+            this->static_traction_contexts_.at(direction);
+        if (!context.valid(Tdim, node_count))
+          throw std::runtime_error(
+              "Active static traction has no valid reference context");
+        current_static_weights.at(direction) =
+            mpm::facet_traction::current_shape_weights<Tdim>(
+                this->cell_->element_ptr(), this->xi_,
+                context.public_facet);
+        if (current_static_weights.at(direction).size() != node_count)
+          throw std::runtime_error(
+              "Current static facet weights do not match current cell nodes");
+      }
+      const auto static_traction_weight =
+          [this, &current_static_weights](unsigned traction_direction,
+                                           unsigned node) {
+            if (!this->static_traction_active_.at(traction_direction))
+              return 0.;
+            return current_static_weights.at(traction_direction)[
+                static_cast<Eigen::Index>(node)];
+          };
+
+      constexpr unsigned vertical_direction = 1;
+      double dynamic_surface_force = 0.;
+      Eigen::VectorXd current_dynamic_weights;
+      if (this->is_physical_seabed_surface()) {
+        if (!this->dynamic_surface_traction_context_.valid(Tdim, node_count))
+          throw std::runtime_error(
+              "Physical seabed particle has no dynamic +y traction context");
+        current_dynamic_weights =
+            mpm::facet_traction::current_shape_weights<Tdim>(
+                this->cell_->element_ptr(), this->xi_,
+                this->dynamic_surface_traction_context_.public_facet);
+        if (current_dynamic_weights.size() != node_count)
+          throw std::runtime_error(
+              "Current dynamic facet weights do not match current cell nodes");
+        const double dynamic_surface_pressure =
+            mpm::threephase_lag_force::excess_phase_pressure(
+                this->liquid_pressure_, this->ini_liquid_pressure_);
+        dynamic_surface_force =
+            dynamic_surface_pressure *
+            this->dynamic_surface_traction_context_.reference_surface_measure;
+        if (!std::isfinite(dynamic_surface_force))
+          throw std::runtime_error(
+              "Dynamic surface traction force is non-finite");
+      }
+
       for (unsigned i = 0; i < nodes_.size(); ++i) {
         
         // External force = body force + boundary traction
         // MIXTURE
         mixture_force.setZero();
-        mixture_force = pgravity * mixture_mass_ * shapefn_[i] +
-                        this->mixture_traction_ * shapefn_[i];
+        mixture_force = pgravity * mixture_mass_ * shapefn_[i];
+        if (this->set_mixture_traction_) {
+          for (unsigned direction = 0; direction < Tdim; ++direction)
+            if (this->static_traction_active_.at(direction))
+              mixture_force[direction] +=
+                  this->mixture_traction_[direction] *
+                  static_traction_weight(direction, i);
+        }
+        if (this->is_physical_seabed_surface()) {
+          // A pressure boundary on a saturated/unsaturated seabed must be
+          // paired with the same total normal traction.  Otherwise a positive
+          // wave-pressure increment is interpreted as an unbalanced loss of
+          // effective stress at the boundary and can create artificial
+          // tensile impulses.  Use the actual liquid-pressure state so this
+          // remains consistent for both native and prescribed phase histories.
+          mixture_force[vertical_direction] -=
+              dynamic_surface_force *
+              current_dynamic_weights[static_cast<Eigen::Index>(i)];
+        }
+        mpm::threephase_lag_force::require_finite_force(mixture_force,
+                                                        "mixture external");
         nodes_[i]->update_external_force(true, mpm::ParticlePhase::Mixture,
                                                 mixture_force);
 
@@ -1161,19 +1352,36 @@ void mpm::ThreePhaseParticleLag<Tdim>::map_external_force(const VectorDim& pgrav
         // The phase momentum equations are assembled in excess-pressure form.
         // Mixture gravity is carried by the mixture equation, so only
         // phase-specific boundary traction belongs here.
-        liquid_force.setZero(); 
-        liquid_force = liquid_traction_ * shapefn_[i];
+        liquid_force.setZero();
+        if (this->set_mixture_traction_) {
+          for (unsigned direction = 0; direction < Tdim; ++direction)
+            if (this->static_traction_active_.at(Tdim + direction))
+              liquid_force[direction] =
+                  liquid_traction_[direction] *
+                  static_traction_weight(Tdim + direction, i);
+        }
+        mpm::threephase_lag_force::require_finite_force(liquid_force,
+                                                        "liquid external");
         nodes_[i]->update_external_force(true, mpm::ParticlePhase::Liquid,
                                           liquid_force);
 
         // GAS PHASE
         gas_force.setZero();
-        gas_force = gas_traction_ * shapefn_[i];
+        if (this->set_mixture_traction_) {
+          for (unsigned direction = 0; direction < Tdim; ++direction)
+            if (this->static_traction_active_.at(2 * Tdim + direction))
+              gas_force[direction] =
+                  gas_traction_[direction] *
+                  static_traction_weight(2 * Tdim + direction, i);
+        }
+        mpm::threephase_lag_force::require_finite_force(gas_force,
+                                                        "gas external");
         nodes_[i]->update_external_force(true, mpm::ParticlePhase::Gas, gas_force);
       }
     } catch (std::exception& exception) {
-      console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__, __func__,
-                      exception.what());
+      throw std::runtime_error(
+          "Three-phase external-force mapping failed for particle " +
+          std::to_string(this->id_) + ": " + exception.what());
     }
   }
 }
@@ -1228,22 +1436,30 @@ void mpm::ThreePhaseParticleLag<2>::map_internal_force() {
 
       // LIQUID PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        liquid_force[0] =
-            dn_dx_(i, 0) * (this->liquid_pressure_ -  this->liquid_density_ * 9.81 * (1-this->coordinates_[1])); // Effective pressure
-        liquid_force[1] =
-            dn_dx_(i, 1) * (this->liquid_pressure_ -  this->liquid_density_ * 9.81 * (1-this->coordinates_[1]));
+        const double excess_liquid_pressure =
+            mpm::threephase_lag_force::excess_phase_pressure(
+                this->liquid_pressure_, this->ini_liquid_pressure_);
+        liquid_force[0] = dn_dx_(i, 0) * excess_liquid_pressure;
+        liquid_force[1] = dn_dx_(i, 1) * excess_liquid_pressure;
 
         liquid_force *= this->volume_ * this->liquid_fraction_;
 
+        mpm::threephase_lag_force::require_finite_force(liquid_force,
+                                                        "liquid internal");
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Liquid, liquid_force);
       }
 
       // GAS PHASE
       for (unsigned i = 0; i < nodes_.size(); ++i) {
-        gas_force[0] = dn_dx_(i, 0) * (this->gas_pressure_);
-        gas_force[1] = dn_dx_(i, 1) * (this->gas_pressure_);
+        const double excess_gas_pressure =
+            mpm::threephase_lag_force::excess_phase_pressure(
+                this->gas_pressure_, this->ini_gas_pressure_);
+        gas_force[0] = dn_dx_(i, 0) * excess_gas_pressure;
+        gas_force[1] = dn_dx_(i, 1) * excess_gas_pressure;
 
         gas_force *= this->volume_ * this->gas_fraction_;
+        mpm::threephase_lag_force::require_finite_force(gas_force,
+                                                        "gas internal");
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Gas, gas_force);
       }
 
@@ -1257,11 +1473,14 @@ void mpm::ThreePhaseParticleLag<2>::map_internal_force() {
                            dn_dx_(i, 0) * total_stress_[3];
 
         mixture_force *= -1. * volume_;
+        mpm::threephase_lag_force::require_finite_force(mixture_force,
+                                                        "mixture internal");
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Mixture, mixture_force);
       }
     } catch (std::exception& exception) {
-      console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__, __func__,
-                      exception.what());
+      throw std::runtime_error(
+          "Three-phase internal-force mapping failed for particle " +
+          std::to_string(this->id_) + ": " + exception.what());
     } 
   } 
 }
@@ -1282,18 +1501,28 @@ void mpm::ThreePhaseParticleLag<3>::map_internal_force() {
 
         // LIQUID PHASE
         liquid_force.setZero();
-        liquid_force[0] = dn_dx_(i, 0) * (liquid_pressure_ - ini_liquid_pressure_);
-        liquid_force[1] = dn_dx_(i, 1) * (liquid_pressure_ - ini_liquid_pressure_);
-        liquid_force[2] = dn_dx_(i, 2) * (liquid_pressure_ - ini_liquid_pressure_);
+        const double excess_liquid_pressure =
+            mpm::threephase_lag_force::excess_phase_pressure(
+                liquid_pressure_, ini_liquid_pressure_);
+        liquid_force[0] = dn_dx_(i, 0) * excess_liquid_pressure;
+        liquid_force[1] = dn_dx_(i, 1) * excess_liquid_pressure;
+        liquid_force[2] = dn_dx_(i, 2) * excess_liquid_pressure;
         liquid_force *= volume_ * liquid_fraction_;
+        mpm::threephase_lag_force::require_finite_force(liquid_force,
+                                                        "liquid internal");
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Liquid, liquid_force);
 
         // GAS PHASE
         gas_force.setZero(); 
-        gas_force[0] = dn_dx_(i, 0) * (gas_pressure_ - ini_gas_pressure_);
-        gas_force[1] = dn_dx_(i, 1) * (gas_pressure_ - ini_gas_pressure_);
-        gas_force[2] = dn_dx_(i, 2) * (gas_pressure_ - ini_gas_pressure_);
+        const double excess_gas_pressure =
+            mpm::threephase_lag_force::excess_phase_pressure(
+                gas_pressure_, ini_gas_pressure_);
+        gas_force[0] = dn_dx_(i, 0) * excess_gas_pressure;
+        gas_force[1] = dn_dx_(i, 1) * excess_gas_pressure;
+        gas_force[2] = dn_dx_(i, 2) * excess_gas_pressure;
         gas_force *= volume_ * gas_fraction_; 
+        mpm::threephase_lag_force::require_finite_force(gas_force,
+                                                        "gas internal");
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Gas, gas_force);
 
         // MIXTURE
@@ -1316,11 +1545,14 @@ void mpm::ThreePhaseParticleLag<3>::map_internal_force() {
                            dn_dx_(i, 1) * total_stress_[4] +
                            dn_dx_(i, 2) * total_stress_[2] ;
         mixture_force *= -1. * volume_;
+        mpm::threephase_lag_force::require_finite_force(mixture_force,
+                                                        "mixture internal");
         nodes_[i]->update_internal_force(true, mpm::ParticlePhase::Mixture, mixture_force);
       }
     } catch (std::exception& exception) {
-      console_->error("{} #{}: Function: {}, {}\n", __FILE__, __LINE__, __func__,
-                      exception.what());
+      throw std::runtime_error(
+          "Three-phase internal-force mapping failed for particle " +
+          std::to_string(this->id_) + ": " + exception.what());
     }
   } 
 }
@@ -1612,6 +1844,11 @@ void mpm::ThreePhaseParticleLag<Tdim>::compute_updated_velocity(
       liquid_acceleration -= damping_factor * this->liquid_velocity_;
       gas_acceleration -= damping_factor * this->gas_velocity_;
 
+      // Keep damping active for pure PIC equilibrium runs. Without these
+      // increments, the damped FLIP velocities receive zero weight at PIC=1.
+      pic_liquid_velocity -= damping_factor * this->liquid_velocity_ * dt;
+      pic_gas_velocity -= damping_factor * this->gas_velocity_ * dt;
+
       // Get FLIP velocity
       Eigen::Matrix<double, Tdim, 1> flip_liquid_velocity =
                 this->liquid_velocity_ + liquid_acceleration * dt;
@@ -1619,10 +1856,10 @@ void mpm::ThreePhaseParticleLag<Tdim>::compute_updated_velocity(
                 this->gas_velocity_ + gas_acceleration * dt;
 
       // Update particle velocity based on PIC value
-      this->liquid_velocity_ = pic * pic_liquid_velocity + 
+      this->liquid_velocity_ = pic * pic_liquid_velocity +
                               (1. - pic) * flip_liquid_velocity;
-      this->gas_velocity_ = pic * pic_gas_velocity + 
-                              (1. - pic) * flip_gas_velocity;
+      this->gas_velocity_ = pic * pic_gas_velocity +
+                            (1. - pic) * flip_gas_velocity;
 
       if (this->affine_mpm_) {
         Eigen::Matrix<double, Tdim, Tdim> liquid_B_matrix;
@@ -1812,13 +2049,20 @@ void mpm::ThreePhaseParticleLag<Tdim>::compute_pore_pressure(double dt){
       this->gas_pressure_acceleration_ = 0.;
     }
     if (this->free_surface()) {
+      // This is the submerged seabed boundary, not an atmospheric gas
+      // boundary.  The wave supplies a common pressure increment to the pore
+      // phases, so retain the capillary pressure difference instead of
+      // forcing gas and liquid pressure to be equal.  Zeroing the suction
+      // drove the boundary saturation to its residual-gas limit and created
+      // an artificially stiff, unstable gas-pressure mode.
+      const double capillary_pressure = this->suction_pressure_;
       this->liquid_pressure_ = this->liquid_density_ * 9.81 * (1-this->coordinates_[1]);
       if (this->wave_pressure_) {
         this->liquid_pressure_ += this->pf_seabed_surface_particle();
         // this->liquid_pressure_ += experimental_pressure();
       }
-      this->gas_pressure_ = this->liquid_pressure_;
-      this->suction_pressure_ = 0.0;
+      this->gas_pressure_ = this->liquid_pressure_ + capillary_pressure;
+      this->suction_pressure_ = capillary_pressure;
       // Free-surface (including wave) pressure is prescribed here and no
       // longer corresponds to the internal pressure rate computed above.
       this->liquid_pressure_acceleration_ = 0.;
@@ -2182,28 +2426,57 @@ void mpm::ThreePhaseParticleLag<Tdim>::update_particle_density(double dt){
 template <unsigned Tdim>
 bool mpm::ThreePhaseParticleLag<Tdim>::assign_particle_traction(unsigned direction,
                                                           double traction) {
+  static_cast<void>(traction);
+  this->clear_static_traction(direction);
+  if (this->material_id_ != 999)
+    console_->error(
+        "{} #{}: ThreePhaseParticleLag traction requires an explicit public "
+        "Cartesian facet\n",
+        __FILE__, __LINE__);
+  return false;
+}
+
+// Assign traction using a frozen, stage-reference facet context. Repeated
+// calls update only the load amplitude; changes to current particle geometry
+// cannot alter the reference resultant. Interpolation weights are evaluated
+// separately from the current cell and local coordinates while mapping.
+template <unsigned Tdim>
+bool mpm::ThreePhaseParticleLag<Tdim>::assign_particle_traction_on_facet(
+    unsigned facet, unsigned direction, double traction) {
   bool status = false;
+  this->clear_static_traction(direction);
   if (this->material_id_ != 999) {
     try {
-      if (direction >= Tdim * 3 ||
-          this->volume_ == std::numeric_limits<double>::max()) {
+      if (direction >= Tdim * 3 || !std::isfinite(traction))
         throw std::runtime_error(
-            "Particle mixture traction property: volume / direction is invalid");
-      }
-      // Assign mixture traction
-      if (direction < Tdim) 
-        mixture_traction_(direction) =
-            traction * this->volume_ / this->size_(direction);
-      else if (direction < Tdim * 2) 
-        liquid_traction_(direction - Tdim) =
-            -traction * this->volume_ / this->size_(direction - Tdim);
-      else 
-        gas_traction_(direction - 2 * Tdim) =
-            -traction * this->volume_ / this->size_(direction - 2 * Tdim);
+            "Particle facet traction property is invalid");
 
+      auto& context = static_traction_contexts_.at(direction);
+      if (!context.initialised())
+        context = this->make_facet_traction_context(facet);
+      else if (context.public_facet != facet ||
+               !context.valid(
+                   Tdim, static_cast<Eigen::Index>(this->nodes_.size())))
+        throw std::runtime_error(
+            "Static traction reference context changed within a stage");
+
+      const unsigned component = direction % Tdim;
+      const double reference_force =
+          traction * context.reference_surface_measure;
+      if (!std::isfinite(reference_force))
+        throw std::runtime_error("Particle facet traction force is invalid");
+      if (direction < Tdim)
+        mixture_traction_[component] = reference_force;
+      else if (direction < 2 * Tdim)
+        liquid_traction_[component] = -reference_force;
+      else
+        gas_traction_[component] = -reference_force;
+
+      static_traction_active_.at(direction) = true;
+      this->update_static_traction_flag();
       status = true;
-      this->set_mixture_traction_ = true;
     } catch (std::exception& exception) {
+      this->clear_static_traction(direction);
       console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
       status = false;
     }
@@ -2313,24 +2586,25 @@ bool mpm::ThreePhaseParticleLag<Tdim>::initialise_pore_pressure_watertable(
     if (left_boundary != std::numeric_limits<double>::lowest()) {
       // Particle with left and right boundary
       if (right_boundary != std::numeric_limits<double>::max()) {
-        this->liquid_pressure_ =
+        this->input_initial_liquid_pressure_ =
             ((h0_right - h0_left) / (right_boundary - left_boundary) *
                  (position - left_boundary) +
              h0_left - this->coordinates_(dir_v)) *
             1000 * 9.81;
       } else
         // Particle with only left boundary
-        this->liquid_pressure_ =
+        this->input_initial_liquid_pressure_ =
             (h0_left - this->coordinates_(dir_v)) * 1000 * 9.81;
     }
     // Particle with only right boundary
     else if (right_boundary != std::numeric_limits<double>::max())
-      this->liquid_pressure_ =
+      this->input_initial_liquid_pressure_ =
           (h0_right - this->coordinates_(dir_v)) * 1000 * 9.81;
 
     else
       throw std::runtime_error(
           "Particle pore pressure can not be initialised by water table");
+    this->has_input_initial_liquid_pressure_ = true;
   } catch (std::exception& exception) {
     console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
     status = false;
@@ -2421,12 +2695,13 @@ bool mpm::ThreePhaseParticleLag<Tdim>::compute_pore_pressure_smoothing() noexcep
       gas_pressure = liquid_pressure + this->suction_pressure_;
     }
     if (this->free_surface()) {
+      const double capillary_pressure = this->suction_pressure_;
       liquid_pressure = this->liquid_density_ * 9.81 * (1-this->coordinates_[1]);
       if (this->wave_pressure_) {
         liquid_pressure += this->pf_seabed_surface_particle();
         // liquid_pressure += experimental_pressure();
       }
-      gas_pressure = liquid_pressure;
+      gas_pressure = liquid_pressure + capillary_pressure;
     }
 
     // Write smoothed pressures back to particle state so the next time step
@@ -2464,26 +2739,11 @@ bool mpm::ThreePhaseParticleLag<Tdim>::
       gas_pressure = liquid_pressure + this->suction_pressure_;
     }
     if (this->free_surface()) {
-      if (this->wave_pressure_) {
-        bool prescribe_wave_pressure = true;
-        if (Tdim > 1) {
-          const double x_query = this->wave_x_ref_initialized_ ?
-                                     this->wave_x_ref_ : this->coordinates_[0];
-          const double burial_depth =
-              this->seabed_surface_y(x_query) - this->coordinates_[1];
-          const double surface_band =
-              std::max(0.75 * this->size_(1), 1.e-12);
-          prescribe_wave_pressure = burial_depth <= surface_band;
-        }
-
-        if (prescribe_wave_pressure) {
-          liquid_pressure = this->liquid_density_ * 9.81 * (1-this->coordinates_[1]) + this->pf_seabed_surface_particle();
-          gas_pressure = liquid_pressure;
-        }
-      } else {
-        liquid_pressure = this->liquid_density_ * 9.81 * (1-this->coordinates_[1]);
-        gas_pressure = liquid_pressure;
-      }
+      liquid_pressure =
+          this->liquid_density_ * 9.81 * (1-this->coordinates_[1]);
+      if (this->wave_pressure_)
+        liquid_pressure += this->pf_seabed_surface_particle();
+      gas_pressure = liquid_pressure + this->suction_pressure_;
     }
     this->PIC_liquid_pressure_ = liquid_pressure;
     this->PIC_gas_pressure_ = gas_pressure;

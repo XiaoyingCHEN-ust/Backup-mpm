@@ -95,6 +95,7 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
       "PIC_ru",
       "initial_vertical_effective_stresses",
       "dynamic_vertical_effective_stresses",
+      "vertical_effective_stress_remaining_ratios",
       "liquefaction_potentials",
       "momentary_liquefied",
       "gamma_sub",
@@ -126,7 +127,8 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
       "gas_masses",          "gas_mass_densities",
       "gas_vol_strains",     "gas_viscosities",
       "viscosities",         "gas_critical_times",
-      "free_surfaces",       "permeabilities"};
+      "free_surfaces",       "permeabilities",
+      "ids"};
 
   std::vector<std::string> vtk_vector_data = {
       "displacements",       "temperature_gradients",
@@ -155,7 +157,8 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
       "AlphaInitialZY", "AlphaInitialZX", "AlphaInitialXY",
       "ZXX",            "ZYY",            "ZZZ",
       "ZZY",            "ZZX",            "ZXY",
-      "eps_p_q",        "void_ratio"};
+      "eps_p_q",        "void_ratio",      "phi",
+      "psi",            "cohesion",        "pdstrain"};
 
   auto particle_vtk_attributes = vtk_attributes_;
   if (std::find(particle_vtk_attributes.begin(), particle_vtk_attributes.end(),
@@ -542,13 +545,30 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
 
   // Check point resume
   if (resume) {
-    this->checkpoint_resume();
+    if (!this->checkpoint_resume())
+      throw std::runtime_error(
+          "Checkpoint resume was requested but could not be completed");
     mesh_->iterate_over_particles(
         std::bind(&mpm::ParticleBase<Tdim>::assign_affine_mpm,
                   std::placeholders::_1, this->affine_mpm_));
     this->current_time_ = analysis_["resume"]["current_time"].template get<double>();
     std::cout << "current_time" << this->current_time_ << "\n";
   }
+
+  // Resolve pressure-database samples once, after a possible checkpoint has
+  // replaced particle state. Subsequent lookup is by particle id only, so a
+  // moving particle retains its original pressure history.
+  if (write_prescribed_phase_pressures_) {
+    this->write_prescribed_pressure_points();
+    this->write_prescribed_pressure_binary_header();
+  }
+  if (prescribed_phase_pressures_) this->bind_prescribed_pressure_samples();
+
+  // Freeze every configured static facet-traction context at the exact
+  // stage-start geometry. In resumed stages this is deliberately after the
+  // checkpoint has restored and relocated the particles, and before the first
+  // strain/stress/volume update can change their state.
+  mesh_->initialise_particle_traction_contexts(current_time_);
 
   solver_begin = std::chrono::steady_clock::now();
 
@@ -558,12 +578,25 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
   // implementation; only rigid_pipeline.fixed changes between their inputs.
   this->initialise_rigid_pipeline(mpi_rank);
 
+  if (write_prescribed_phase_pressures_) {
+    if (std::abs(current_time_) >
+        1.0e-12 * std::max(1.0, std::abs(dt_)))
+      throw std::runtime_error(
+          "A prescribed pressure database must start at analysis time zero");
+    // Store the true initial state. Later frame numbers then correspond to
+    // source_step * source_dt, including when frames are written sparsely.
+    this->write_prescribed_pressure_frame(0);
+  }
+
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////                  MAIN LOOP               //////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
   // Main loop
-  for (step_ = 0; step_ <= nsteps_; ++step_) {
+  // step_ is the number of completed updates. Starting at one keeps checkpoint
+  // and pressure-database frame numbers aligned with physical time while still
+  // performing exactly nsteps_ updates.
+  for (step_ = 1; step_ <= nsteps_; ++step_) {
 
     mpm::RigidCircleContactResult<Tdim> rigid_pipeline_contact;
     Eigen::Vector2d rigid_pipeline_total_force = Eigen::Vector2d::Zero();
@@ -594,8 +627,11 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
     mesh_->iterate_over_particles(std::bind(
           &mpm::ParticleBase<Tdim>::record_time, std::placeholders::_1, current_time_));
 
-    if (mpi_rank == 0) console_->info("uuid : [{}], Step: {} of {}, timestep = {}, time = {}.\n", 
-                                       uuid_, step_, nsteps_, dt_, current_time_);
+    if (mpi_rank == 0 &&
+        (step_ <= 10 || step_ % output_steps_ == 0 || step_ == nsteps_))
+      console_->info(
+          "uuid : [{}], Step: {} of {}, timestep = {}, time = {}.\n",
+          uuid_, step_, nsteps_, dt_, current_time_);
 
     // Initialise nodes
     mesh_->iterate_over_nodes(
@@ -628,6 +664,15 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
     // Apply particle velocity constraints
     mesh_->apply_moving_rigid_boundary(current_time_, dt_);
 
+    // Rebuild the free-surface flags after initialise() clears the nodal
+    // state, and before compute_velocity() applies the three-phase surface
+    // kinematic condition. Cell volume was mapped once above; reuse it here
+    // so density detection does not double the nodal volume.
+    if (!mesh_->compute_free_surface(free_surface_particle_,
+                                     volume_tolerance_, false))
+      throw std::runtime_error(
+          "Free-surface detection failed before nodal velocity update");
+
     // Compute nodal velocity at the begining of time step
     mesh_->iterate_over_nodes_predicate(
         std::bind(&mpm::NodeBase<Tdim>::compute_velocity, 
@@ -642,9 +687,6 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
         std::bind(&mpm::NodeBase<Tdim>::compute_temperature,
                   std::placeholders::_1, soil_skeleton),
         std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));  
-
-    // Compute free surface cells, nodes, and particles
-    mesh_->compute_free_surface(free_surface_particle_, volume_tolerance_);
 
     // // Assign heat capacity and heat to nodes
     // mesh_->iterate_over_particles(
@@ -829,8 +871,26 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
     // Locate particles
     auto unlocatable_particles = mesh_->locate_particles_mesh();
 
-    if (!unlocatable_particles.empty())
-      throw std::runtime_error("Particle outside the mesh domain");
+    if (!unlocatable_particles.empty()) {
+      std::ostringstream message;
+      message << "Particle outside the mesh domain: count="
+              << unlocatable_particles.size() << ", step=" << step_
+              << ", time=" << current_time_;
+      const std::size_t diagnostic_count =
+          std::min<std::size_t>(unlocatable_particles.size(), 8);
+      for (std::size_t i = 0; i < diagnostic_count; ++i) {
+        const auto& particle = unlocatable_particles[i];
+        const auto coordinates = particle->coordinates();
+        const auto velocity = particle->vector_data("velocities");
+        message << "; particle[id=" << particle->id() << ", coordinates=("
+                << coordinates.transpose() << "), velocity=("
+                << velocity.transpose() << "), finite="
+                << (coordinates.allFinite() && velocity.allFinite() ? "yes"
+                                                                     : "no")
+                << "]";
+      }
+      throw std::runtime_error(message.str());
+    }
 
     this->write_rigid_pipeline_output(
         rigid_pipeline_contact, rigid_pipeline_total_force,
@@ -931,6 +991,11 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     if (!prescribed_phase_pressures_ && !write_prescribed_phase_pressures_)
       return status;
 
+    if (prescribed_phase_pressures_ && write_prescribed_phase_pressures_)
+      throw std::runtime_error(
+          "Prescribed phase pressures cannot be read and written in the same "
+          "analysis");
+
     if (pressure_props.find("path") == pressure_props.end())
       throw std::runtime_error("prescribed_phase_pressures.path is required");
 
@@ -957,12 +1022,28 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     else
       prescribed_pressure_step_interval_ = output_steps_;
 
+    if (prescribed_pressure_source_dt_ <= 0.0 ||
+        prescribed_pressure_step_interval_ == 0)
+      throw std::runtime_error("Invalid prescribed pressure time settings");
+
+    const double expected_time_interval =
+        prescribed_pressure_source_dt_ *
+        static_cast<double>(prescribed_pressure_step_interval_);
+
     if (pressure_props.find("time_interval") != pressure_props.end())
       prescribed_pressure_time_interval_ =
           pressure_props["time_interval"].template get<double>();
     else
-      prescribed_pressure_time_interval_ =
-          prescribed_pressure_source_dt_ * prescribed_pressure_step_interval_;
+      prescribed_pressure_time_interval_ = expected_time_interval;
+
+    const double time_tolerance =
+        1.0e-12 * std::max(1.0, std::abs(expected_time_interval));
+    if (prescribed_pressure_time_interval_ <= 0.0 ||
+        std::abs(prescribed_pressure_time_interval_ - expected_time_interval) >
+            time_tolerance)
+      throw std::runtime_error(
+          "prescribed_phase_pressures.time_interval must equal source_dt * "
+          "step_interval");
 
     if (pressure_props.find("max_step") != pressure_props.end())
       prescribed_pressure_max_step_ =
@@ -974,21 +1055,65 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
       prescribed_pressure_coordinate_bin_size_ =
           pressure_props["coordinate_bin_size"].template get<double>();
 
-    if (prescribed_pressure_source_dt_ <= 0.0 ||
-        prescribed_pressure_time_interval_ <= 0.0 ||
-        prescribed_pressure_step_interval_ == 0)
-      throw std::runtime_error("Invalid prescribed pressure time settings");
+    const bool map_by_id = prescribed_pressure_mapping_ == "id" ||
+                           prescribed_pressure_mapping_ == "particle_id";
+    const bool map_by_coordinates =
+        prescribed_pressure_mapping_ == "coordinate" ||
+        prescribed_pressure_mapping_ == "coordinates" ||
+        prescribed_pressure_mapping_ == "nearest";
+    if (!map_by_id && !map_by_coordinates)
+      throw std::runtime_error(
+          "prescribed_phase_pressures.mapping must be id, particle_id, "
+          "coordinate, coordinates, or nearest");
+
+    if (write_prescribed_phase_pressures_) {
+      mpm::prescribed_pressure::detail::validate_write_max_step(
+          prescribed_pressure_max_step_, nsteps_);
+      const double dt_tolerance =
+          1.0e-12 * std::max(1.0, std::abs(dt_));
+      if (variable_timestep_ ||
+          std::abs(prescribed_pressure_source_dt_ - dt_) > dt_tolerance)
+        throw std::runtime_error(
+            "Writing a prescribed pressure database requires a fixed solver "
+            "dt equal to source_dt");
+    }
+
+    if (prescribed_pressure_max_step_ % prescribed_pressure_step_interval_ !=
+        0) {
+      const auto aligned_max_step =
+          prescribed_pressure_max_step_ -
+          prescribed_pressure_max_step_ % prescribed_pressure_step_interval_;
+      console_->warn(
+          "Prescribed pressure max_step [{}] is not a stored-frame step; "
+          "using [{}]",
+          prescribed_pressure_max_step_, aligned_max_step);
+      prescribed_pressure_max_step_ = aligned_max_step;
+    }
 
     if (write_prescribed_phase_pressures_) {
       std::filesystem::create_directories(prescribed_pressure_path_);
-      this->write_prescribed_pressure_points();
-      this->write_prescribed_pressure_binary_header();
     }
 
     if (prescribed_phase_pressures_) {
       this->read_prescribed_pressure_points();
       this->validate_prescribed_pressure_binary_header();
     }
+
+    if (prescribed_pressure_max_step_ % prescribed_pressure_step_interval_ !=
+        0) {
+      const auto aligned_max_step =
+          prescribed_pressure_max_step_ -
+          prescribed_pressure_max_step_ % prescribed_pressure_step_interval_;
+      console_->warn(
+          "Prescribed pressure max_step [{}] is not a stored-frame step; "
+          "using [{}]",
+          prescribed_pressure_max_step_, aligned_max_step);
+      prescribed_pressure_max_step_ = aligned_max_step;
+    }
+
+    prescribed_pressure_frame_cache_valid_.fill(false);
+    prescribed_pressure_frame_cache_use_.fill(0);
+    prescribed_pressure_frame_cache_counter_ = 0;
 
     console_->info(
         "Prescribed phase pressures: read [{}], write [{}], path [{}], mapping [{}], binary values [{}]",
@@ -1078,6 +1203,7 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
 template <unsigned Tdim>
 void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     write_prescribed_pressure_binary_header() {
+  prescribed_pressure_legacy_step_offset_ = false;
   const auto filename = this->prescribed_pressure_values_filename();
   std::ofstream file(filename.c_str(), std::ios::out | std::ios::binary |
                                         std::ios::trunc);
@@ -1085,7 +1211,7 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     throw std::runtime_error("Cannot open prescribed pressure binary file: " +
                              filename);
 
-  const char magic[16] = "MPM_PRESSURE_V1";
+  const char magic[16] = "MPM_PRESSURE_V2";
   const std::uint32_t dim = Tdim;
   const std::uint32_t values_per_particle = 2;
   const std::uint64_t particle_count =
@@ -1136,8 +1262,12 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     sample.id = static_cast<mpm::Index>(values[0]);
     for (unsigned i = 0; i < Tdim; ++i) sample.coordinates[i] = values[1 + i];
     sample.has_coordinates = true;
-    prescribed_pressure_id_to_sample_[sample.id] =
-        prescribed_pressure_samples_.size();
+    const auto inserted = prescribed_pressure_id_to_sample_.emplace(
+        sample.id, prescribed_pressure_samples_.size());
+    if (!inserted.second)
+      throw std::runtime_error(
+          "Duplicate particle id in prescribed pressure points file: " +
+          std::to_string(sample.id));
     prescribed_pressure_samples_.emplace_back(sample);
   }
 
@@ -1176,10 +1306,17 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
   file.read(reinterpret_cast<char*>(&max_step), sizeof(max_step));
   file.read(reinterpret_cast<char*>(&source_dt), sizeof(source_dt));
 
-  if (std::string(magic, magic + 15) != "MPM_PRESSURE_V1" || dim != Tdim ||
-      values_per_particle != 2)
+  const std::string pressure_format(magic, magic + 15);
+  const bool format_v1 = pressure_format == "MPM_PRESSURE_V1";
+  const bool format_v2 = pressure_format == "MPM_PRESSURE_V2";
+  if ((!format_v1 && !format_v2) || dim != Tdim || values_per_particle != 2)
     throw std::runtime_error("Invalid prescribed pressure binary header: " +
                              filename);
+  prescribed_pressure_legacy_step_offset_ = format_v1;
+  if (format_v1)
+    console_->warn(
+        "Reading legacy MPM_PRESSURE_V1 timing: frame zero represents "
+        "source_dt rather than time zero");
 
   if (particle_count != prescribed_pressure_particle_count_)
     throw std::runtime_error(
@@ -1191,9 +1328,10 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
 
   if (std::abs(source_dt - prescribed_pressure_source_dt_) >
       1.0e-12 * std::max(1.0, prescribed_pressure_source_dt_))
-    console_->warn(
-        "Prescribed pressure binary source_dt [{}] differs from JSON [{}]",
-        source_dt, prescribed_pressure_source_dt_);
+    throw std::runtime_error(
+        "Prescribed pressure binary source_dt differs from JSON: file=" +
+        std::to_string(source_dt) +
+        ", JSON=" + std::to_string(prescribed_pressure_source_dt_));
 
   if (max_step < prescribed_pressure_max_step_)
     prescribed_pressure_max_step_ = static_cast<mpm::Index>(max_step);
@@ -1235,10 +1373,41 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::write_prescribed_pressure_frame(
 
 //! Return a cached prescribed pressure frame
 template <unsigned Tdim>
-typename mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::PressureFrame
+const typename mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::PressureFrame&
 mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::prescribed_pressure_frame(
     mpm::Index source_step) {
-  return this->read_prescribed_pressure_frame(source_step);
+  if (source_step % prescribed_pressure_step_interval_ != 0)
+    throw std::runtime_error(
+        "Requested prescribed pressure step is not a stored-frame step");
+
+  for (std::size_t i = 0; i < prescribed_pressure_frame_cache_.size(); ++i) {
+    if (prescribed_pressure_frame_cache_valid_[i] &&
+        prescribed_pressure_frame_cache_[i].step == source_step) {
+      prescribed_pressure_frame_cache_use_[i] =
+          ++prescribed_pressure_frame_cache_counter_;
+      return prescribed_pressure_frame_cache_[i];
+    }
+  }
+
+  std::size_t cache_slot = prescribed_pressure_frame_cache_.size();
+  for (std::size_t i = 0; i < prescribed_pressure_frame_cache_.size(); ++i) {
+    if (!prescribed_pressure_frame_cache_valid_[i]) {
+      cache_slot = i;
+      break;
+    }
+  }
+  if (cache_slot == prescribed_pressure_frame_cache_.size())
+    cache_slot = prescribed_pressure_frame_cache_use_[0] <=
+                         prescribed_pressure_frame_cache_use_[1]
+                     ? 0
+                     : 1;
+
+  prescribed_pressure_frame_cache_[cache_slot] =
+      this->read_prescribed_pressure_frame(source_step);
+  prescribed_pressure_frame_cache_valid_[cache_slot] = true;
+  prescribed_pressure_frame_cache_use_[cache_slot] =
+      ++prescribed_pressure_frame_cache_counter_;
+  return prescribed_pressure_frame_cache_[cache_slot];
 }
 
 //! Read one prescribed pressure frame
@@ -1327,21 +1496,71 @@ long long mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::pressure_bin_key(
   return static_cast<long long>(key);
 }
 
-//! Lookup the database sample index by id or nearest coordinate
+//! Bind every dynamic particle to one database sample at the start of the stage
 template <unsigned Tdim>
-bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::pressure_sample_index(
-    const std::shared_ptr<mpm::ParticleBase<Tdim>>& particle,
-    std::size_t* sample_index) const {
+void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
+    bind_prescribed_pressure_samples() {
+  const auto particle_ids = mesh_->particles_scalar_data("ids");
+  const auto particle_coordinates = mesh_->particle_coordinates();
+  if (particle_ids.size() != particle_coordinates.size())
+    throw std::runtime_error(
+        "Particle id and coordinate arrays differ while binding prescribed "
+        "pressures");
+
+  prescribed_pressure_particle_to_sample_.clear();
+  prescribed_pressure_particle_to_sample_.reserve(particle_ids.size());
+
+  std::size_t missing_particles = 0;
+  mpm::Index first_missing_id = std::numeric_limits<mpm::Index>::max();
+  for (std::size_t i = 0; i < particle_ids.size(); ++i) {
+    const auto particle_id = static_cast<mpm::Index>(particle_ids[i]);
+    const Eigen::Matrix<double, Tdim, 1> initial_coordinates =
+        particle_coordinates[i].template head<Tdim>();
+    std::size_t sample_index = std::numeric_limits<std::size_t>::max();
+    if (!this->initial_pressure_sample_index(
+            particle_id, initial_coordinates, &sample_index)) {
+      if (missing_particles == 0) first_missing_id = particle_id;
+      ++missing_particles;
+      continue;
+    }
+
+    const auto inserted = prescribed_pressure_particle_to_sample_.emplace(
+        particle_id, sample_index);
+    if (!inserted.second)
+      throw std::runtime_error(
+          "Duplicate dynamic particle id while binding prescribed pressures: " +
+          std::to_string(particle_id));
+  }
+
+  if (missing_particles != 0)
+    throw std::runtime_error(
+        "Unable to bind " + std::to_string(missing_particles) +
+        " particles to the prescribed pressure database; first missing id=" +
+        std::to_string(first_missing_id));
+
+  console_->info(
+      "Bound [{}] particles to fixed prescribed-pressure samples using [{}]",
+      prescribed_pressure_particle_to_sample_.size(),
+      prescribed_pressure_mapping_);
+}
+
+//! Resolve a database sample once, using the dynamic-stage initial state
+template <unsigned Tdim>
+bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
+    initial_pressure_sample_index(
+        mpm::Index particle_id,
+        const Eigen::Matrix<double, Tdim, 1>& particle_coordinates,
+        std::size_t* sample_index) const {
   if (prescribed_pressure_mapping_ == "id" ||
       prescribed_pressure_mapping_ == "particle_id") {
-    const auto iter = prescribed_pressure_id_to_sample_.find(particle->id());
+    const auto iter = prescribed_pressure_id_to_sample_.find(particle_id);
     if (iter != prescribed_pressure_id_to_sample_.end()) {
       *sample_index = iter->second;
       return true;
     }
+    return false;
   }
 
-  const auto particle_coordinates = particle->coordinates();
   std::size_t best_index = std::numeric_limits<std::size_t>::max();
   double best_distance = std::numeric_limits<double>::max();
 
@@ -1397,7 +1616,19 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::pressure_sample_index(
   return true;
 }
 
-//! Lookup pressure in a frame by id or nearest coordinate
+//! Lookup the immutable database binding by dynamic particle id
+template <unsigned Tdim>
+bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::pressure_sample_index(
+    const std::shared_ptr<mpm::ParticleBase<Tdim>>& particle,
+    std::size_t* sample_index) const {
+  const auto iter =
+      prescribed_pressure_particle_to_sample_.find(particle->id());
+  if (iter == prescribed_pressure_particle_to_sample_.end()) return false;
+  *sample_index = iter->second;
+  return true;
+}
+
+//! Lookup pressure in a frame through the immutable particle binding
 template <unsigned Tdim>
 bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::pressure_from_frame(
     const PressureFrame& frame,
@@ -1418,12 +1649,37 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::pressure_from_frame(
 template <unsigned Tdim>
 void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     assign_prescribed_phase_pressures() {
-  const auto frame_id = static_cast<mpm::Index>(
-      std::floor(static_cast<double>(step_) /
-                 prescribed_pressure_step_interval_));
+  // Database frame numbers belong to the source simulation. Convert the
+  // actual analysis time to that source grid; solver step numbers are not
+  // interchangeable when the two simulations use different dt values.
+  double source_step_position = current_time_ / prescribed_pressure_source_dt_;
+  if (prescribed_pressure_legacy_step_offset_)
+    source_step_position -= 1.0;
+  source_step_position = std::max(0.0, source_step_position);
+  const double nearest_source_step = std::round(source_step_position);
+  if (std::abs(source_step_position - nearest_source_step) <=
+      1.0e-10 * std::max(1.0, std::abs(source_step_position)))
+    source_step_position = nearest_source_step;
+  const double maximum_source_step =
+      static_cast<double>(prescribed_pressure_max_step_);
+  if (source_step_position >
+      maximum_source_step +
+          1.0e-10 * std::max(1.0, std::abs(maximum_source_step)))
+    throw std::runtime_error(
+        "Prescribed pressure history is shorter than the requested analysis "
+        "time (source step " +
+        std::to_string(source_step_position) + " > max_step " +
+        std::to_string(prescribed_pressure_max_step_) + ")");
+  source_step_position =
+      std::min(source_step_position, maximum_source_step);
 
-  mpm::Index lower_step = frame_id * prescribed_pressure_step_interval_;
-  lower_step = std::min(lower_step, prescribed_pressure_max_step_);
+  const double source_frame_position =
+      source_step_position /
+      static_cast<double>(prescribed_pressure_step_interval_);
+  const auto frame_id =
+      static_cast<mpm::Index>(std::floor(source_frame_position));
+  const mpm::Index lower_step =
+      frame_id * prescribed_pressure_step_interval_;
 
   mpm::Index upper_step =
       std::min(lower_step + prescribed_pressure_step_interval_,
@@ -1431,11 +1687,13 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
 
   const double alpha =
       (upper_step > lower_step)
-          ? std::min(1.0, std::max(0.0, static_cast<double>(step_ - lower_step) /
-                                            (upper_step - lower_step)))
+          ? std::min(
+                1.0,
+                std::max(0.0, (source_step_position - lower_step) /
+                                  static_cast<double>(upper_step - lower_step)))
           : 0.0;
 
-  const auto lower_frame = this->prescribed_pressure_frame(lower_step);
+  const auto& lower_frame = this->prescribed_pressure_frame(lower_step);
   if (alpha <= 0.0) {
     mesh_->iterate_over_particles([&](const auto& particle) {
       double liquid_pressure = 0.0;
@@ -1449,7 +1707,7 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
     return;
   }
 
-  const auto upper_frame = this->prescribed_pressure_frame(upper_step);
+  const auto& upper_frame = this->prescribed_pressure_frame(upper_step);
   mesh_->iterate_over_particles([&](const auto& particle) {
     double lower_liquid = 0.0;
     double lower_gas = 0.0;
@@ -1571,13 +1829,35 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::compute_critical_timestep_size(d
   // Solid Material parameters 
   auto materials =  materials_.at(soil_skeleton);
   double porosity = materials->template property<double>(std::string("porosity"));
-  double youngs_modulus = materials->template property<double>(std::string("youngs_modulus"));
-  double poisson_ratio = materials->template property<double>(std::string("poisson_ratio"));
+  double critical_timestep_modulus =
+      materials->template property_or<double>(
+          std::string("critical_timestep_modulus"), 0.);
+  if (critical_timestep_modulus <= 0.)
+    critical_timestep_modulus =
+        materials->template property<double>(std::string("youngs_modulus"));
+  if (!std::isfinite(critical_timestep_modulus) ||
+      critical_timestep_modulus <= 0.)
+    throw std::runtime_error("Critical timestep modulus must be finite and positive");
   double density = materials->template property<double>(std::string("density"));
+  const double minimum_support_fraction =
+      analysis_.value("minimum_nodal_support_fraction", 0.0);
+  if (!std::isfinite(minimum_support_fraction) ||
+      minimum_support_fraction < 0. || minimum_support_fraction > 0.05)
+    throw std::runtime_error(
+        "minimum_nodal_support_fraction must lie in [0, 0.05]");
+  const double minimum_nodal_density =
+      minimum_support_fraction * (1. - porosity) * density;
+  mesh_->iterate_over_nodes(std::bind(
+      &mpm::NodeBase<Tdim>::assign_minimum_nodal_density,
+      std::placeholders::_1, minimum_nodal_density));
+  if (minimum_nodal_density > 0.)
+    console_->info(
+        "Minimum nodal support density is {} kg/m^3 (fraction={})",
+        minimum_nodal_density, minimum_support_fraction);
   double specific_heat = materials->template property<double>(std::string("specific_heat"));
   double thermal_conductivity = materials->template property<double>(std::string("thermal_conductivity"));
   // Compute timestep fpor one phase MPM                              
-  double critical_dt = cellsize_min / std::pow(youngs_modulus/density/(1 - porosity), 0.5);
+  double critical_dt = cellsize_min / std::pow(critical_timestep_modulus/density/(1 - porosity), 0.5);
   console_->info("Critical time step size is {} s", critical_dt);
   // Liquid Material parameters 
   auto liquid_materials =  materials_.at(pore_liquid);
@@ -1588,8 +1868,8 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::compute_critical_timestep_size(d
   // Compute timestep for momentum eqaution 
   double density_mixture1 = (1 - porosity) * density;
   double density_mixture2 = (1 - porosity) * density + porosity * liquid_density;
-  double critical_dt11 = cellsize_min / std::pow(youngs_modulus/density_mixture1, 0.5);
-  double critical_dt12 = cellsize_min / std::pow(youngs_modulus/density_mixture2, 0.5);
+  double critical_dt11 = cellsize_min / std::pow(critical_timestep_modulus/density_mixture1, 0.5);
+  double critical_dt12 = cellsize_min / std::pow(critical_timestep_modulus/density_mixture2, 0.5);
   console_->info("Critical time step size for elastic wave propagation (solid base) is {} s", critical_dt11);
   console_->info("Critical time step size for elastic wave propagation (liquid base) is {} s", critical_dt12);
 

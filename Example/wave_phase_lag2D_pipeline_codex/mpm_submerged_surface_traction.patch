@@ -1,0 +1,91 @@
+diff --git a/include/particles/particle_base.h b/include/particles/particle_base.h
+index 77f7186..be50920 100644
+--- a/include/particles/particle_base.h
++++ b/include/particles/particle_base.h
+@@ -187,0 +188,4 @@ public:
++  // Match the external water pressure on a submerged free surface. Only
++  // multiphase particles that implement this boundary condition act here.
++  virtual void apply_submerged_surface_pressure_traction() {}
++
+diff --git a/include/particles/particle_threephase_lag.h b/include/particles/particle_threephase_lag.h
+index 40cdf71..8435924 100644
+--- a/include/particles/particle_threephase_lag.h
++++ b/include/particles/particle_threephase_lag.h
+@@ -88,0 +89,4 @@ public:
++  // Apply the current liquid pressure as the external normal traction on the
++  // uppermost submerged free-surface particle row.
++  void apply_submerged_surface_pressure_traction() override;
++
+@@ -293,0 +298,2 @@ protected:
++  bool submerged_surface_row_identified_{false};
++  bool submerged_surface_traction_particle_{false};
+diff --git a/include/particles/particle_threephase_lag.tcc b/include/particles/particle_threephase_lag.tcc
+index 90d78de..5e25555 100644
+--- a/include/particles/particle_threephase_lag.tcc
++++ b/include/particles/particle_threephase_lag.tcc
+@@ -2266,0 +2267,41 @@ bool mpm::ThreePhaseParticleLag<Tdim>::assign_particle_traction(unsigned directi
++// Match the external water pressure on the submerged soil surface. The manual
++// free-surface set contains two particle rows for pressure imposition, whereas
++// a surface traction belongs only to the uppermost row. Applying the current
++// pressure here also keeps the wave-varying total traction consistent with the
++// prescribed boundary pore pressure.
++template <unsigned Tdim>
++void mpm::ThreePhaseParticleLag<Tdim>::
++    apply_submerged_surface_pressure_traction() {
++  if (Tdim < 2 || !this->free_surface()) return;
++
++  if (!this->submerged_surface_row_identified_) {
++    const double particle_height = this->size_[1];
++    if (!std::isfinite(particle_height) || particle_height <= 0.0)
++      throw std::runtime_error(
++          "Submerged-surface pressure traction requires a positive particle height");
++    const double surface_y = this->seabed_surface_y(this->coordinates_[0]);
++    const double centre_depth = surface_y - this->coordinates_[1];
++    const double upper_row_depth = 0.5 * particle_height;
++    const double tolerance = std::max(1.e-10, 0.05 * particle_height);
++    this->submerged_surface_traction_particle_ =
++        std::fabs(centre_depth - upper_row_depth) <= tolerance;
++    this->submerged_surface_row_identified_ = true;
++  }
++  if (!this->submerged_surface_traction_particle_) return;
++
++  if (!std::isfinite(this->liquid_pressure_))
++    throw std::runtime_error(
++        "Submerged-surface pressure traction received non-finite liquid pressure");
++  const double surface_y = this->seabed_surface_y(this->coordinates_[0]);
++  const double hydrostatic_offset =
++      this->liquid_density_ * 9.81 * (surface_y - this->coordinates_[1]);
++  const double surface_liquid_pressure =
++      this->liquid_pressure_ - hydrostatic_offset;
++  if (!std::isfinite(surface_liquid_pressure))
++    throw std::runtime_error(
++        "Submerged-surface pressure traction is non-finite");
++  if (!this->assign_particle_traction(1, -surface_liquid_pressure))
++    throw std::runtime_error(
++        "Failed to assign submerged-surface pressure traction");
++}
++
+diff --git a/include/solvers/thm_mpm_explicit_threephase_lag.h b/include/solvers/thm_mpm_explicit_threephase_lag.h
+index b887570..8dbf61a 100644
+--- a/include/solvers/thm_mpm_explicit_threephase_lag.h
++++ b/include/solvers/thm_mpm_explicit_threephase_lag.h
+@@ -132,0 +133,2 @@ class ThermoMPMExplicitThreePhaseLag : public MPMBase<Tdim> {
++  //! Match the external water pressure to the submerged surface pore pressure
++  bool submerged_surface_pressure_traction_{false};
+diff --git a/include/solvers/thm_mpm_explicit_threephase_lag.tcc b/include/solvers/thm_mpm_explicit_threephase_lag.tcc
+index 2482f6e..59acf54 100644
+--- a/include/solvers/thm_mpm_explicit_threephase_lag.tcc
++++ b/include/solvers/thm_mpm_explicit_threephase_lag.tcc
+@@ -499,0 +500,3 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
++  if (analysis_.find("submerged_surface_pressure_traction") != analysis_.end())
++    submerged_surface_pressure_traction_ =
++        analysis_["submerged_surface_pressure_traction"].template get<bool>();
+@@ -763,0 +767,8 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
++    // A prescribed submerged pore pressure must be accompanied by the same
++    // external water traction. Otherwise the natural zero-traction boundary
++    // drives the skeleton into tension to cancel the absolute water pressure.
++    if (submerged_surface_pressure_traction_)
++      mesh_->iterate_over_particles(std::bind(
++          &mpm::ParticleBase<Tdim>::apply_submerged_surface_pressure_traction,
++          std::placeholders::_1));
++

@@ -1,0 +1,201 @@
+diff --git a/include/particles/particle_base.h b/include/particles/particle_base.h
+index 2d04c84..77f7186 100644
+--- a/include/particles/particle_base.h
++++ b/include/particles/particle_base.h
+@@ -318,6 +318,11 @@ public:
+     return RigidCircleContactResult<Tdim>();
+   }
+
++  //! Enforce zero liquid/gas normal velocity at a moving circular pipe.
++  //! Non-three-phase particle types do nothing by default.
++  virtual void apply_rigid_circle_phase_no_flux(
++      const VectorDim&, const VectorDim&, double, double, double) noexcept {}
++
+   // Map internal force
+   virtual void map_internal_force() = 0;
+
+diff --git a/include/particles/particle_threephase_lag.h b/include/particles/particle_threephase_lag.h
+index 3e377ff..71f99ae 100644
+--- a/include/particles/particle_threephase_lag.h
++++ b/include/particles/particle_threephase_lag.h
+@@ -131,6 +131,12 @@ public:
+       double normal_penalty, double normal_damping, double tangential_damping,
+       double friction_coefficient) override;
+
++  //! Enforce an impermeable circular wall on liquid and gas particle velocity.
++  void apply_rigid_circle_phase_no_flux(
++      const VectorDim& pipe_centre, const VectorDim& pipe_velocity,
++      double pipe_angular_velocity, double pipe_radius,
++      double influence_radius) noexcept override;
++
+   // Map internal force
+   void map_internal_force () override;
+
+diff --git a/include/particles/particle_threephase_lag.tcc b/include/particles/particle_threephase_lag.tcc
+index 25cd45f..fb9536a 100644
+--- a/include/particles/particle_threephase_lag.tcc
++++ b/include/particles/particle_threephase_lag.tcc
+@@ -1215,6 +1215,53 @@ mpm::ThreePhaseParticleLag<2>::map_rigid_circle_contact_force(
+   return result;
+ }
+
++// Apply a moving impermeable circular boundary to the phase velocities. The
++// constraint is particle-local, so it follows the pipe and does not imprint a
++// stair-step set of fixed background nodes on the saturation field.
++template <unsigned Tdim>
++void mpm::ThreePhaseParticleLag<Tdim>::apply_rigid_circle_phase_no_flux(
++    const VectorDim&, const VectorDim&, double, double, double) noexcept {}
++
++template <>
++inline void mpm::ThreePhaseParticleLag<2>::
++    apply_rigid_circle_phase_no_flux(
++        const VectorDim& pipe_centre, const VectorDim& pipe_velocity,
++        double pipe_angular_velocity, double pipe_radius,
++        double influence_radius) noexcept {
++  if (this->material_id_ == 999 || influence_radius < pipe_radius) return;
++
++  const VectorDim radial = this->coordinates_ - pipe_centre;
++  const double distance = radial.norm();
++  if (!std::isfinite(distance) || distance <= 1.e-12 ||
++      distance > influence_radius)
++    return;
++
++  const VectorDim normal = radial / distance;
++  VectorDim tangent;
++  tangent << -normal[1], normal[0];
++  const VectorDim wall_velocity =
++      pipe_velocity + pipe_angular_velocity * pipe_radius * tangent;
++
++  auto remove_relative_normal_velocity =
++      [&](VectorDim* phase_velocity) {
++        const double relative_normal =
++            (*phase_velocity - wall_velocity).dot(normal);
++        *phase_velocity -= relative_normal * normal;
++      };
++  remove_relative_normal_velocity(&this->liquid_velocity_);
++  remove_relative_normal_velocity(&this->gas_velocity_);
++
++  // APIC is retained in the dynamic stage. Projecting the phase affine maps
++  // prevents their next particle-to-grid transfer from reintroducing a normal
++  // component at the wall; the solid affine map is deliberately untouched.
++  if (this->affine_mpm_) {
++    const Eigen::Matrix<double, 2, 2> tangent_projector =
++        Eigen::Matrix<double, 2, 2>::Identity() - normal * normal.transpose();
++    this->liquid_C_matrix_ = tangent_projector * this->liquid_C_matrix_;
++    this->gas_C_matrix_ = tangent_projector * this->gas_C_matrix_;
++  }
++}
++
+ // Map particle internal force 2D
+ template <>
+ void mpm::ThreePhaseParticleLag<2>::map_internal_force() {
+diff --git a/include/solvers/thm_mpm_explicit_threephase_lag.h b/include/solvers/thm_mpm_explicit_threephase_lag.h
+index 2e10ce5..b887570 100644
+--- a/include/solvers/thm_mpm_explicit_threephase_lag.h
++++ b/include/solvers/thm_mpm_explicit_threephase_lag.h
+@@ -201,6 +201,9 @@ class ThermoMPMExplicitThreePhaseLag : public MPMBase<Tdim> {
+   //! Map pipe contact to soil nodes and return the equal-and-opposite reaction.
+   RigidCircleContactResult<Tdim> map_rigid_pipeline_contact();
+
++  //! Apply the moving circular no-flux constraint to adjacent phase particles.
++  void apply_rigid_pipeline_phase_no_flux();
++
+   //! Write pipe motion/reaction history and its current circular VTP geometry.
+   void write_rigid_pipeline_output(
+       const RigidCircleContactResult<Tdim>& contact,
+@@ -218,6 +221,8 @@ class ThermoMPMExplicitThreePhaseLag : public MPMBase<Tdim> {
+   double rigid_pipeline_fluid_density_{0.};
+   double rigid_pipeline_translational_damping_{0.};
+   double rigid_pipeline_rotational_damping_{0.};
++  bool rigid_pipeline_phase_no_flux_{false};
++  double rigid_pipeline_phase_no_flux_band_factor_{1.4142135623730951};
+   mpm::Index rigid_pipeline_history_interval_{1};
+   std::unique_ptr<mpm::pipeline::RigidPipeline2D> rigid_pipeline_;
+   std::ofstream rigid_pipeline_history_;
+diff --git a/include/solvers/thm_mpm_explicit_threephase_lag.tcc b/include/solvers/thm_mpm_explicit_threephase_lag.tcc
+index 9eec027..2482f6e 100644
+--- a/include/solvers/thm_mpm_explicit_threephase_lag.tcc
++++ b/include/solvers/thm_mpm_explicit_threephase_lag.tcc
+@@ -252,6 +252,12 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::initialise_rigid_pipeline(
+       config.at("translational_damping").template get<double>();
+   rigid_pipeline_rotational_damping_ =
+       config.at("rotational_damping").template get<double>();
++  if (config.find("phase_no_flux") != config.end())
++    rigid_pipeline_phase_no_flux_ =
++        config.at("phase_no_flux").template get<bool>();
++  if (config.find("phase_no_flux_band_factor") != config.end())
++    rigid_pipeline_phase_no_flux_band_factor_ =
++        config.at("phase_no_flux_band_factor").template get<double>();
+   rigid_pipeline_history_interval_ = output_steps_;
+   if (config.find("history_interval") != config.end())
+     rigid_pipeline_history_interval_ =
+@@ -264,6 +270,9 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::initialise_rigid_pipeline(
+       rigid_pipeline_friction_ < 0. || rigid_pipeline_fluid_density_ < 0. ||
+       rigid_pipeline_translational_damping_ < 0. ||
+       rigid_pipeline_rotational_damping_ < 0. ||
++      (rigid_pipeline_phase_no_flux_ &&
++       (rigid_pipeline_particle_radius_ <= 0. ||
++        rigid_pipeline_phase_no_flux_band_factor_ <= 0.)) ||
+       rigid_pipeline_release_time_ < 0. ||
+       rigid_pipeline_history_interval_ == 0)
+     throw std::runtime_error("Invalid rigid_pipeline contact or output parameter");
+@@ -286,11 +295,14 @@ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::initialise_rigid_pipeline(
+     rigid_pipeline_history_ << std::setprecision(16);
+     console_->info(
+         "Rigid pipeline: fixed={}, release_time={} s, rotation={}, "
+-        "mass/length={} kg/m, inertia/length={} kg m, friction={}",
++        "mass/length={} kg/m, inertia/length={} kg m, friction={}, "
++        "phase_no_flux={}, band_factor={}",
+         rigid_pipeline_fixed_, rigid_pipeline_release_time_,
+         rigid_pipeline_allow_rotation_,
+         rigid_pipeline_->mass_per_length(),
+-        rigid_pipeline_->inertia_per_length(), rigid_pipeline_friction_);
++        rigid_pipeline_->inertia_per_length(), rigid_pipeline_friction_,
++        rigid_pipeline_phase_no_flux_,
++        rigid_pipeline_phase_no_flux_band_factor_);
+   }
+ }
+
+@@ -343,6 +355,32 @@ mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::map_rigid_pipeline_contact() {
+   return result;
+ }
+
++template <unsigned Tdim>
++void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::
++    apply_rigid_pipeline_phase_no_flux() {
++  if (!rigid_pipeline_enabled_ || !rigid_pipeline_phase_no_flux_) return;
++
++  Eigen::Matrix<double, Tdim, 1> pipe_centre =
++      Eigen::Matrix<double, Tdim, 1>::Zero();
++  Eigen::Matrix<double, Tdim, 1> pipe_velocity =
++      Eigen::Matrix<double, Tdim, 1>::Zero();
++  pipe_centre[0] = rigid_pipeline_->centre().x();
++  pipe_centre[1] = rigid_pipeline_->centre().y();
++  pipe_velocity[0] = rigid_pipeline_->velocity().x();
++  pipe_velocity[1] = rigid_pipeline_->velocity().y();
++  const double influence_radius =
++      rigid_pipeline_->outer_radius() +
++      rigid_pipeline_phase_no_flux_band_factor_ *
++          rigid_pipeline_particle_radius_;
++
++  mesh_->iterate_over_particles(
++      std::bind(
++          &mpm::ParticleBase<Tdim>::apply_rigid_circle_phase_no_flux,
++          std::placeholders::_1, pipe_centre, pipe_velocity,
++          rigid_pipeline_->angular_velocity(), rigid_pipeline_->outer_radius(),
++          influence_radius));
++}
++
+ template <unsigned Tdim>
+ void mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::write_rigid_pipeline_output(
+     const RigidCircleContactResult<Tdim>& contact,
+@@ -789,5 +827,9 @@ bool mpm::ThermoMPMExplicitThreePhaseLag<Tdim>::solve() {
+         &mpm::ParticleBase<Tdim>::compute_updated_velocity,
+         std::placeholders::_1, this->dt_, this->pic_, damping_factor_));
+
++    // Enforce phase impermeability on the actual moving circular wall. This
++    // replaces the former fixed stair-step background-node constraints.
++    this->apply_rigid_pipeline_phase_no_flux();
++
+     // Apply nodal and particle velocity constraints
+     mesh_->apply_velocity_constraints(current_time_);
