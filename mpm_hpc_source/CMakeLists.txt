@@ -287,6 +287,15 @@ if(MPM_BUILD_TESTING)
   add_test(NAME cyclic_constitutive_comparison_driver
     COMMAND cyclic_constitutive_comparison_driver)
 
+  # Publication validation driver.  The companion Python workflow compares
+  # this executable against a separately compiled, commit-pinned Pisano UDSM
+  # reference without linking GPL source into this project.
+  add_executable(sanisand_validation_driver
+    ${mpm_SOURCE_DIR}/tests/materials/sanisand_validation_driver.cc
+    ${mpm_SOURCE_DIR}/src/material.cc
+    ${mpm_SOURCE_DIR}/src/io/logger.cc)
+  add_test(NAME sanisand_validation_driver COMMAND sanisand_validation_driver)
+
   add_executable(mohr_coulomb_handoff_test
     ${mpm_SOURCE_DIR}/tests/materials/mohr_coulomb_handoff_test.cc
     ${mpm_SOURCE_DIR}/src/material.cc
