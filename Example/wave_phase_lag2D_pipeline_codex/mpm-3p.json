@@ -1,0 +1,306 @@
+{
+	"title": "Sr=0.94, kappa=9.79e-12: released impermeable pipe with SANISAND",
+	"mesh": {
+		"mesh": "mesh.txt",
+		"isoparametric": false,
+		"entity_sets": "entity_sets.json",
+		"cell_type": "ED2Q4",
+        "cellsize_min": 0.02,
+		"io_type": "Ascii2D",
+		"node_type": "N2D3PHASE&LAG",
+		"particles_temperatures":"initial_temperature.txt",
+    "boundary_conditions": {
+            "velocity_constraints": [
+                {
+                    "nset_id": 0,
+                    "dir": 0,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 0,
+                    "dir": 1,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 0,
+                    "dir": 2,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 0,
+                    "dir": 3,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 0,
+                    "dir": 4,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 0,
+                    "dir": 5,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 1,
+                    "dir": 0,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 1,
+                    "dir": 2,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 1,
+                    "dir": 4,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 3,
+                    "dir": 0,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 3,
+                    "dir": 2,
+                    "velocity": 0
+                },
+                {
+                    "nset_id": 3,
+                    "dir": 4,
+                    "velocity": 0
+        }
+            ],
+            "particles_at_free_surface": [
+                {
+                    "pset_id": 0,
+                    "nonfree_pset_id": 3
+                }
+            ],
+            "particle_pore_pressure_constraints":[
+                {
+                    "pset_id": 1,
+                    "//this is water pressure, not pore pressure": 999,
+                    "pore_pressure":9760.95
+                },
+                {
+                    "pset_id": 2,
+                    "//this is water pressure, not pore pressure": 999,
+                    "pore_pressure":9662.85
+                }
+            ],
+            "temperature_constraints": [
+                {
+                    "nset_id": 2,
+                    "temperature":0
+                }
+            ]
+        }
+    },
+    "particles": [
+        {
+            "generator": {
+                "check_duplicates": true,
+                "location": "particles.txt",
+                "io_type": "Ascii2D",
+                "particle_type": "P2D3PHASE&LAG",
+                "material_id": 0,
+                "liquid_material_id": 1,
+                "type": "file"
+            },
+            "set_id": 0
+        }
+    ],
+    "materials": [
+    {
+      "id": 0,
+      "name": "soil",
+      "type": "SANISAND2D",
+      "density": 2650,
+      "youngs_modulus": 23800000,
+      "poisson_ratio": 0.4,
+      "eta": 10,
+      "eta_T": 0.2,
+      "eta_p": 0.00001,
+      "porosity": 0.485,
+      "intrinsic_permeability": 9.79E-12,
+      "theta": 0,
+      "thermal_expansivity": 0.00001,
+      "thermal_conductivity": 100000,
+      "specific_heat": 2080,
+      "density_ratio": 0.8,
+      "initial_temperature": 0,
+      "p_ref": 100000,
+      "resume_state_policy": "reinitialize_from_particle",
+      "G0": 125,
+      "K0": 150,
+      "Mc": 1.25,
+      "Lambda": 0.37,
+      "N_c": 240.902666166616,
+      "//N_c_units": "The source value 18.7 is kPa-based; the SI value is 18.7 * 1000^Lambda.",
+      "alpha_c": 3370000,
+      "n_b": 1.25,
+      "ch": 0.968,
+      "n_d": 2.3,
+      "h0": 12,
+      "A0": 0.4,
+      "Me": 0.89,
+      "cz": 600,
+      "zmax": 4,
+      "m_iso": 0.01,
+      "Patm": 100000,
+      "P_min": 100,
+      "FTOL": 0.00001,
+      "STOL": 0.00001,
+      "LTOL": 0.000001,
+      "//sanisand_restart_note": "HDF5 persistence for the 20 SANISAND history variables is deferred; run continuously after the LinearElastic handoff."
+    },
+    {
+        "id": 1,
+        "name": "water",
+        "type": "Newtonian2D",
+        "density": 1000.0,
+        "liquid_saturation":0.94,
+        "liquid_viscosity":1e-3,
+        "bulk_modulus": 2.2e9,
+        "mu": 1e-3,
+        "stab_para":0,
+        "liquid_thermal_conductivity":1E5,
+        "liquid_specific_heat": 4190,
+        "liquid_expansivity": 7E-5,
+        "liquid_compressibility": 0.4545e-9,
+        "liquid_molar_mass":0.018,
+        "liquid_saturation_res":0.001,
+        "constant_mw":2.0,
+        "suction":10.0,
+        "two_phase":false,
+        "name_3": "gas",
+        "gas_thermal_conductivity": 0.0335,
+        "gas_specific_heat": 2100,
+        "gas_constant": 8.314,
+        "gas_molar_mass": 0.029,
+        "gas_saturation_res":0.001,
+        "gas_saturation": 0.06,
+        "gas_viscosity": 1E-5,
+        "constant_mg":3.0,
+        "para_p0":1000,
+        "para_m":0.5,
+        "wave_pressure":true,
+        "domain_length_x":1.5,
+        "Nx":151.0,
+        "depth_left":0.5,
+        "depth_right":0.5,
+        "sea_level":1.0,
+        "wave_height_ini_":0.12,
+        "wave_period":1.3,
+        "wave_ramp_time":1.3
+        }
+    ],
+    "external_loading_conditions": {
+        "gravity": [0.0, -9.81],
+        "particle_surface_traction": [
+            {
+                "pset_id": 0,
+                "dir": 1,
+                "traction": -0E4,
+                "facet":2
+            }
+        ]
+    },
+    "analysis": {
+        "//type": "ThermoMPMSemiImplicitTwoPhase2D",
+        "type": "ThermoMPMExplicitThreePhaseLag2D",
+        "stress_update": "usf",
+        "APIC": false,
+        "PIC": 0,
+        "PIC_T": 0,
+        "free_surface": {
+            "free_surface_particle": "assign",
+            "volume_tolerance": 0.25
+        },
+        "damping": {
+            "type": "Cundall",
+            "damping_factor": 0.0
+        },
+        "pressure_smoothing": true,
+        "pressure_smoothing_iterations": 1,
+        "pressure_smoothing_in_loop": false,
+        "rigid_pipeline": {
+            "enable": true,
+            "fixed": false,
+            "release_time": 2.6,
+            "allow_rotation": true,
+            "center": [0.7, 0.41],
+            "outer_radius": 0.06,
+            "wall_thickness": 0.007058823529411764,
+            "density": 959.0,
+            "contents_mass_per_length": 0.0,
+            "contents_inertia_per_length": 0.0,
+            "surface_markers": 64,
+            "particle_radius": 0.005,
+            "friction_coefficient": 0.15,
+            "normal_penalty": 238000.0,
+            "normal_damping": 75.0,
+            "tangential_damping": 75.0,
+            "fluid_density": 1000.0,
+            "translational_damping": 0.0,
+            "rotational_damping": 0.0,
+            "phase_no_flux": true,
+            "phase_no_flux_band_factor": 1.4142135623730951,
+            "history_interval": 100
+        },
+        "uuid": "Wave2D_SN_094_1E11_pipeline_moving_noflux_v2",
+        "dt": 1E-4,
+        "nsteps":7.8E4,
+        "resume":{
+            "resume" : true,
+            "uuid" :"Initial_094_1E11_pipeline_moving_noflux_v2",
+            "step" : 4E4,
+            "nsteps" :4E4,
+            "start_from_this_step": false,
+            "this_step": 0,
+            "current_time": 0
+        }
+    },
+    "post_processing": {
+        "path": "results/",
+        "write_hdf5":false,
+        "write_vtk":true,
+        "vtk": [
+            "ids",
+            "porosities",
+            "volumes",
+            "void_ratio",
+            "eps_p_q",
+            "displacements",
+            "velocities",
+            "stresses"
+        ],
+        "liquid_vtk": [
+            "pore_pressures",
+            "liquid_pressures",
+            "gas_pressures",
+            "suction_pressures",
+            "PIC_pore_pressure_excess",
+            "PIC_ru",
+            "initial_vertical_effective_stresses",
+            "dynamic_vertical_effective_stresses",
+            "liquefaction_potentials",
+            "gamma_sub",
+            "momentary_liquefied",
+            "PIC_liquid_pressures",
+            "PIC_gas_pressures",
+            "liquid_saturations",
+            "gas_saturations",
+            "liquid_permeabilities",
+            "liquid_velocities",
+            "gas_velocities",
+            "liquid_seepage_velocities",
+            "liquid_pressure_gradients",
+            "liquid_seepage_forces"
+        ],
+        "log_output_steps":false,
+        "output_steps": 1300
+    }
+}

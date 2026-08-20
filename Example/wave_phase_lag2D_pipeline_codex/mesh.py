@@ -11,25 +11,21 @@ PARSER.add_argument("--output-dir", type=Path, default=Path("."))
 PARSER.add_argument("--show", action="store_true")
 ARGS = PARSER.parse_args()
 
-# Keep server-side generation non-interactive by default.  Pass --show on a
-# workstation to retain the saved PNG and also open the Matplotlib window.
+# Keep server-side generation independent of Matplotlib. Pass --show on a
+# workstation only when a geometry preview is wanted.
 SHOW_PLOT = ARGS.show
 import numpy
 
-try:
-    import matplotlib
-    if not SHOW_PLOT:
-        matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    PLOTTING_AVAILABLE = True
-except ModuleNotFoundError as exception:
-    if exception.name != "matplotlib":
-        raise
-    if SHOW_PLOT:
+if SHOW_PLOT:
+    try:
+        import matplotlib
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError as exception:
+        if exception.name != "matplotlib":
+            raise
         raise RuntimeError(
             "--show requires Matplotlib; install it or run without --show"
         ) from exception
-    PLOTTING_AVAILABLE = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -308,7 +304,7 @@ def save_mesh(nodes, elem, name):
     mesh_file = OUTPUT_DIR / (name+".txt")
     f_m = open(mesh_file, "w")
 
-    head = '#! elementShape {}\n#! elementNumPoints {}\n{} {} \n'.format(shape[elem.shape[1]],
+    head = '#! elementShape {}\n#! elementNumPoints {}\n{} {}\n'.format(shape[elem.shape[1]],
                                  elem.shape[1], nodes.shape[0], elem.shape[0])
     f_m.write(head)
     numpy.savetxt(f_m, nodes, fmt="%.5f", delimiter="\t")
@@ -395,24 +391,6 @@ def save_particle(particles, name, fmt="%.6f"):
     numpy.savetxt(f, particles, fmt=fmt, delimiter="\t")
     f.close()
 
-def save_entries(index, name):
-    file_name = OUTPUT_DIR / (name+".txt")
-    entries = numpy.asarray(index, dtype=int).reshape(-1)
-    with open(file_name, "w") as f:
-        f.write('{}\n'.format(entries.shape[0]))
-        if entries.shape[0] > 0:
-            numpy.savetxt(f, entries, fmt="%i")
-
-
-def save_entries_oneline(index, name):
-    file_name = OUTPUT_DIR / (name+".txt")
-    entries = numpy.asarray(index, dtype=int).reshape(-1)
-    with open(file_name, "w") as f:
-        f.write('{}\n'.format(entries.shape[0]))
-        if entries.shape[0] > 0:
-            f.write(', '.join(str(i) for i in entries))
-            f.write('\n')
-
 def save_scalars(values, name):
     """Write the one-value-per-particle format expected by IOMeshAscii."""
     values = numpy.asarray(values, dtype=float)
@@ -453,13 +431,6 @@ def save_entity_sets(node_sets, particle_sets):
             f.write("    ]{}\n".format(suffix))
         f.write("}\n")
 
-
-def save_line_elements(elements, name):
-    """Write two-node line connectivity for the future pipeline coupling."""
-    file_name = OUTPUT_DIR / (name + ".txt")
-    with open(file_name, "w") as f:
-        f.write('{}\n'.format(elements.shape[0]))
-        numpy.savetxt(f, elements, fmt="%i", delimiter="\t")
 
 # Function to rotate particles by theta degrees
 def rotate_particles(particles, theta):
@@ -516,11 +487,6 @@ pipeline_angles = numpy.linspace(
     0.0, 2.0 * numpy.pi, pipeline_surface_nsegments, endpoint=False)
 pipeline_surface_nodes = tunnel_center + tunnel_radius * numpy.column_stack(
     (numpy.cos(pipeline_angles), numpy.sin(pipeline_angles)))
-pipeline_surface_elements = numpy.column_stack(
-    (numpy.arange(pipeline_surface_nsegments, dtype=int),
-     numpy.roll(numpy.arange(pipeline_surface_nsegments, dtype=int), -1)))
-save_particle(pipeline_surface_nodes, "pipeline_surface_nodes", fmt="%.10f")
-save_line_elements(pipeline_surface_elements, "pipeline_surface_elements")
 
 with open(OUTPUT_DIR / "pipeline_geometry.json", "w") as f:
     json.dump({
@@ -548,33 +514,12 @@ with open(OUTPUT_DIR / "pipeline_geometry.json", "w") as f:
 
 # Find boundary node sets
 bottom_node_ids = numpy.where(numpy.isclose(nodes[:, 1], 0.0))[0]
-save_entries(bottom_node_ids, "bottom_node_id")
 
 top_node_ids = numpy.where(numpy.isclose(nodes[:, 1], 0.6))[0]
-save_entries(top_node_ids, "top_node_id")
 
 left_node_ids = numpy.where(numpy.isclose(nodes[:, 0], 0.0))[0]
-save_entries(left_node_ids, "left_node_id")
 
 right_node_ids = numpy.where(numpy.isclose(nodes[:, 0], 1.5))[0]
-save_entries(right_node_ids, "right_node_id")
-
-# Find tunnel cells and exact boundary nodes of the filled cell patch.
-tunnel_cell_centres = nodes[elem].mean(axis=1)
-tunnel_cell_ids = numpy.where(
-    numpy.linalg.norm(tunnel_cell_centres - tunnel_center, axis=1)
-    <= tunnel_radius + 1.e-15
-)[0]
-tunnel_node_ids = numpy.unique(elem[tunnel_cell_ids].reshape(-1))
-all_node_count = numpy.bincount(elem.reshape(-1), minlength=nodes.shape[0])
-tunnel_node_count = numpy.bincount(
-    elem[tunnel_cell_ids].reshape(-1), minlength=nodes.shape[0]
-)
-tunnel_boundary_node_ids = numpy.where(
-    (tunnel_node_count > 0) & (tunnel_node_count < all_node_count)
-)[0]
-save_entries_oneline(tunnel_node_ids, "tunnel_node_id")
-save_entries_oneline(tunnel_boundary_node_ids, "tunnel_boundary_node_id")
 
 # Create soil particles and remove the empty pipe cavity. The half-particle
 # clearance makes each particle domain initially tangent to the pipe surface.
@@ -590,51 +535,21 @@ tunnel_boundary_particle_ids = numpy.where(
     pipeline_distances <= initial_contact_distance + particle_spacing + 1.e-15
 )[0]
 save_particle(particles, "particles")
-save_entries_oneline(tunnel_boundary_particle_ids, "tunnel_boundary_particle_id")
 
-# Find particle sets.  Set 0 is retained as a two-row near-surface diagnostic
-# band.  It must not be assigned as the phase-pressure boundary: in ``assign``
-# mode every flagged particle receives a prescribed pressure each time step,
-# so doing that would incorrectly clamp the interior second row.  Set 4 is the
-# single physical seabed surface used for both pressure and traction.
+# Find particle sets. The top set contains two particle rows, matching the
+# relative support used by the original 0.01/0.005 discretisation.
 top_particle_ids = numpy.where(
     particles[:, 1] >= 0.5 - 2.0 * particle_spacing - 1.e-15)[0]
-save_entries(top_particle_ids, "top_particle_id")
-
-top_traction_particle_ids = numpy.where(
-    numpy.isclose(particles[:, 1], 0.5 - 0.5 * particle_spacing))[0]
-save_entries(top_traction_particle_ids, "top_surface_traction_particle_id")
 
 bottom_particle_ids_1 = numpy.where(
     numpy.isclose(particles[:, 1], 0.5 * particle_spacing))[0]
-save_entries(bottom_particle_ids_1, "bottom_particle_id_1")
 
 bottom_particle_ids_2 = numpy.where(
     numpy.isclose(particles[:, 1], 1.5 * particle_spacing))[0]
-save_entries(bottom_particle_ids_2, "bottom_particle_id_2")
 
-bottom_particle_ids = numpy.unique(numpy.concatenate(
-    (bottom_particle_ids_1, bottom_particle_ids_2)))
-left_particle_ids = numpy.where(
-    numpy.isclose(particles[:, 0], 0.5 * particle_spacing))[0]
-right_particle_ids = numpy.where(
-    numpy.isclose(particles[:, 0], 1.5 - 0.5 * particle_spacing))[0]
-save_entries_oneline(bottom_particle_ids, "bottom_particle_id")
-save_entries_oneline(left_particle_ids, "left_particle_id")
-save_entries_oneline(right_particle_ids, "right_particle_id")
-save_entries_oneline(top_particle_ids, "slope_top_particle_id")
-
-# particles = cylinder_quarter_particle(center=[0.,0.,0.],r=1., h=1., axis=2, size=0.06666666666667)
-# save_particle(particles, "particles")
-# print len(particles)
-
-# find low permeability particles set
-low_permeability_particles = numpy.where(
-    (particles[:, 1] > 0.0) & (particles[:, 1] < 0.25))[0]
-save_entries(low_permeability_particles, "low_permeability_particles")
-
-# Node set 0 contains only the domain base. The pipe itself is fixed by its
-# rigid-body flag during equilibrium and released in the SANISAND stage.
+# The moving circular no-flux condition is applied by the rigid-pipeline solver
+# directly to adjacent phase particles. No fixed stair-step background-node
+# wall is generated here.
 fixed_node_ids = bottom_node_ids
 save_entity_sets(
     node_sets=[
@@ -648,7 +563,6 @@ save_entity_sets(
         (1, bottom_particle_ids_1),
         (2, bottom_particle_ids_2),
         (3, tunnel_boundary_particle_ids),
-        (4, top_traction_particle_ids),
     ])
 
 temperatures = numpy.zeros(particles.shape[0])
@@ -671,8 +585,7 @@ save_scalars(liquid_pressure, "initial_liquid_pressures")
 # Initial skeleton stresses for the PIC=1, LinearElastic2D stabilisation stage.
 # The solver stores compression as negative and subtracts pore pressure when it
 # assembles total mixture stress, so these files must contain EFFECTIVE stress,
-# not total stress. Separate fields account for the small saturation-dependent
-# difference in mixture unit weight while retaining the same geometry/loading.
+# not total stress.
 water_depth = depth_left + (depth_right - depth_left) * (particles[:, 0] / 1.5)
 seabed_elevation = sea_level - water_depth
 burial_depth = numpy.maximum(seabed_elevation - particles[:, 1], 0.0)
@@ -683,29 +596,21 @@ reference_temperature = 273.15
 gas_density = (
     gas_molar_mass * reference_pressure / gas_constant / reference_temperature
 )
-initial_saturations = {"LS": 0.993, "HS": 0.94}
+liquid_saturation = 0.94
 K0_effective = 0.72
-initial_effective_unit_weights = {}
-for state, liquid_saturation in initial_saturations.items():
-    gas_saturation = 1.0 - liquid_saturation
-    mixture_density = (
-        (1.0 - porosity) * soil_density
-        + porosity
-        * (liquid_saturation * water_density + gas_saturation * gas_density)
-    )
-    effective_unit_weight = (mixture_density - water_density) * gravity
-    if effective_unit_weight <= 0.0:
-        raise RuntimeError("Initial effective unit weight must be positive")
-    sigma_yy = -effective_unit_weight * burial_depth
-    stresses = numpy.zeros((particles.shape[0], 6))
-    stresses[:, 0] = K0_effective * sigma_yy
-    stresses[:, 1] = sigma_yy
-    # LinearElastic2D and MohrCoulomb2D use the 3D tensor under plane strain.
-    # The out-of-plane geostatic stress is therefore the second horizontal
-    # effective stress, not a traction-free zero component.
-    stresses[:, 2] = K0_effective * sigma_yy
-    save_stresses(stresses, "initial_effective_stresses_{}".format(state))
-    initial_effective_unit_weights[state] = effective_unit_weight
+gas_saturation = 1.0 - liquid_saturation
+mixture_density = (
+    (1.0 - porosity) * soil_density
+    + porosity * (liquid_saturation * water_density + gas_saturation * gas_density)
+)
+effective_unit_weight = (mixture_density - water_density) * gravity
+if effective_unit_weight <= 0.0:
+    raise RuntimeError("Initial effective unit weight must be positive")
+sigma_yy = -effective_unit_weight * burial_depth
+stresses = numpy.zeros((particles.shape[0], 6))
+stresses[:, 0] = K0_effective * sigma_yy
+stresses[:, 1] = sigma_yy
+save_stresses(stresses, "initial_effective_stresses_HS")
 
 # Basic consistency checks catch stale ids before a long server run.
 for name, ids, upper_bound in (
@@ -714,8 +619,6 @@ for name, ids, upper_bound in (
         ("top nodes", top_node_ids, nodes.shape[0]),
         ("right nodes", right_node_ids, nodes.shape[0]),
         ("top particles", top_particle_ids, particles.shape[0]),
-        ("top traction particles", top_traction_particle_ids,
-         particles.shape[0]),
         ("bottom particles 1", bottom_particle_ids_1, particles.shape[0]),
         ("bottom particles 2", bottom_particle_ids_2, particles.shape[0]),
         ("pipeline boundary particles", tunnel_boundary_particle_ids,
@@ -743,9 +646,9 @@ summary = {
     "empty_pipeline_cavity_particles_removed": int(
         all_particles.shape[0] - particles.shape[0]),
     "pipeline_contact_particles": int(tunnel_boundary_particle_ids.shape[0]),
-    "near_surface_band_particles": int(top_particle_ids.shape[0]),
-    "free_surface_particles": int(top_traction_particle_ids.shape[0]),
-    "surface_traction_particles": int(top_traction_particle_ids.shape[0]),
+    "pipeline_wall_flow_condition": (
+        "moving circular particle-level zero normal liquid/gas velocity"
+    ),
     "pipeline_wall_thickness": pipeline_wall_thickness,
     "pipeline_density": pipeline_density,
     "pipeline_diameter": pipeline_diameter,
@@ -756,25 +659,17 @@ summary = {
     "smooth_pipeline_surface_segments": pipeline_surface_nsegments,
     "smooth_pipeline_max_radius_error": maximum_radius_error,
     "initial_liquid_pressure_file": "initial_liquid_pressures.txt",
-    "initial_effective_stress_files": {
-        state: "initial_effective_stresses_{}.txt".format(state)
-        for state in initial_saturations
-    },
-    "initial_effective_unit_weights_n_per_m3": initial_effective_unit_weights,
+    "initial_effective_stress_file": "initial_effective_stresses_HS.txt",
+    "initial_effective_unit_weight_n_per_m3": effective_unit_weight,
     "initial_effective_stress_K0": K0_effective,
 }
 with open(OUTPUT_DIR / "generation_summary.json", "w") as f:
     json.dump(summary, f, indent=4)
     f.write("\n")
 
-# Save a preview with a domain view and a pipeline close-up.  The plotting
-# section is intentionally kept in this generator so geometry edits can be
-# inspected immediately with `python mesh.py --show`. On a headless server
-# without Matplotlib, mesh/input generation still completes and only the
-# preview is skipped.
-if PLOTTING_AVAILABLE:
+# Save a preview only when explicitly requested with `python mesh.py --show`.
+if SHOW_PLOT:
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    tunnel_nodes = nodes[tunnel_boundary_node_ids]
     tunnel_boundary_particles = particles[tunnel_boundary_particle_ids]
     for ax in axes:
         ax.scatter(particles[:, 0], particles[:, 1], s=1, color="0.75",
@@ -782,8 +677,6 @@ if PLOTTING_AVAILABLE:
         ax.scatter(tunnel_boundary_particles[:, 0],
                    tunnel_boundary_particles[:, 1], s=8,
                    color="tab:orange", label="contact particles")
-        ax.scatter(tunnel_nodes[:, 0], tunnel_nodes[:, 1], s=18,
-                   color="green", marker="s", label="nearby mesh nodes")
         closed_surface = numpy.vstack(
             (pipeline_surface_nodes, pipeline_surface_nodes[0]))
         ax.plot(closed_surface[:, 0], closed_surface[:, 1], color="tab:blue",
@@ -800,10 +693,7 @@ if PLOTTING_AVAILABLE:
     axes[1].legend(loc="upper right", fontsize=8)
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "mesh_preview.png", dpi=200)
-    if SHOW_PLOT:
-        plt.show()
+    plt.show()
     plt.close(fig)
-else:
-    print("Matplotlib is unavailable; skipped mesh_preview.png")
 
 print(json.dumps(summary, indent=2))
