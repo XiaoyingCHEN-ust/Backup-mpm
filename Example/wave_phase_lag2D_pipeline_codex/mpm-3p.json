@@ -268,7 +268,6 @@
         "write_hdf5":false,
         "write_vtk":true,
         "vtk": [
-            "ids",
             "porosities",
             "volumes",
             "void_ratio",

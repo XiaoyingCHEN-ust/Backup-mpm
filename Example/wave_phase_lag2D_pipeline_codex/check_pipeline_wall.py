@@ -159,6 +159,11 @@ def main():
         raise RuntimeError("Dynamic stage must use SANISAND2D")
     if dynamic["analysis"]["PIC"] != 0 or dynamic["analysis"].get("APIC", False):
         raise RuntimeError("Dynamic stage must use PIC=0 with APIC disabled")
+    if "ids" in dynamic["post_processing"]["vtk"]:
+        raise RuntimeError(
+            "Dynamic VTK requests unsupported 'ids'; particle IDs are not "
+            "required by analyze_pipeline_wall.py"
+        )
     if dynamic["analysis"]["resume"]["uuid"] != initial["analysis"]["uuid"]:
         raise RuntimeError("Dynamic checkpoint UUID does not match initialization")
     if dynamic["analysis"]["resume"]["step"] != initial["analysis"]["nsteps"]:
