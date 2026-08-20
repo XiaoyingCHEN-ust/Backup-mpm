@@ -22,6 +22,15 @@ real 0.060 m pipe. Its wall-saturation spread was larger than the moving
 particle-level no-flux result, so reverting to the old Euler/node wall would
 not fix the hydrostatic error.
 
+The subsequent v3 initialization installed the hydrostatic field correctly and
+completed all 40000 steps, but exposed a second boundary inconsistency. The
+seabed-surface liquid pressure was about 4.9 kPa while the external total
+traction was zero. The upper particle row therefore evolved from about
+-40 Pa skeleton compression to +4.88 kPa tension, cancelling the pore pressure
+to satisfy a zero-total-traction boundary. This is why Slurm reported the v3
+initialization as failed even though the MPM executable itself returned zero:
+the post-run physical QA correctly rejected the tensile checkpoint.
+
 ## What changed
 
 - The fixed node-set-4/Euler-angle wall has been removed.
@@ -44,10 +53,16 @@ not fix the hydrostatic error.
   to liquid and gas phases instead of forcing suction to zero. This prevents
   the top two particle rows next to the shallow pipe crown from jumping from
   `Sr=0.94` to about 0.999 in the first time step.
+- At each step, after the surface pore pressure is updated, the solver applies
+  the matching external water traction `t_y=-p_l(x,t)` to the actual uppermost
+  particle row. The second row remains available for pressure/free-surface
+  assignment but is not double-loaded. This balances both the 4.9 kPa still-
+  water component and the spatially/time-varying wave component.
 - `check_initial_state.py` gates the SANISAND stage. It rejects a missing
   hydrostatic field, a mostly tensile skeleton checkpoint, non-decayed solid
-  velocity, a final pressure RMSE above 500 Pa, pipe-wall saturation more than
-  0.02 from the prescribed 0.94, or nonzero pipe-wall phase flux.
+  velocity, a vertical-stress RMSE above 500 Pa from the geostatic target, a
+  final pressure RMSE above 500 Pa, pipe-wall saturation more than 0.02 from
+  the prescribed 0.94, or nonzero pipe-wall phase flux.
 
 GIMP is deliberately not enabled in this diagnostic. The downloaded result
 never approached one background-cell displacement, so changing interpolation
@@ -87,9 +102,11 @@ wave_job=${wave_job%%;*}
 printf 'initial=%s wave=%s\n' "$init_job" "$wave_job"
 ```
 
-Patch application is idempotent: the moving no-flux and hydrostatic-pressure
-patches are verified/applied independently. Empty or truncated patches are
-rejected. The two calculation jobs request partition
+Patch application is idempotent: the moving no-flux, hydrostatic-pressure and
+matched-surface-traction patches are verified/applied independently. This also
+upgrades an HPC4 source tree that already contains the v3 pressure patch; no
+source rollback is needed. Empty or truncated patches are rejected. The two
+calculation jobs request partition
 `granularmech`, account `comgranmech` and 32 CPUs.
 
 Monitor without hiding failed batch steps:
@@ -107,10 +124,10 @@ Do not submit the wave job manually if initialization fails; inspect
 ## Outputs and acceptance check
 
 Initialization:
-`results/Initial_094_1E11_pipeline_hydrostatic_noflux_v3`
+`results/Initial_094_1E11_pipeline_balanced_noflux_v4`
 
 Dynamic:
-`results/Wave2D_SN_094_1E11_pipeline_hydrostatic_noflux_v3`
+`results/Wave2D_SN_094_1E11_pipeline_balanced_noflux_v4`
 
 The initialization job writes `initial_state_qa.json` and returns nonzero if
 the checkpoint is unacceptable. It must contain `"passed": true` before the
@@ -134,7 +151,7 @@ The legacy `liquid_seepage_velocities` field is not used as this acceptance
 metric because its current implementation omits the gravity term and is
 nonzero even under a hydrostatic pressure gradient.
 
-This v3 rerun uses the target permeability in both stages. If a later
+This v4 rerun uses the target permeability in both stages. If a later
 equilibration sensitivity is needed, change only `mpm-initial.json` and use a
 fresh UUID; do not silently change the scientific target in `mpm-3p.json`.
 
@@ -157,8 +174,8 @@ the diagnostic CSV, initial/release/peak/final particle and pipeline frames,
 the final initialization checkpoint, and the logs. These retained results stay
 local/HPC-only and are not committed to GitHub.
 
-The v1 and v2 results are failure diagnostics only and must not be used for
-physical interpretation. The v3 run is acceptable only when source/build
+The v1-v3 results are failure diagnostics only and must not be used for
+physical interpretation. The v4 run is acceptable only when source/build
 checks pass, `initial_state_qa.json` passes, skeleton stress stays predominantly
-compressive, and post-step-0 wall-normal relative phase velocities remain near
-floating-point noise.
+compressive and close to the geostatic profile, and post-step-0 wall-normal
+relative phase velocities remain near floating-point noise.

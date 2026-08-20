@@ -74,6 +74,14 @@ def main():
             source_root / "include/solvers/thm_mpm_explicit_threephase_lag.tcc",
             "apply_rigid_pipeline_phase_no_flux",
         ),
+        (
+            source_root / "include/particles/particle_threephase_lag.tcc",
+            "apply_submerged_surface_pressure_traction",
+        ),
+        (
+            source_root / "include/solvers/thm_mpm_explicit_threephase_lag.tcc",
+            "submerged_surface_pressure_traction_",
+        ),
     )
     for source, marker in source_checks:
         if not source.is_file():
@@ -103,6 +111,22 @@ def main():
         entry["id"]: np.asarray(entry["set"], dtype=int)
         for entry in entity_sets["particle_sets"]
     }
+    summary = load(ROOT / "generation_summary.json")
+    particle_spacing = float(summary["particle_spacing"])
+    surface_y = 0.5
+    surface_traction_ids = np.flatnonzero(
+        np.abs(
+            (surface_y - particles[:, 1]) - 0.5 * particle_spacing
+        )
+        <= 0.05 * particle_spacing
+    )
+    free_surface_ids = particle_sets.get(0, np.empty(0, dtype=int))
+    if surface_traction_ids.size == 0 or not set(surface_traction_ids).issubset(
+        set(free_surface_ids)
+    ):
+        raise RuntimeError(
+            "The uppermost matched-traction row is missing from particle set 0"
+        )
     contact_ids = particle_sets.get(3, np.empty(0, dtype=int))
     if (
         contact_ids.size == 0
@@ -152,6 +176,12 @@ def main():
             raise RuntimeError(f"{path.name}: phase saturations do not sum to one")
 
         pipe = config["analysis"]["rigid_pipeline"]
+        if not config["analysis"].get(
+            "submerged_surface_pressure_traction", False
+        ):
+            raise RuntimeError(
+                f"{path.name}: matching submerged surface traction is disabled"
+            )
         if not pipe.get("phase_no_flux", False):
             raise RuntimeError(f"{path.name}: moving phase no-flux is disabled")
         factor = float(pipe.get("phase_no_flux_band_factor", 0.0))
@@ -213,7 +243,9 @@ def main():
 
     print(
         "Validated moving impermeable pipeline case: "
-        f"phase_wall_particles={phase_wall_ids.size}, Sw={TARGET_SATURATION}, "
+        f"phase_wall_particles={phase_wall_ids.size}, "
+        f"surface_traction_particles={surface_traction_ids.size}, "
+        f"Sw={TARGET_SATURATION}, "
         f"kappa_eq={initial['materials'][0]['intrinsic_permeability']:.3e} m^2, "
         f"kappa_dynamic={TARGET_DYNAMIC_PERMEABILITY:.3e} m^2, "
         f"threads={TARGET_THREADS}"

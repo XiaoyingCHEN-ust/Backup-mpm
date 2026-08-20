@@ -148,7 +148,7 @@ def main():
         "result",
         type=Path,
         nargs="?",
-        default=Path("results/Wave2D_SN_094_1E11_pipeline_hydrostatic_noflux_v3"),
+        default=Path("results/Wave2D_SN_094_1E11_pipeline_balanced_noflux_v4"),
     )
     parser.add_argument("--dt", type=float, default=1.0e-4)
     parser.add_argument("--config", type=Path, default=Path("mpm-3p.json"))

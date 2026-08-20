@@ -10,6 +10,8 @@
     "empty_pipeline_cavity_particles_removed": 124,
     "pipeline_contact_particles": 48,
     "pipeline_wall_flow_condition": "moving circular particle-level zero normal liquid/gas velocity",
+    "submerged_surface_traction_condition": "uppermost particle row matched to current external liquid pressure",
+    "submerged_surface_traction_particles": 150,
     "pipeline_wall_thickness": 0.007058823529411764,
     "pipeline_density": 959.0,
     "pipeline_diameter": 0.12,

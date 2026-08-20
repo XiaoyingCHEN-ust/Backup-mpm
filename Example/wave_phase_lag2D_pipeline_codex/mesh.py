@@ -540,6 +540,8 @@ save_particle(particles, "particles")
 # relative support used by the original 0.01/0.005 discretisation.
 top_particle_ids = numpy.where(
     particles[:, 1] >= 0.5 - 2.0 * particle_spacing - 1.e-15)[0]
+uppermost_surface_particle_ids = numpy.where(
+    numpy.isclose(particles[:, 1], 0.5 - 0.5 * particle_spacing))[0]
 
 bottom_particle_ids_1 = numpy.where(
     numpy.isclose(particles[:, 1], 0.5 * particle_spacing))[0]
@@ -648,6 +650,12 @@ summary = {
     "pipeline_contact_particles": int(tunnel_boundary_particle_ids.shape[0]),
     "pipeline_wall_flow_condition": (
         "moving circular particle-level zero normal liquid/gas velocity"
+    ),
+    "submerged_surface_traction_condition": (
+        "uppermost particle row matched to current external liquid pressure"
+    ),
+    "submerged_surface_traction_particles": int(
+        uppermost_surface_particle_ids.shape[0]
     ),
     "pipeline_wall_thickness": pipeline_wall_thickness,
     "pipeline_density": pipeline_density,

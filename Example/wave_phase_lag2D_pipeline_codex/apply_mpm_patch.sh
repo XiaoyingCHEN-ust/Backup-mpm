@@ -5,6 +5,7 @@ case_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(cd "${case_dir}/../../mpm" && pwd)
 patch_file="${case_dir}/mpm_pipeline_no_flux.patch"
 pressure_patch_file="${case_dir}/mpm_initial_hydrostatic_pressure.patch"
+surface_patch_file="${case_dir}/mpm_submerged_surface_traction.patch"
 particle_header="${source_dir}/include/particles/particle_threephase_lag.h"
 particle_source="${source_dir}/include/particles/particle_threephase_lag.tcc"
 solver_source="${source_dir}/include/solvers/thm_mpm_explicit_threephase_lag.tcc"
@@ -35,6 +36,10 @@ if [[ ! -s "${pressure_patch_file}" ]]; then
   echo "Patch file is missing or empty: ${pressure_patch_file}" >&2
   exit 2
 fi
+if [[ ! -s "${surface_patch_file}" ]]; then
+  echo "Patch file is missing or empty: ${surface_patch_file}" >&2
+  exit 2
+fi
 if ! grep -Fq "apply_rigid_circle_phase_no_flux" "${patch_file}" ||
    ! grep -Fq "apply_rigid_pipeline_phase_no_flux" "${patch_file}"; then
   echo "Patch file does not contain the required no-flux changes." >&2
@@ -43,6 +48,11 @@ fi
 if ! grep -Fq "has_input_initial_liquid_pressure_" "${pressure_patch_file}" ||
    ! grep -Fq "registered capillary suction and target saturation" "${pressure_patch_file}"; then
   echo "Patch file does not contain the required phase-pressure fixes." >&2
+  exit 2
+fi
+if ! grep -Fq "apply_submerged_surface_pressure_traction" "${surface_patch_file}" ||
+   ! grep -Fq "submerged_surface_pressure_traction_" "${surface_patch_file}"; then
+  echo "Patch file does not contain the required surface-traction fixes." >&2
   exit 2
 fi
 
@@ -92,4 +102,27 @@ if ! grep -Fq "has_input_initial_liquid_pressure_" "${particle_header}" ||
   exit 3
 fi
 
-echo "Verified moving no-flux and hydrostatic-pressure patches in ${source_dir}."
+if grep -Fq "apply_submerged_surface_pressure_traction" "${particle_source}" &&
+   grep -Fq "submerged_surface_pressure_traction_" "${solver_source}"; then
+  echo "Matched submerged-surface traction patch is already applied."
+elif git -C "${repo_root}" apply "${apply_directory_args[@]}" \
+    --unidiff-zero \
+    --ignore-space-change --ignore-whitespace \
+    --check --verbose "${surface_patch_file}"; then
+  git -C "${repo_root}" apply "${apply_directory_args[@]}" \
+    --unidiff-zero \
+    --ignore-space-change --ignore-whitespace \
+    --verbose "${surface_patch_file}"
+else
+  echo "Surface-traction patch cannot be applied cleanly to ${source_dir}." >&2
+  echo "Do not run the case with an unbalanced submerged boundary." >&2
+  exit 2
+fi
+
+if ! grep -Fq "apply_submerged_surface_pressure_traction" "${particle_source}" ||
+   ! grep -Fq "submerged_surface_pressure_traction_" "${solver_source}"; then
+  echo "Patch command completed without installing the surface-traction markers." >&2
+  exit 3
+fi
+
+echo "Verified moving no-flux, hydrostatic-pressure, and matched surface-traction patches in ${source_dir}."

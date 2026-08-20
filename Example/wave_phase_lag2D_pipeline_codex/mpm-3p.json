@@ -226,6 +226,7 @@
         "pressure_smoothing": true,
         "pressure_smoothing_iterations": 1,
         "pressure_smoothing_in_loop": false,
+        "submerged_surface_pressure_traction": true,
         "rigid_pipeline": {
             "enable": true,
             "fixed": false,
@@ -250,12 +251,12 @@
             "phase_no_flux_band_factor": 1.4142135623730951,
             "history_interval": 100
         },
-        "uuid": "Wave2D_SN_094_1E11_pipeline_hydrostatic_noflux_v3",
+        "uuid": "Wave2D_SN_094_1E11_pipeline_balanced_noflux_v4",
         "dt": 1E-4,
         "nsteps":7.8E4,
         "resume":{
             "resume" : true,
-            "uuid" :"Initial_094_1E11_pipeline_hydrostatic_noflux_v3",
+            "uuid" :"Initial_094_1E11_pipeline_balanced_noflux_v4",
             "step" : 4E4,
             "nsteps" :4E4,
             "start_from_this_step": false,
